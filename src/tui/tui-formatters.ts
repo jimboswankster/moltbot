@@ -1,6 +1,55 @@
 import { formatTokenCount } from "../utils/usage-format.js";
 import { formatRawAssistantErrorForUi } from "../agents/pi-embedded-helpers.js";
 
+/**
+ * When text is action-style JSON (e.g. {"name":"message_create","arguments":{"text":"Hello!"}}),
+ * extract arguments.text for display.
+ */
+function unwrapActionJson(text: string): string {
+  const trimmed = text.trim();
+  if (
+    trimmed.startsWith("{") &&
+    trimmed.endsWith("}") &&
+    (trimmed.includes('"name"') || trimmed.includes("'name'")) &&
+    (trimmed.includes('"arguments"') || trimmed.includes("'arguments'"))
+  ) {
+    try {
+      const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+      const args = parsed.arguments as Record<string, unknown> | undefined;
+      const innerText = typeof args?.text === "string" ? args.text.trim() : "";
+      if (innerText) return innerText;
+    } catch {
+      // Not valid JSON or missing structure; return as-is
+    }
+  }
+  return text;
+}
+
+/**
+ * Extract arguments.text from tool_use blocks that represent message sends.
+ */
+function textFromToolBlock(block: Record<string, unknown>): string | null {
+  const type = String(block.type ?? "").toLowerCase();
+  const name = String(block.name ?? block.id ?? "").toLowerCase();
+  if (type !== "tool_use" && type !== "tool_call") return null;
+  const msgTools = ["message_create", "message", "agent_send", "send_message"];
+  if (!msgTools.some((t) => name.includes(t))) return null;
+  let args = block.arguments ?? block.args;
+  if (typeof args === "string") {
+    try {
+      const parsed = JSON.parse(args.trim());
+      args = typeof parsed === "object" && parsed !== null ? parsed : undefined;
+    } catch {
+      args = undefined;
+    }
+  }
+  if (typeof args === "object" && args !== null && !Array.isArray(args)) {
+    const text = (args as Record<string, unknown>).text;
+    if (typeof text === "string" && text.trim()) return text.trim();
+  }
+  return null;
+}
+
 export function resolveFinalAssistantText(params: {
   finalText?: string | null;
   streamedText?: string | null;
@@ -79,8 +128,11 @@ export function extractContentFromMessage(message: unknown): string {
     if (!block || typeof block !== "object") continue;
     const rec = block as Record<string, unknown>;
     if (rec.type === "text" && typeof rec.text === "string") {
-      parts.push(rec.text);
+      // Unwrap action JSON (e.g. {"name":"message_create","arguments":{"text":"Hi"}})
+      parts.push(unwrapActionJson(rec.text));
     }
+    const toolText = textFromToolBlock(rec);
+    if (toolText) parts.push(toolText);
   }
 
   // If no text blocks found, check for error

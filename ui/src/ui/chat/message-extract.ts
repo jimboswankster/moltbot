@@ -33,15 +33,38 @@ export function stripEnvelope(text: string): string {
   return text.slice(match[0].length);
 }
 
+/**
+ * When the model outputs action-style JSON (e.g. {"name":"message_create","arguments":{"text":"Hello!"}}),
+ * extract arguments.text for display instead of showing raw JSON.
+ */
+function unwrapActionJson(text: string): string {
+  const trimmed = text.trim();
+  if (
+    trimmed.startsWith("{") &&
+    trimmed.endsWith("}") &&
+    (trimmed.includes('"name"') || trimmed.includes("'name'")) &&
+    (trimmed.includes('"arguments"') || trimmed.includes("'arguments'"))
+  ) {
+    try {
+      const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+      const args = parsed.arguments as Record<string, unknown> | undefined;
+      const innerText = typeof args?.text === "string" ? args.text.trim() : "";
+      if (innerText) return innerText;
+    } catch {
+      // Not valid JSON or missing structure; return as-is
+    }
+  }
+  return text;
+}
+
 export function extractText(message: unknown): string | null {
   const m = message as Record<string, unknown>;
   const role = typeof m.role === "string" ? m.role : "";
   const content = m.content;
+  let processed: string | null = null;
   if (typeof content === "string") {
-    const processed = role === "assistant" ? stripThinkingTags(content) : stripEnvelope(content);
-    return processed;
-  }
-  if (Array.isArray(content)) {
+    processed = role === "assistant" ? stripThinkingTags(content) : stripEnvelope(content);
+  } else if (Array.isArray(content)) {
     const parts = content
       .map((p) => {
         const item = p as Record<string, unknown>;
@@ -51,15 +74,15 @@ export function extractText(message: unknown): string | null {
       .filter((v): v is string => typeof v === "string");
     if (parts.length > 0) {
       const joined = parts.join("\n");
-      const processed = role === "assistant" ? stripThinkingTags(joined) : stripEnvelope(joined);
-      return processed;
+      processed = role === "assistant" ? stripThinkingTags(joined) : stripEnvelope(joined);
     }
+  } else if (typeof m.text === "string") {
+    processed = role === "assistant" ? stripThinkingTags(m.text) : stripEnvelope(m.text);
   }
-  if (typeof m.text === "string") {
-    const processed = role === "assistant" ? stripThinkingTags(m.text) : stripEnvelope(m.text);
-    return processed;
-  }
-  return null;
+  if (!processed?.trim()) return processed;
+  // When assistant outputs action JSON (e.g. {"name":"message_create","arguments":{"text":"Hi"}}),
+  // extract arguments.text for display instead of raw JSON
+  return role === "assistant" ? unwrapActionJson(processed) : processed;
 }
 
 export function extractTextCached(message: unknown): string | null {

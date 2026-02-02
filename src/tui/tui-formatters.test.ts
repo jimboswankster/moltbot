@@ -77,6 +77,30 @@ describe("extractThinkingFromMessage", () => {
 });
 
 describe("extractContentFromMessage", () => {
+  it("unwraps action JSON in text blocks", () => {
+    const text = extractContentFromMessage({
+      role: "assistant",
+      content: [
+        { type: "text", text: '{"name": "message_create", "arguments": {"text": "Hello mate!"}}' },
+      ],
+    });
+    expect(text).toBe("Hello mate!");
+  });
+
+  it("extracts text from message_create tool_use blocks", () => {
+    const text = extractContentFromMessage({
+      role: "assistant",
+      content: [
+        {
+          type: "tool_use",
+          name: "message_create",
+          arguments: { text: "Hello mate!" },
+        },
+      ],
+    });
+    expect(text).toBe("Hello mate!");
+  });
+
   it("collects only text blocks", () => {
     const text = extractContentFromMessage({
       role: "assistant",
