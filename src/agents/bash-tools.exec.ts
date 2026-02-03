@@ -386,6 +386,10 @@ async function runExecProcess(opts: {
           label: "no-detach",
           options: { detached: false },
         },
+        {
+          label: "ignore-stdin",
+          options: { stdio: ["ignore", "pipe", "pipe"] as const },
+        },
       ],
       onFallback: (err, fallback) => {
         const errText = formatSpawnError(err);
@@ -452,6 +456,10 @@ async function runExecProcess(opts: {
             label: "no-detach",
             options: { detached: false },
           },
+          {
+            label: "ignore-stdin",
+            options: { stdio: ["ignore", "pipe", "pipe"] as const },
+          },
         ],
         onFallback: (fallbackErr, fallback) => {
           const fallbackText = formatSpawnError(fallbackErr);
@@ -478,6 +486,10 @@ async function runExecProcess(opts: {
         {
           label: "no-detach",
           options: { detached: false },
+        },
+        {
+          label: "ignore-stdin",
+          options: { stdio: ["ignore", "pipe", "pipe"] as const },
         },
       ],
       onFallback: (err, fallback) => {

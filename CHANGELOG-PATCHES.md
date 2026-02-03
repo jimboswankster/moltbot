@@ -4,6 +4,18 @@ Patches applied in this fork for upstream submission. Use npm `openclaw` as sing
 
 ---
 
+## Exec: Retry on spawn EBADF with ignore-stdin fallback
+
+**File:** `src/agents/bash-tools.exec.ts`
+
+**Issue:** When the OpenClaw gateway runs in a headless environment (no TTY, stdin closed), `child_process.spawn()` fails with `spawn EBADF` (bad file descriptor) because the parent process's stdin is invalid. All exec tool calls then fail regardless of command, directory, or host setting.
+
+**Change:** Add `ignore-stdin` fallback to `spawnWithFallback` in all three exec spawn paths (sandbox/docker, PTY fallback, direct shell). On EBADF, retry with `stdio: ["ignore", "pipe", "pipe"]` instead of `["pipe", "pipe", "pipe"]`, so stdin is not inherited. Matches the pattern already tested in `spawn-utils.test.ts`.
+
+**Result:** Exec commands succeed when the gateway runs as a service or in environments with closed stdin (e.g. agent loaded via gateway from Cursor).
+
+---
+
 ## UI: Unwrap action JSON in Control UI chat
 
 **File:** `ui/src/ui/chat/message-extract.ts`
