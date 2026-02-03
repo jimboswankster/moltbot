@@ -51,10 +51,17 @@ export function resolveStateDir(
   homedir: () => string = os.homedir,
 ): string {
   const override = env.OPENCLAW_STATE_DIR?.trim() || env.CLAWDBOT_STATE_DIR?.trim();
-  if (override) {
-    return resolveUserPath(override);
-  }
   const newDir = newStateDir(homedir);
+  if (override) {
+    const resolved = resolveUserPath(override);
+    // Prefer ~/.openclaw when it exists: if override points at a legacy dir
+    // (.clawdbot, .moltbot, .moldbot), use the new dir so we don't use old names.
+    const isLegacy = LEGACY_STATE_DIRNAMES.some((name) => resolved.includes(name));
+    if (isLegacy && fs.existsSync(newDir)) {
+      return newDir;
+    }
+    return resolved;
+  }
   const legacyDirs = legacyStateDirs(homedir);
   const hasNew = fs.existsSync(newDir);
   if (hasNew) {
