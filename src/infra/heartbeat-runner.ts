@@ -42,6 +42,7 @@ import { CommandLane } from "../process/lanes.js";
 import { normalizeAgentId, toAgentStoreSessionKey } from "../routing/session-key.js";
 import { defaultRuntime, type RuntimeEnv } from "../runtime.js";
 import { emitHeartbeatEvent, resolveIndicatorType } from "./heartbeat-events.js";
+import { runHeartbeatWithHooks } from "./heartbeat-hooks.js";
 import { resolveHeartbeatVisibility } from "./heartbeat-visibility.js";
 import {
   type HeartbeatRunResult,
@@ -906,7 +907,7 @@ export function startHeartbeatRunner(opts: {
     scheduleNext();
   };
 
-  const run: HeartbeatWakeHandler = async (params) => {
+  const baseRun: HeartbeatWakeHandler = async (params) => {
     if (!heartbeatsEnabled) {
       return { status: "skipped", reason: "disabled" } satisfies HeartbeatRunResult;
     }
@@ -951,7 +952,9 @@ export function startHeartbeatRunner(opts: {
     return { status: "skipped", reason: isInterval ? "not-due" : "disabled" };
   };
 
-  setHeartbeatWakeHandler(async (params) => run({ reason: params.reason }));
+  setHeartbeatWakeHandler(async (params) =>
+    runHeartbeatWithHooks(baseRun, { reason: params.reason }),
+  );
   updateConfig(state.cfg);
 
   const cleanup = () => {

@@ -3,6 +3,7 @@ import type { CronJob } from "../types.js";
 import type { CronEvent, CronServiceState } from "./state.js";
 import { computeJobNextRunAtMs, nextWakeAtMs, resolveJobPayloadTextForMain } from "./jobs.js";
 import { locked } from "./locked.js";
+import { runCronHooksForMainJob } from "./service/hooks.js";
 import { ensureLoaded, persist } from "./store.js";
 
 const MAX_TIMEOUT_MS = 2 ** 31 - 1;
@@ -163,6 +164,8 @@ export async function executeJob(
         );
         return;
       }
+      // Invoke extension hooks for main-session cron jobs before enqueuing the system event.
+      await runCronHooksForMainJob(state, job);
       state.deps.enqueueSystemEvent(text, { agentId: job.agentId });
       if (job.wakeMode === "now" && state.deps.runHeartbeatOnce) {
         const reason = `cron:${job.id}`;
