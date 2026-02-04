@@ -33,6 +33,11 @@ export type AgentConfig = {
   heartbeat?: AgentDefaultsConfig["heartbeat"];
   identity?: IdentityConfig;
   groupChat?: GroupChatConfig;
+  /**
+   * Per-agent model roles for subagent routing (overrides defaults.modelRoles).
+   * Keys are role names (e.g. orchestrator, primary, premium); values are provider/model ids.
+   */
+  modelRoles?: Record<string, string>;
   subagents?: {
     /** Allow spawning sub-agents under other agent ids. Use "*" to allow any. */
     allowAgents?: string[];

@@ -41,6 +41,7 @@ export const AgentDefaultsSchema = z
           .strict(),
       )
       .optional(),
+    modelRoles: z.record(z.string(), z.string()).optional(),
     workspace: z.string().optional(),
     repoRoot: z.string().optional(),
     skipBootstrap: z.boolean().optional(),

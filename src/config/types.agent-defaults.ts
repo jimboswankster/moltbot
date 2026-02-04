@@ -98,6 +98,11 @@ export type AgentDefaultsConfig = {
   imageModel?: AgentModelListConfig;
   /** Model catalog with optional aliases (full provider/model keys). */
   models?: Record<string, AgentModelEntryConfig>;
+  /**
+   * Logical model roles for subagent routing (e.g. orchestrator, primary, premium).
+   * Keys are role names; values are concrete provider/model ids (must be in models allowlist).
+   */
+  modelRoles?: Record<string, string>;
   /** Agent working directory (preferred). Used as the default cwd for agent runs. */
   workspace?: string;
   /** Optional repository root for system prompt runtime line (overrides auto-detect). */

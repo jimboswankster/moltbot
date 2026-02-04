@@ -203,4 +203,167 @@ describe("openclaw-tools: subagents", () => {
       model: "minimax/MiniMax-M2.1",
     });
   });
+
+  it("sessions_spawn with modelRole resolves to modelRoles from defaults", async () => {
+    resetSubagentRegistryForTests();
+    callGatewayMock.mockReset();
+    configOverride = {
+      session: { mainKey: "main", scope: "per-sender" },
+      agents: {
+        defaults: {
+          modelRoles: {
+            orchestrator: "ollama/llama3.1:8b",
+            primary: "openai-codex/gpt-5.1",
+            premium: "anthropic/claude-opus-4-5",
+          },
+        },
+      },
+    };
+    const calls: Array<{ method?: string; params?: unknown }> = [];
+
+    callGatewayMock.mockImplementation(async (opts: unknown) => {
+      const request = opts as { method?: string; params?: unknown };
+      calls.push(request);
+      if (request.method === "sessions.patch") {
+        return { ok: true };
+      }
+      if (request.method === "agent") {
+        return { runId: "run-model-role", status: "accepted" };
+      }
+      return {};
+    });
+
+    const tool = createOpenClawTools({
+      agentSessionKey: "agent:main:main",
+      agentChannel: "discord",
+    }).find((candidate) => candidate.name === "sessions_spawn");
+    if (!tool) {
+      throw new Error("missing sessions_spawn tool");
+    }
+
+    const result = await tool.execute("call-model-role", {
+      task: "do thing",
+      modelRole: "orchestrator",
+    });
+    expect(result.details).toMatchObject({
+      status: "accepted",
+      modelApplied: true,
+    });
+
+    const patchCall = calls.find((call) => call.method === "sessions.patch");
+    expect(patchCall?.params).toMatchObject({
+      model: "ollama/llama3.1:8b",
+    });
+  });
+
+  it("sessions_spawn with modelRole uses per-agent modelRoles over defaults", async () => {
+    resetSubagentRegistryForTests();
+    callGatewayMock.mockReset();
+    configOverride = {
+      session: { mainKey: "main", scope: "per-sender" },
+      agents: {
+        defaults: {
+          modelRoles: {
+            orchestrator: "ollama/llama3.1:8b",
+            primary: "openai-codex/gpt-5.1",
+          },
+        },
+        list: [
+          {
+            id: "research",
+            modelRoles: {
+              orchestrator: "minimax/MiniMax-M2.1",
+              primary: "opencode/claude",
+            },
+          },
+        ],
+      },
+    };
+    const calls: Array<{ method?: string; params?: unknown }> = [];
+
+    callGatewayMock.mockImplementation(async (opts: unknown) => {
+      const request = opts as { method?: string; params?: unknown };
+      calls.push(request);
+      if (request.method === "sessions.patch") {
+        return { ok: true };
+      }
+      if (request.method === "agent") {
+        return { runId: "run-per-agent-role", status: "accepted" };
+      }
+      return {};
+    });
+
+    const tool = createOpenClawTools({
+      agentSessionKey: "agent:research:main",
+      agentChannel: "discord",
+    }).find((candidate) => candidate.name === "sessions_spawn");
+    if (!tool) {
+      throw new Error("missing sessions_spawn tool");
+    }
+
+    const result = await tool.execute("call-per-agent-role", {
+      task: "do thing",
+      modelRole: "orchestrator",
+    });
+    expect(result.details).toMatchObject({
+      status: "accepted",
+      modelApplied: true,
+    });
+
+    const patchCall = calls.find((call) => call.method === "sessions.patch");
+    expect(patchCall?.params).toMatchObject({
+      model: "minimax/MiniMax-M2.1",
+    });
+  });
+
+  it("sessions_spawn explicit model overrides modelRole", async () => {
+    resetSubagentRegistryForTests();
+    callGatewayMock.mockReset();
+    configOverride = {
+      session: { mainKey: "main", scope: "per-sender" },
+      agents: {
+        defaults: {
+          modelRoles: {
+            primary: "openai-codex/gpt-5.1",
+          },
+        },
+      },
+    };
+    const calls: Array<{ method?: string; params?: unknown }> = [];
+
+    callGatewayMock.mockImplementation(async (opts: unknown) => {
+      const request = opts as { method?: string; params?: unknown };
+      calls.push(request);
+      if (request.method === "sessions.patch") {
+        return { ok: true };
+      }
+      if (request.method === "agent") {
+        return { runId: "run-explicit", status: "accepted" };
+      }
+      return {};
+    });
+
+    const tool = createOpenClawTools({
+      agentSessionKey: "agent:main:main",
+      agentChannel: "discord",
+    }).find((candidate) => candidate.name === "sessions_spawn");
+    if (!tool) {
+      throw new Error("missing sessions_spawn tool");
+    }
+
+    const result = await tool.execute("call-explicit-model", {
+      task: "do thing",
+      model: "custom/provider-model",
+      modelRole: "primary",
+    });
+    expect(result.details).toMatchObject({
+      status: "accepted",
+      modelApplied: true,
+    });
+
+    const patchCall = calls.find((call) => call.method === "sessions.patch");
+    expect(patchCall?.params).toMatchObject({
+      model: "custom/provider-model",
+    });
+  });
 });

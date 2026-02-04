@@ -23,11 +23,14 @@ import {
   resolveMainSessionAlias,
 } from "./sessions-helpers.js";
 
+const MODEL_ROLES = ["orchestrator", "primary", "premium"] as const;
+
 const SessionsSpawnToolSchema = Type.Object({
   task: Type.String(),
   label: Type.Optional(Type.String()),
   agentId: Type.Optional(Type.String()),
   model: Type.Optional(Type.String()),
+  modelRole: Type.Optional(optionalStringEnum(MODEL_ROLES)),
   thinking: Type.Optional(Type.String()),
   runTimeoutSeconds: Type.Optional(Type.Number({ minimum: 0 })),
   // Back-compat alias. Prefer runTimeoutSeconds.
@@ -90,6 +93,11 @@ export function createSessionsSpawnTool(opts?: {
       const label = typeof params.label === "string" ? params.label.trim() : "";
       const requestedAgentId = readStringParam(params, "agentId");
       const modelOverride = readStringParam(params, "model");
+      const modelRoleParam =
+        typeof params.modelRole === "string" &&
+        MODEL_ROLES.includes(params.modelRole as (typeof MODEL_ROLES)[number])
+          ? (params.modelRole as (typeof MODEL_ROLES)[number])
+          : undefined;
       const thinkingOverrideRaw = readStringParam(params, "thinking");
       const cleanup =
         params.cleanup === "keep" || params.cleanup === "delete" ? params.cleanup : "keep";
@@ -168,10 +176,19 @@ export function createSessionsSpawnTool(opts?: {
       const childSessionKey = `agent:${targetAgentId}:subagent:${crypto.randomUUID()}`;
       const spawnedByKey = requesterInternalKey;
       const targetAgentConfig = resolveAgentConfig(cfg, targetAgentId);
-      const resolvedModel =
-        normalizeModelSelection(modelOverride) ??
-        normalizeModelSelection(targetAgentConfig?.subagents?.model) ??
-        normalizeModelSelection(cfg.agents?.defaults?.subagents?.model);
+      let resolvedModel: string | undefined;
+      if (modelOverride) {
+        resolvedModel = normalizeModelSelection(modelOverride);
+      } else if (modelRoleParam) {
+        const agentRoles = targetAgentConfig?.modelRoles ?? cfg.agents?.defaults?.modelRoles;
+        const roleModel = agentRoles?.[modelRoleParam];
+        resolvedModel = roleModel ? normalizeModelSelection(roleModel) : undefined;
+      }
+      if (!resolvedModel) {
+        resolvedModel =
+          normalizeModelSelection(targetAgentConfig?.subagents?.model) ??
+          normalizeModelSelection(cfg.agents?.defaults?.subagents?.model);
+      }
 
       const resolvedThinkingDefaultRaw =
         readStringParam(targetAgentConfig?.subagents ?? {}, "thinking") ??
