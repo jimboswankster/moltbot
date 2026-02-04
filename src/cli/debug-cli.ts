@@ -1,7 +1,6 @@
 import type { Command } from "commander";
 import { promptSnapshotCommand } from "../commands/debug-prompt-snapshot.js";
 import { defaultRuntime } from "../runtime.js";
-import { theme } from "../terminal/theme.js";
 import { runCommandWithRuntime } from "./cli-utils.js";
 
 export function registerDebugCli(program: Command) {
@@ -23,7 +22,7 @@ export function registerDebugCli(program: Command) {
       }
       await runCommandWithRuntime(defaultRuntime, async () => {
         await promptSnapshotCommand(defaultRuntime, {
-          mode: mode as "startup" | "query",
+          mode,
           message: opts.message,
         });
       });

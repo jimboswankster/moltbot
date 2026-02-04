@@ -782,6 +782,8 @@ export function renderApp(state: AppViewState) {
                 onSessionKeyChange: (next) => {
                   state.sessionKey = next;
                   state.chatMessage = "";
+                  state.chatSlashHighlight = null;
+                  state.chatSlashMode = false;
                   state.chatAttachments = [];
                   state.chatStream = null;
                   state.chatStreamStartedAt = null;
@@ -830,7 +832,17 @@ export function renderApp(state: AppViewState) {
                   });
                 },
                 onChatScroll: (event) => state.handleChatScroll(event),
-                onDraftChange: (next) => (state.chatMessage = next),
+                onDraftChange: (next) => {
+                  state.chatMessage = next;
+                  const raw = next.startsWith("/") ? next.slice(1) : "";
+                  const enableSlash = next.startsWith("/") && !/\s/.test(raw);
+                  state.chatSlashMode = enableSlash;
+                  state.chatSlashHighlight = enableSlash ? 0 : null;
+                },
+                onSlashHighlightChange: (next) => (state.chatSlashHighlight = next),
+                onSlashModeChange: (next) => (state.chatSlashMode = next),
+                slashHighlightIndex: state.chatSlashHighlight,
+                slashMode: state.chatSlashMode,
                 attachments: state.chatAttachments,
                 onAttachmentsChange: (next) => (state.chatAttachments = next),
                 onSend: () => state.handleSendChat(),

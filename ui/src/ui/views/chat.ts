@@ -11,6 +11,11 @@ import {
 } from "../chat/grouped-render";
 import { normalizeMessage, normalizeRoleForGrouping } from "../chat/message-normalizer";
 import { icons } from "../icons";
+import {
+  filterSlashCommands,
+  slashCommands as defaultSlashCommands,
+  type SlashCommand,
+} from "../slash-commands";
 import { renderMarkdownSidebar } from "./markdown-sidebar";
 import "../components/resizable-divider";
 
@@ -60,6 +65,8 @@ export type ChatProps = {
   onRefresh: () => void;
   onToggleFocusMode: () => void;
   onDraftChange: (next: string) => void;
+  onSlashHighlightChange?: (next: number | null) => void;
+  onSlashModeChange?: (next: boolean) => void;
   onSend: () => void;
   onAbort?: () => void;
   onQueueRemove: (id: string) => void;
@@ -68,6 +75,9 @@ export type ChatProps = {
   onCloseSidebar?: () => void;
   onSplitRatioChange?: (ratio: number) => void;
   onChatScroll?: (event: Event) => void;
+  slashCommands?: SlashCommand[];
+  slashHighlightIndex?: number | null;
+  slashMode?: boolean;
 };
 
 const COMPACTION_TOAST_DURATION_MS = 5000;
@@ -108,6 +118,31 @@ function renderCompactionIndicator(status: CompactionIndicatorStatus | null | un
 
 function generateAttachmentId(): string {
   return `att-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function clampIndex(value: number, max: number) {
+  if (max <= 0) {
+    return 0;
+  }
+  if (value < 0) {
+    return 0;
+  }
+  if (value >= max) {
+    return max - 1;
+  }
+  return value;
+}
+
+function getSlashSuggestions(draft: string, commands: SlashCommand[]) {
+  if (!draft.startsWith("/")) {
+    return { active: false, items: [] as SlashCommand[] };
+  }
+  const raw = draft.slice(1);
+  if (/\s/.test(raw)) {
+    return { active: false, items: [] as SlashCommand[] };
+  }
+  const matches = filterSlashCommands(raw, commands);
+  return { active: matches.length > 0, items: matches };
 }
 
 function handlePaste(e: ClipboardEvent, props: ChatProps) {
@@ -196,6 +231,17 @@ export function renderChat(props: ChatProps) {
     name: props.assistantName,
     avatar: props.assistantAvatar ?? props.assistantAvatarUrl ?? null,
   };
+  const commands = props.slashCommands ?? defaultSlashCommands;
+  const slashEnabled = props.slashMode ?? props.draft.startsWith("/");
+  const slash = slashEnabled
+    ? getSlashSuggestions(props.draft, commands)
+    : { active: false, items: [] as SlashCommand[] };
+  const slashHighlight =
+    slash.active && slash.items.length > 0
+      ? clampIndex(props.slashHighlightIndex ?? 0, slash.items.length)
+      : null;
+
+  let composeTextarea: HTMLTextAreaElement | null = null;
 
   const hasAttachments = (props.attachments?.length ?? 0) > 0;
   const composePlaceholder = props.connected
@@ -359,14 +405,97 @@ export function renderChat(props: ChatProps) {
 
       <div class="chat-compose">
         ${renderAttachmentPreview(props)}
+        ${
+          slash.active && slash.items.length > 0
+            ? html`
+              <div class="chat-slash-suggestions" role="listbox" aria-label="Slash commands">
+                ${slash.items.map(
+                  (cmd, index) => html`
+                    <button
+                      class="chat-slash-suggestion ${index === slashHighlight ? "is-active" : ""}"
+                      type="button"
+                      role="option"
+                      aria-selected=${index === slashHighlight}
+                      @mousedown=${(event: MouseEvent) => {
+                        event.preventDefault();
+                        props.onDraftChange(cmd.name);
+                        props.onSlashHighlightChange?.(null);
+                        props.onSlashModeChange?.(false);
+                        queueMicrotask(() => {
+                          if (!composeTextarea) {
+                            return;
+                          }
+                          composeTextarea.selectionStart = cmd.name.length;
+                          composeTextarea.selectionEnd = cmd.name.length;
+                        });
+                      }}
+                    >
+                      <span class="chat-slash-suggestion__name">${cmd.name}</span>
+                      <span class="chat-slash-suggestion__summary">${cmd.summary}</span>
+                    </button>
+                  `,
+                )}
+              </div>
+            `
+            : nothing
+        }
         <div class="chat-compose__row">
           <label class="field chat-compose__field">
             <span>Message</span>
             <textarea
-              ${ref((el) => el && adjustTextareaHeight(el as HTMLTextAreaElement))}
+              ${ref((el) => {
+                if (el) {
+                  composeTextarea = el as HTMLTextAreaElement;
+                  adjustTextareaHeight(composeTextarea);
+                }
+              })}
               .value=${props.draft}
               ?disabled=${!props.connected}
               @keydown=${(e: KeyboardEvent) => {
+                if (slash.active && slash.items.length > 0) {
+                  const max = slash.items.length;
+                  if (e.key === "ArrowDown") {
+                    e.preventDefault();
+                    const next = clampIndex((slashHighlight ?? 0) + 1, max);
+                    props.onSlashHighlightChange?.(next);
+                    return;
+                  }
+                  if (e.key === "ArrowUp") {
+                    e.preventDefault();
+                    const next = clampIndex((slashHighlight ?? 0) - 1, max);
+                    props.onSlashHighlightChange?.(next);
+                    return;
+                  }
+                  if (
+                    (e.key === "Enter" || e.key === "Tab") &&
+                    !e.shiftKey &&
+                    !e.altKey &&
+                    !e.metaKey &&
+                    !e.ctrlKey
+                  ) {
+                    e.preventDefault();
+                    const command = slash.items[slashHighlight ?? 0];
+                    if (command) {
+                      props.onDraftChange(command.name);
+                      props.onSlashHighlightChange?.(null);
+                      props.onSlashModeChange?.(false);
+                      queueMicrotask(() => {
+                        if (!composeTextarea) {
+                          return;
+                        }
+                        composeTextarea.selectionStart = command.name.length;
+                        composeTextarea.selectionEnd = command.name.length;
+                      });
+                    }
+                    return;
+                  }
+                  if (e.key === "Escape") {
+                    e.preventDefault();
+                    props.onSlashHighlightChange?.(null);
+                    props.onSlashModeChange?.(false);
+                    return;
+                  }
+                }
                 if (e.key !== "Enter") {
                   return;
                 }

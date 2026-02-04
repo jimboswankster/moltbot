@@ -114,6 +114,45 @@
   z-index: 10;
 }
 
+.chat-slash-suggestions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.chat-slash-suggestion {
+  display: grid;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.chat-slash-suggestion__name {
+  font-weight: 600;
+  color: var(--chat-text);
+}
+
+.chat-slash-suggestion__summary {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.chat-slash-suggestion.is-active {
+  background: var(--accent-subtle);
+  border-color: var(--accent);
+}
+
 /* Image attachments preview */
 .chat-attachments {
   display: inline-flex;
