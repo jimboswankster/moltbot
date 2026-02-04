@@ -73,6 +73,9 @@ export async function runEmbeddedPiAgent(
 ): Promise<EmbeddedPiRunResult> {
   const sessionLane = resolveSessionLane(params.sessionKey?.trim() || params.sessionId);
   const globalLane = resolveGlobalLane(params.lane);
+  console.log(
+    `[runEmbeddedPiAgent] start: runId=${params.runId ?? "(none)"} sessionKey=${params.sessionKey ?? "(none)"} sessionLane=${sessionLane} globalLane=${globalLane}`,
+  );
   const enqueueGlobal =
     params.enqueue ?? ((task, opts) => enqueueCommandInLane(globalLane, task, opts));
   const enqueueSession =
@@ -87,8 +90,17 @@ export async function runEmbeddedPiAgent(
       : "markdown");
   const isProbeSession = params.sessionId?.startsWith("probe-") ?? false;
 
-  return enqueueSession(() =>
-    enqueueGlobal(async () => {
+  console.log(
+    `[runEmbeddedPiAgent] enqueueing: runId=${params.runId ?? "(none)"} sessionLane=${sessionLane} globalLane=${globalLane}`,
+  );
+  return enqueueSession(() => {
+    console.log(
+      `[runEmbeddedPiAgent] sessionLane acquired: runId=${params.runId ?? "(none)"} sessionLane=${sessionLane}`,
+    );
+    return enqueueGlobal(async () => {
+      console.log(
+        `[runEmbeddedPiAgent] globalLane acquired: runId=${params.runId ?? "(none)"} globalLane=${globalLane}`,
+      );
       const started = Date.now();
       const resolvedWorkspace = resolveUserPath(params.workspaceDir);
       const prevCwd = process.cwd();
@@ -687,6 +699,6 @@ export async function runEmbeddedPiAgent(
       } finally {
         process.chdir(prevCwd);
       }
-    }),
-  );
+    });
+  });
 }

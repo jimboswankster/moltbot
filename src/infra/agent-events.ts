@@ -68,6 +68,13 @@ export function emitAgentEvent(event: Omit<AgentEventPayload, "seq" | "ts">) {
     seq: nextSeq,
     ts: Date.now(),
   };
+  // Diagnostic logging for lifecycle events
+  if (event.stream === "lifecycle") {
+    const phase = event.data?.phase;
+    console.log(
+      `[agent-events] lifecycle event: runId=${event.runId} phase=${phase} sessionKey=${sessionKey ?? "(unknown)"} listeners=${listeners.size}`,
+    );
+  }
   for (const listener of listeners) {
     try {
       listener(enriched);

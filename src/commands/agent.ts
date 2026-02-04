@@ -66,6 +66,9 @@ export async function agentCommand(
   runtime: RuntimeEnv = defaultRuntime,
   deps: CliDeps = createDefaultDeps(),
 ) {
+  console.log(
+    `[agentCommand] start: runId=${opts.runId ?? "(none)"} sessionKey=${opts.sessionKey ?? "(none)"} lane=${opts.lane ?? "(none)"}`,
+  );
   const body = (opts.message ?? "").trim();
   if (!body) {
     throw new Error("Message (--message) is required");

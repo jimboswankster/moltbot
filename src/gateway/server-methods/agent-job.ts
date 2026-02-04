@@ -25,6 +25,9 @@ function pruneAgentRunCache(now = Date.now()) {
 function recordAgentRunSnapshot(entry: AgentRunSnapshot) {
   pruneAgentRunCache(entry.ts);
   agentRunCache.set(entry.runId, entry);
+  console.log(
+    `[agent-job] recorded run snapshot: runId=${entry.runId} status=${entry.status} cacheSize=${agentRunCache.size}`,
+  );
 }
 
 function ensureAgentRunListener() {
@@ -77,12 +80,17 @@ export async function waitForAgentJob(params: {
   ensureAgentRunListener();
   const cached = getCachedAgentRun(runId);
   if (cached) {
+    console.log(
+      `[agent-job] waitForAgentJob: found cached result for runId=${runId} status=${cached.status}`,
+    );
     return cached;
   }
   if (timeoutMs <= 0) {
+    console.log(`[agent-job] waitForAgentJob: timeout=0, returning null for runId=${runId}`);
     return null;
   }
 
+  console.log(`[agent-job] waitForAgentJob: waiting for runId=${runId} timeoutMs=${timeoutMs}`);
   return await new Promise((resolve) => {
     let settled = false;
     const finish = (entry: AgentRunSnapshot | null) => {
@@ -127,7 +135,13 @@ export async function waitForAgentJob(params: {
       recordAgentRunSnapshot(snapshot);
       finish(snapshot);
     });
-    const timer = setTimeout(() => finish(null), Math.max(1, timeoutMs));
+    const timer = setTimeout(
+      () => {
+        console.log(`[agent-job] waitForAgentJob: TIMEOUT for runId=${runId} after ${timeoutMs}ms`);
+        finish(null);
+      },
+      Math.max(1, timeoutMs),
+    );
   });
 }
 

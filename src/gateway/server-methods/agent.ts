@@ -43,6 +43,7 @@ import { injectTimestamp, timestampOptsFromConfig } from "./agent-timestamp.js";
 
 export const agentHandlers: GatewayRequestHandlers = {
   agent: async ({ params, respond, context }) => {
+    const log = context.logGateway;
     const p = params;
     if (!validateAgentParams(p)) {
       respond(
@@ -87,6 +88,16 @@ export const agentHandlers: GatewayRequestHandlers = {
     };
     const cfg = loadConfig();
     const idem = request.idempotencyKey;
+
+    log.debug("gateway agent handler received request", {
+      idempotencyKey: idem,
+      sessionKey: request.sessionKey ?? "(not set)",
+      lane: request.lane ?? "(not set)",
+      channel: request.channel ?? "(not set)",
+      deliver: request.deliver ?? false,
+      hasExtraSystemPrompt: !!request.extraSystemPrompt,
+      messageLength: request.message?.length ?? 0,
+    });
     const groupIdRaw = typeof request.groupId === "string" ? request.groupId.trim() : "";
     const groupChannelRaw =
       typeof request.groupChannel === "string" ? request.groupChannel.trim() : "";
@@ -352,6 +363,19 @@ export const agentHandlers: GatewayRequestHandlers = {
 
     const resolvedThreadId = explicitThreadId ?? deliveryPlan.resolvedThreadId;
 
+    log.debug("gateway agent handler calling agentCommand", {
+      runId,
+      sessionKey: requestedSessionKey ?? "(not set)",
+      lane: request.lane ?? "(not set)",
+      resolvedChannel,
+      deliver,
+      isNestedLane: request.lane === "nested",
+    });
+
+    console.log(
+      `[gateway/agent] calling agentCommand: runId=${runId} sessionKey=${requestedSessionKey ?? "(not set)"} lane=${request.lane ?? "(not set)"}`,
+    );
+
     void agentCommand(
       {
         message,
@@ -388,6 +412,12 @@ export const agentHandlers: GatewayRequestHandlers = {
       context.deps,
     )
       .then((result) => {
+        log.debug("gateway agent handler agentCommand completed", {
+          runId,
+          sessionKey: requestedSessionKey ?? "(not set)",
+          lane: request.lane ?? "(not set)",
+          status: "ok",
+        });
         const payload = {
           runId,
           status: "ok" as const,
@@ -404,6 +434,12 @@ export const agentHandlers: GatewayRequestHandlers = {
         respond(true, payload, undefined, { runId });
       })
       .catch((err) => {
+        log.error("gateway agent handler agentCommand failed", {
+          runId,
+          sessionKey: requestedSessionKey ?? "(not set)",
+          lane: request.lane ?? "(not set)",
+          error: formatForLog(err),
+        });
         const error = errorShape(ErrorCodes.UNAVAILABLE, String(err));
         const payload = {
           runId,

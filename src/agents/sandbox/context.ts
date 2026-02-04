@@ -20,7 +20,9 @@ export async function resolveSandboxContext(params: {
   workspaceDir?: string;
 }): Promise<SandboxContext | null> {
   const rawSessionKey = params.sessionKey?.trim();
+  console.log(`[sandbox] resolveSandboxContext start sessionKey=${rawSessionKey ?? "(none)"}`);
   if (!rawSessionKey) {
+    console.log(`[sandbox] no sessionKey, returning null`);
     return null;
   }
 
@@ -28,13 +30,19 @@ export async function resolveSandboxContext(params: {
     cfg: params.config,
     sessionKey: rawSessionKey,
   });
+  console.log(
+    `[sandbox] runtime status: sandboxed=${runtime.sandboxed} mode=${runtime.mode} sessionKey=${runtime.sessionKey}`,
+  );
   if (!runtime.sandboxed) {
+    console.log(`[sandbox] not sandboxed, returning null`);
     return null;
   }
 
   const cfg = resolveSandboxConfigForAgent(params.config, runtime.agentId);
+  console.log(`[sandbox] config resolved, pruning sandboxes...`);
 
   await maybePruneSandboxes(cfg);
+  console.log(`[sandbox] prune complete`);
 
   const agentWorkspaceDir = resolveUserPath(
     params.workspaceDir?.trim() || DEFAULT_AGENT_WORKSPACE_DIR,
@@ -44,37 +52,50 @@ export async function resolveSandboxContext(params: {
   const sandboxWorkspaceDir =
     cfg.scope === "shared" ? workspaceRoot : resolveSandboxWorkspaceDir(workspaceRoot, scopeKey);
   const workspaceDir = cfg.workspaceAccess === "rw" ? agentWorkspaceDir : sandboxWorkspaceDir;
+  console.log(
+    `[sandbox] workspaceDirs resolved: sandboxWorkspaceDir=${sandboxWorkspaceDir} workspaceDir=${workspaceDir}`,
+  );
   if (workspaceDir === sandboxWorkspaceDir) {
+    console.log(`[sandbox] ensuring sandbox workspace...`);
     await ensureSandboxWorkspace(
       sandboxWorkspaceDir,
       agentWorkspaceDir,
       params.config?.agents?.defaults?.skipBootstrap,
     );
+    console.log(`[sandbox] sandbox workspace ensured`);
     if (cfg.workspaceAccess !== "rw") {
+      console.log(`[sandbox] syncing skills...`);
       try {
         await syncSkillsToWorkspace({
           sourceWorkspaceDir: agentWorkspaceDir,
           targetWorkspaceDir: sandboxWorkspaceDir,
           config: params.config,
         });
+        console.log(`[sandbox] skills synced`);
       } catch (error) {
         const message = error instanceof Error ? error.message : JSON.stringify(error);
         defaultRuntime.error?.(`Sandbox skill sync failed: ${message}`);
+        console.log(`[sandbox] skills sync failed: ${message}`);
       }
     }
   } else {
+    console.log(`[sandbox] creating workspaceDir...`);
     await fs.mkdir(workspaceDir, { recursive: true });
+    console.log(`[sandbox] workspaceDir created`);
   }
 
+  console.log(`[sandbox] ensuring Docker container...`);
   const containerName = await ensureSandboxContainer({
     sessionKey: rawSessionKey,
     workspaceDir,
     agentWorkspaceDir,
     cfg,
   });
+  console.log(`[sandbox] Docker container ready: ${containerName ?? "(none)"}`);
 
   const evaluateEnabled =
     params.config?.browser?.evaluateEnabled ?? DEFAULT_BROWSER_EVALUATE_ENABLED;
+  console.log(`[sandbox] ensuring browser...`);
   const browser = await ensureSandboxBrowser({
     scopeKey,
     workspaceDir,
@@ -82,6 +103,7 @@ export async function resolveSandboxContext(params: {
     cfg,
     evaluateEnabled,
   });
+  console.log(`[sandbox] browser ready`);
 
   return {
     enabled: true,

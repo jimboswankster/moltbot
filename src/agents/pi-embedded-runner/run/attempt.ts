@@ -146,8 +146,10 @@ export async function runEmbeddedAttempt(
   log.debug(
     `embedded run start: runId=${params.runId} sessionId=${params.sessionId} provider=${params.provider} model=${params.modelId} thinking=${params.thinkLevel} messageChannel=${params.messageChannel ?? params.messageProvider ?? "unknown"}`,
   );
+  console.log(`[attempt] checkpoint 1: mkdir workspace runId=${params.runId}`);
 
   await fs.mkdir(resolvedWorkspace, { recursive: true });
+  console.log(`[attempt] checkpoint 2: resolveSandboxContext runId=${params.runId}`);
 
   const sandboxSessionKey = params.sessionKey?.trim() || params.sessionId;
   const sandbox = await resolveSandboxContext({
@@ -155,12 +157,14 @@ export async function runEmbeddedAttempt(
     sessionKey: sandboxSessionKey,
     workspaceDir: resolvedWorkspace,
   });
+  console.log(`[attempt] checkpoint 3: sandbox resolved runId=${params.runId}`);
   const effectiveWorkspace = sandbox?.enabled
     ? sandbox.workspaceAccess === "rw"
       ? resolvedWorkspace
       : sandbox.workspaceDir
     : resolvedWorkspace;
   await fs.mkdir(effectiveWorkspace, { recursive: true });
+  console.log(`[attempt] checkpoint 4: effectiveWorkspace created runId=${params.runId}`);
 
   let restoreSkillEnv: (() => void) | undefined;
   process.chdir(effectiveWorkspace);
@@ -202,9 +206,11 @@ export async function runEmbeddedAttempt(
       : undefined;
 
     const agentDir = params.agentDir ?? resolveOpenClawAgentDir();
+    console.log(`[attempt] checkpoint 5: skills resolved runId=${params.runId}`);
 
     // Check if the model supports native image input
     const modelHasVision = params.model.input?.includes("image") ?? false;
+    console.log(`[attempt] checkpoint 6: creating tools runId=${params.runId}`);
     const toolsRaw = params.disableTools
       ? []
       : createOpenClawCodingTools({
@@ -241,6 +247,9 @@ export async function runEmbeddedAttempt(
         });
     const tools = sanitizeToolsForGoogle({ tools: toolsRaw, provider: params.provider });
     logToolSchemasForGoogle({ tools, provider: params.provider });
+    console.log(
+      `[attempt] checkpoint 7: tools created (${tools.length} tools) runId=${params.runId}`,
+    );
 
     const machineName = await getMachineDisplayName();
     const runtimeChannel = normalizeMessageChannel(params.messageChannel ?? params.messageProvider);
@@ -394,9 +403,13 @@ export async function runEmbeddedAttempt(
     const systemPromptOverride = createSystemPromptOverride(appendPrompt);
     const systemPromptText = systemPromptOverride();
 
+    console.log(
+      `[attempt] checkpoint 8a: acquiring session lock runId=${params.runId} sessionFile=${params.sessionFile}`,
+    );
     const sessionLock = await acquireSessionWriteLock({
       sessionFile: params.sessionFile,
     });
+    console.log(`[attempt] checkpoint 8b: session lock acquired runId=${params.runId}`);
 
     let sessionManager: ReturnType<typeof guardSessionManager> | undefined;
     let session: Awaited<ReturnType<typeof createAgentSession>>["session"] | undefined;
@@ -469,6 +482,7 @@ export async function runEmbeddedAttempt(
 
       const allCustomTools = [...customTools, ...clientToolDefs];
 
+      console.log(`[attempt] checkpoint 9a: createAgentSession runId=${params.runId}`);
       ({ session } = await createAgentSession({
         cwd: resolvedWorkspace,
         agentDir,
@@ -481,6 +495,7 @@ export async function runEmbeddedAttempt(
         sessionManager,
         settingsManager,
       }));
+      console.log(`[attempt] checkpoint 9b: session created runId=${params.runId}`);
       applySystemPromptOverrideToSession(session, systemPromptText);
       if (!session) {
         throw new Error("Embedded agent session missing");
@@ -801,11 +816,15 @@ export async function runEmbeddedAttempt(
 
           // Only pass images option if there are actually images to pass
           // This avoids potential issues with models that don't expect the images parameter
+          console.log(
+            `[attempt] checkpoint 10: calling activeSession.prompt runId=${params.runId}`,
+          );
           if (imageResult.images.length > 0) {
             await abortable(activeSession.prompt(effectivePrompt, { images: imageResult.images }));
           } else {
             await abortable(activeSession.prompt(effectivePrompt));
           }
+          console.log(`[attempt] checkpoint 11: prompt completed runId=${params.runId}`);
         } catch (err) {
           promptError = err;
         } finally {
