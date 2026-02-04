@@ -122,20 +122,26 @@ export async function remove(state: CronServiceState, id: string) {
 }
 
 export async function run(state: CronServiceState, id: string, mode?: "due" | "force") {
-  return await locked(state, async () => {
+  const now = state.deps.nowMs();
+  const shouldRun = await locked(state, async () => {
     warnIfDisabled(state, "run");
     await ensureLoaded(state);
     const job = findJobOrThrow(state, id);
-    const now = state.deps.nowMs();
     const due = isJobDue(job, now, { forced: mode === "force" });
     if (!due) {
       return { ok: true, ran: false, reason: "not-due" as const };
     }
-    await executeJob(state, job, now, { forced: mode === "force" });
-    await persist(state);
-    armTimer(state);
-    return { ok: true, ran: true } as const;
+    const snapshot =
+      typeof structuredClone === "function"
+        ? structuredClone(job)
+        : (JSON.parse(JSON.stringify(job)) as typeof job);
+    return { ok: true, ran: true, snapshot } as const;
   });
+  if (!shouldRun.ran) {
+    return shouldRun;
+  }
+  await executeJob(state, id, now, { forced: mode === "force" }, shouldRun.snapshot);
+  return { ok: true, ran: true } as const;
 }
 
 export function wakeNow(

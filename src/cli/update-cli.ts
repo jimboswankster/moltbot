@@ -616,7 +616,14 @@ function printResult(result: UpdateRunResult, opts: PrintResultOptions) {
 }
 
 export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
-  process.noDeprecation = true;
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(process, "noDeprecation");
+    if (!descriptor || descriptor.writable) {
+      process.noDeprecation = true;
+    }
+  } catch {
+    // Ignore read-only process.noDeprecation in newer runtimes.
+  }
   process.env.NODE_NO_WARNINGS = "1";
   const timeoutMs = opts.timeout ? Number.parseInt(opts.timeout, 10) * 1000 : undefined;
   const shouldRestart = opts.restart !== false;

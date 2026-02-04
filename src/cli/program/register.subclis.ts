@@ -145,6 +145,14 @@ const entries: SubCliEntry[] = [
     },
   },
   {
+    name: "debug",
+    description: "Debug and diagnostic tools",
+    register: async (program) => {
+      const mod = await import("../debug-cli.js");
+      mod.registerDebugCli(program);
+    },
+  },
+  {
     name: "docs",
     description: "Docs helpers",
     register: async (program) => {

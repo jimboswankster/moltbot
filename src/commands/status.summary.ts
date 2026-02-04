@@ -13,6 +13,7 @@ import { listAgentsForGateway } from "../gateway/session-utils.js";
 import { buildChannelSummary } from "../infra/channel-summary.js";
 import { resolveHeartbeatSummaryForAgent } from "../infra/heartbeat-runner.js";
 import { peekSystemEvents } from "../infra/system-events.js";
+import { collectUsageSnapshot } from "../infra/usage-snapshot.js";
 import { parseAgentSessionKey } from "../routing/session-key.js";
 import { resolveLinkChannelContext } from "./status.link-channel.js";
 
@@ -175,6 +176,7 @@ export async function getStatusSummary(): Promise<StatusSummary> {
     .toSorted((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
   const recent = allSessions.slice(0, 10);
   const totalSessions = allSessions.length;
+  const usageSnapshot = await collectUsageSnapshot({ config: cfg }).catch(() => undefined);
 
   return {
     linkChannel: linkContext
@@ -201,5 +203,6 @@ export async function getStatusSummary(): Promise<StatusSummary> {
       recent,
       byAgent,
     },
+    usageSnapshot,
   };
 }

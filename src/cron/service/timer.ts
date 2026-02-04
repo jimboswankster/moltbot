@@ -36,68 +36,104 @@ export async function onTimer(state: CronServiceState) {
   }
   state.running = true;
   try {
-    await locked(state, async () => {
-      await ensureLoaded(state);
-      await runDueJobs(state);
-      await persist(state);
-      armTimer(state);
-    });
+    await runDueJobs(state);
   } finally {
     state.running = false;
   }
 }
 
 export async function runDueJobs(state: CronServiceState) {
-  if (!state.store) {
+  const dueIds = await locked(state, async () => {
+    await ensureLoaded(state);
+    if (!state.store) {
+      return [];
+    }
+    const now = state.deps.nowMs();
+    const ids = state.store.jobs
+      .filter((j) => {
+        if (!j.enabled) {
+          return false;
+        }
+        if (typeof j.state.runningAtMs === "number") {
+          return false;
+        }
+        const next = j.state.nextRunAtMs;
+        return typeof next === "number" && now >= next;
+      })
+      .map((j) => j.id);
+    if (ids.length === 0) {
+      armTimer(state);
+    }
+    return ids;
+  });
+  if (dueIds.length === 0) {
     return;
   }
   const now = state.deps.nowMs();
-  const due = state.store.jobs.filter((j) => {
-    if (!j.enabled) {
-      return false;
-    }
-    if (typeof j.state.runningAtMs === "number") {
-      return false;
-    }
-    const next = j.state.nextRunAtMs;
-    return typeof next === "number" && now >= next;
-  });
-  for (const job of due) {
-    await executeJob(state, job, now, { forced: false });
+  for (const jobId of dueIds) {
+    await executeJob(state, jobId, now, { forced: false });
   }
 }
 
 export async function executeJob(
   state: CronServiceState,
-  job: CronJob,
+  jobId: string,
   nowMs: number,
   opts: { forced: boolean },
+  snapshotOverride?: CronJob,
 ) {
   const startedAt = state.deps.nowMs();
-  job.state.runningAtMs = startedAt;
-  job.state.lastError = undefined;
-  emit(state, { jobId: job.id, action: "started", runAtMs: startedAt });
+  const snapshot = await locked(state, async () => {
+    await ensureLoaded(state);
+    const job = state.store?.jobs.find((entry) => entry.id === jobId);
+    if (!job) {
+      return null;
+    }
+    job.state.runningAtMs = startedAt;
+    job.state.lastError = undefined;
+    job.state.nextRunAtMs = undefined;
+    emit(state, { jobId: job.id, action: "started", runAtMs: startedAt });
+    await persist(state);
+    armTimer(state);
+    return typeof structuredClone === "function"
+      ? structuredClone(job)
+      : (JSON.parse(JSON.stringify(job)) as CronJob);
+  });
+  const runSnapshot = snapshotOverride ?? snapshot;
+  if (!runSnapshot) {
+    return;
+  }
 
-  let deleted = false;
+  let outcome: {
+    status: "ok" | "error" | "skipped";
+    err?: string;
+    summary?: string;
+    outputText?: string;
+  } | null = null;
+  try {
+    outcome = await runJobCore(state, runSnapshot);
+  } catch (err) {
+    outcome = { status: "error", err: String(err) };
+  }
 
-  const finish = async (
-    status: "ok" | "error" | "skipped",
-    err?: string,
-    summary?: string,
-    outputText?: string,
-  ) => {
+  await locked(state, async () => {
+    await ensureLoaded(state);
+    const job = state.store?.jobs.find((entry) => entry.id === jobId);
+    if (!job || !outcome) {
+      return;
+    }
     const endedAt = state.deps.nowMs();
     job.state.runningAtMs = undefined;
     job.state.lastRunAtMs = startedAt;
-    job.state.lastStatus = status;
+    job.state.lastStatus = outcome.status;
     job.state.lastDurationMs = Math.max(0, endedAt - startedAt);
-    job.state.lastError = err;
+    job.state.lastError = outcome.err;
 
     const shouldDelete =
-      job.schedule.kind === "at" && status === "ok" && job.deleteAfterRun === true;
+      job.schedule.kind === "at" && outcome.status === "ok" && job.deleteAfterRun === true;
 
     if (!shouldDelete) {
-      if (job.schedule.kind === "at" && status === "ok") {
+      if (job.schedule.kind === "at" && outcome.status === "ok") {
         // One-shot job completed successfully; disable it.
         job.enabled = false;
         job.state.nextRunAtMs = undefined;
@@ -111,124 +147,132 @@ export async function executeJob(
     emit(state, {
       jobId: job.id,
       action: "finished",
-      status,
-      error: err,
-      summary,
+      status: outcome.status,
+      error: outcome.err,
+      summary: outcome.summary,
       runAtMs: startedAt,
       durationMs: job.state.lastDurationMs,
       nextRunAtMs: job.state.nextRunAtMs,
     });
 
+    let deleted = false;
     if (shouldDelete && state.store) {
-      state.store.jobs = state.store.jobs.filter((j) => j.id !== job.id);
+      state.store.jobs = state.store.jobs.filter((entry) => entry.id !== job.id);
       deleted = true;
       emit(state, { jobId: job.id, action: "removed" });
     }
 
-    if (job.sessionTarget === "isolated") {
-      const prefix = job.isolation?.postToMainPrefix?.trim() || "Cron";
-      const mode = job.isolation?.postToMainMode ?? "summary";
-
-      let body = (summary ?? err ?? status).trim();
-      if (mode === "full") {
-        // Prefer full agent output if available; fall back to summary.
-        const maxCharsRaw = job.isolation?.postToMainMaxChars;
-        const maxChars = Number.isFinite(maxCharsRaw) ? Math.max(0, maxCharsRaw as number) : 8000;
-        const fullText = (outputText ?? "").trim();
-        if (fullText) {
-          body = fullText.length > maxChars ? `${fullText.slice(0, maxChars)}…` : fullText;
-        }
-      }
-
-      const statusPrefix = status === "ok" ? prefix : `${prefix} (${status})`;
-      state.deps.enqueueSystemEvent(`${statusPrefix}: ${body}`, {
-        agentId: job.agentId,
-      });
-      if (job.wakeMode === "now") {
-        state.deps.requestHeartbeatNow({ reason: `cron:${job.id}:post` });
-      }
-    }
-  };
-
-  try {
-    if (job.sessionTarget === "main") {
-      const text = resolveJobPayloadTextForMain(job);
-      if (!text) {
-        const kind = job.payload.kind;
-        await finish(
-          "skipped",
-          kind === "systemEvent"
-            ? "main job requires non-empty systemEvent text"
-            : 'main job requires payload.kind="systemEvent"',
-        );
-        return;
-      }
-      state.deps.enqueueSystemEvent(text, { agentId: job.agentId });
-      if (job.wakeMode === "now" && state.deps.runHeartbeatOnce) {
-        const reason = `cron:${job.id}`;
-        const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
-        const maxWaitMs = 2 * 60_000;
-        const waitStartedAt = state.deps.nowMs();
-
-        let heartbeatResult: HeartbeatRunResult;
-        for (;;) {
-          heartbeatResult = await state.deps.runHeartbeatOnce({ reason });
-          if (
-            heartbeatResult.status !== "skipped" ||
-            heartbeatResult.reason !== "requests-in-flight"
-          ) {
-            break;
-          }
-          if (state.deps.nowMs() - waitStartedAt > maxWaitMs) {
-            heartbeatResult = {
-              status: "skipped",
-              reason: "timeout waiting for main lane to become idle",
-            };
-            break;
-          }
-          await delay(250);
-        }
-
-        if (heartbeatResult.status === "ran") {
-          await finish("ok", undefined, text);
-        } else if (heartbeatResult.status === "skipped") {
-          await finish("skipped", heartbeatResult.reason, text);
-        } else {
-          await finish("error", heartbeatResult.reason, text);
-        }
-      } else {
-        // wakeMode is "next-heartbeat" or runHeartbeatOnce not available
-        state.deps.requestHeartbeatNow({ reason: `cron:${job.id}` });
-        await finish("ok", undefined, text);
-      }
-      return;
-    }
-
-    if (job.payload.kind !== "agentTurn") {
-      await finish("skipped", "isolated job requires payload.kind=agentTurn");
-      return;
-    }
-
-    const res = await state.deps.runIsolatedAgentJob({
-      job,
-      message: job.payload.message,
-    });
-    if (res.status === "ok") {
-      await finish("ok", undefined, res.summary, res.outputText);
-    } else if (res.status === "skipped") {
-      await finish("skipped", undefined, res.summary, res.outputText);
-    } else {
-      await finish("error", res.error ?? "cron job failed", res.summary, res.outputText);
-    }
-  } catch (err) {
-    await finish("error", String(err));
-  } finally {
     job.updatedAtMs = nowMs;
     if (!opts.forced && job.enabled && !deleted) {
       // Keep nextRunAtMs in sync in case the schedule advanced during a long run.
       job.state.nextRunAtMs = computeJobNextRunAtMs(job, state.deps.nowMs());
     }
+    await persist(state);
+    armTimer(state);
+  });
+}
+
+async function runJobCore(
+  state: CronServiceState,
+  job: CronJob,
+): Promise<{
+  status: "ok" | "error" | "skipped";
+  err?: string;
+  summary?: string;
+  outputText?: string;
+}> {
+  if (job.sessionTarget === "main") {
+    const text = resolveJobPayloadTextForMain(job);
+    if (!text) {
+      const kind = job.payload.kind;
+      return {
+        status: "skipped",
+        err:
+          kind === "systemEvent"
+            ? "main job requires non-empty systemEvent text"
+            : 'main job requires payload.kind="systemEvent"',
+      };
+    }
+    state.deps.enqueueSystemEvent(text, { agentId: job.agentId });
+    if (job.wakeMode === "now" && state.deps.runHeartbeatOnce) {
+      const reason = `cron:${job.id}`;
+      const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+      const maxWaitMs = 2 * 60_000;
+      const waitStartedAt = state.deps.nowMs();
+
+      let heartbeatResult: HeartbeatRunResult;
+      for (;;) {
+        heartbeatResult = await state.deps.runHeartbeatOnce({ reason });
+        if (
+          heartbeatResult.status !== "skipped" ||
+          heartbeatResult.reason !== "requests-in-flight"
+        ) {
+          break;
+        }
+        if (state.deps.nowMs() - waitStartedAt > maxWaitMs) {
+          heartbeatResult = {
+            status: "skipped",
+            reason: "timeout waiting for main lane to become idle",
+          };
+          break;
+        }
+        await delay(250);
+      }
+
+      if (heartbeatResult.status === "ran") {
+        return { status: "ok", summary: text };
+      }
+      if (heartbeatResult.status === "skipped") {
+        return { status: "skipped", err: heartbeatResult.reason, summary: text };
+      }
+      return { status: "error", err: heartbeatResult.reason, summary: text };
+    }
+    // wakeMode is "next-heartbeat" or runHeartbeatOnce not available
+    state.deps.requestHeartbeatNow({ reason: `cron:${job.id}` });
+    return { status: "ok", summary: text };
   }
+
+  if (job.payload.kind !== "agentTurn") {
+    return { status: "skipped", err: "isolated job requires payload.kind=agentTurn" };
+  }
+
+  const res = await state.deps.runIsolatedAgentJob({
+    job,
+    message: job.payload.message,
+  });
+  const outcome =
+    res.status === "ok"
+      ? { status: "ok" as const, summary: res.summary, outputText: res.outputText }
+      : res.status === "skipped"
+        ? { status: "skipped" as const, summary: res.summary, outputText: res.outputText }
+        : {
+            status: "error" as const,
+            err: res.error ?? "cron job failed",
+            summary: res.summary,
+            outputText: res.outputText,
+          };
+
+  const prefix = job.isolation?.postToMainPrefix?.trim() || "Cron";
+  const mode = job.isolation?.postToMainMode ?? "summary";
+  let body = (outcome.summary ?? outcome.err ?? outcome.status).trim();
+  if (mode === "full") {
+    // Prefer full agent output if available; fall back to summary.
+    const maxCharsRaw = job.isolation?.postToMainMaxChars;
+    const maxChars = Number.isFinite(maxCharsRaw) ? Math.max(0, maxCharsRaw as number) : 8000;
+    const fullText = (outcome.outputText ?? "").trim();
+    if (fullText) {
+      body = fullText.length > maxChars ? `${fullText.slice(0, maxChars)}…` : fullText;
+    }
+  }
+  const statusPrefix = outcome.status === "ok" ? prefix : `${prefix} (${outcome.status})`;
+  state.deps.enqueueSystemEvent(`${statusPrefix}: ${body}`, {
+    agentId: job.agentId,
+  });
+  if (job.wakeMode === "now") {
+    state.deps.requestHeartbeatNow({ reason: `cron:${job.id}:post` });
+  }
+
+  return outcome;
 }
 
 export function wake(

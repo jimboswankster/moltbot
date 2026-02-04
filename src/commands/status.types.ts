@@ -1,4 +1,5 @@
 import type { ChannelId } from "../channels/plugins/types.js";
+import type { UsageSnapshot } from "../infra/usage-snapshot.js";
 
 export type SessionStatus = {
   agentId?: string;
@@ -55,4 +56,5 @@ export type StatusSummary = {
       recent: SessionStatus[];
     }>;
   };
+  usageSnapshot?: UsageSnapshot;
 };

@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { CronJob } from "./types.js";
 import { CronService } from "./service.js";
 
 const noopLogger = {
@@ -19,6 +20,20 @@ async function makeStorePath() {
       await fs.rm(dir, { recursive: true, force: true });
     },
   };
+}
+
+async function waitForJob(cron: CronService, predicate: (job: CronJob | undefined) => boolean) {
+  for (let i = 0; i < 25; i += 1) {
+    const jobs = await cron.list({ includeDisabled: true });
+    const job = jobs[0];
+    if (predicate(job)) {
+      return job;
+    }
+    vi.runAllTicks();
+    await Promise.resolve();
+  }
+  const jobs = await cron.list({ includeDisabled: true });
+  return jobs[0];
 }
 
 describe("CronService", () => {
@@ -66,9 +81,9 @@ describe("CronService", () => {
     expect(enqueueSystemEvent).not.toHaveBeenCalled();
     expect(requestHeartbeatNow).not.toHaveBeenCalled();
 
-    const jobs = await cron.list({ includeDisabled: true });
-    expect(jobs[0]?.state.lastStatus).toBe("skipped");
-    expect(jobs[0]?.state.lastError).toMatch(/non-empty/i);
+    const updated = await waitForJob(cron, (job) => job?.state.lastStatus === "skipped");
+    expect(updated?.state.lastStatus).toBe("skipped");
+    expect(updated?.state.lastError).toMatch(/non-empty/i);
 
     cron.stop();
     await store.cleanup();
