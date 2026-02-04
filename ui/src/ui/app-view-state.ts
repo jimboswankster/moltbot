@@ -50,6 +50,7 @@ export type AppViewState = {
   chatMessage: string;
   chatSlashMode: boolean;
   chatSlashHighlight: number | null;
+  chatSlashCommands: import("./slash-commands").SlashCommand[];
   chatAttachments: ChatAttachment[];
   chatMessages: unknown[];
   chatToolMessages: unknown[];

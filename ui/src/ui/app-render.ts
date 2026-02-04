@@ -843,6 +843,7 @@ export function renderApp(state: AppViewState) {
                 onSlashModeChange: (next) => (state.chatSlashMode = next),
                 slashHighlightIndex: state.chatSlashHighlight,
                 slashMode: state.chatSlashMode,
+                slashCommands: state.chatSlashCommands,
                 attachments: state.chatAttachments,
                 onAttachmentsChange: (next) => (state.chatAttachments = next),
                 onSend: () => state.handleSendChat(),

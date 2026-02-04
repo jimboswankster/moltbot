@@ -31,6 +31,8 @@ function resolveControlUiRoot(): string | null {
   const candidates = [
     // Packaged app: control-ui lives alongside the executable.
     execDir ? path.resolve(execDir, "control-ui") : null,
+    // Running from dist bundle in repo root: dist/control-ui
+    path.resolve(here, "control-ui"),
     // Running from dist: dist/gateway/control-ui.js -> dist/control-ui
     path.resolve(here, "../control-ui"),
     // Running from source: src/gateway/control-ui.ts -> dist/control-ui

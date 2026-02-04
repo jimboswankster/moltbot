@@ -79,6 +79,11 @@ import { resolveInjectedAssistantIdentity } from "./assistant-identity";
 import { loadAssistantIdentity as loadAssistantIdentityInternal } from "./controllers/assistant-identity";
 import { loadSettings, type UiSettings } from "./storage";
 import { type ChatAttachment, type ChatQueueItem, type CronFormState } from "./ui-types";
+import {
+  loadSlashCommands as loadSlashCommandsInternal,
+  slashCommands as defaultSlashCommands,
+  type SlashCommand,
+} from "./slash-commands";
 
 declare global {
   interface Window {
@@ -127,6 +132,7 @@ export class OpenClawApp extends LitElement {
   @state() chatMessage = "";
   @state() chatSlashMode = false;
   @state() chatSlashHighlight: number | null = null;
+  @state() chatSlashCommands: SlashCommand[] = defaultSlashCommands;
   @state() chatMessages: unknown[] = [];
   @state() chatToolMessages: unknown[] = [];
   @state() chatStream: string | null = null;
@@ -353,6 +359,10 @@ export class OpenClawApp extends LitElement {
 
   async loadAssistantIdentity() {
     await loadAssistantIdentityInternal(this);
+  }
+
+  async loadSlashCommands() {
+    this.chatSlashCommands = await loadSlashCommandsInternal(this.basePath);
   }
 
   applySettings(next: UiSettings) {

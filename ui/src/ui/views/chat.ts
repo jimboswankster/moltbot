@@ -242,6 +242,23 @@ export function renderChat(props: ChatProps) {
       : null;
 
   let composeTextarea: HTMLTextAreaElement | null = null;
+  let slashContainer: HTMLDivElement | null = null;
+
+  function scrollSlashHighlightIntoView(index: number) {
+    if (!slashContainer) {
+      return;
+    }
+    const items = slashContainer.querySelectorAll<HTMLButtonElement>(
+      ".chat-slash-suggestion",
+    );
+    const target = items[index];
+    if (!target) {
+      return;
+    }
+    requestAnimationFrame(() => {
+      target.scrollIntoView({ block: "nearest" });
+    });
+  }
 
   const hasAttachments = (props.attachments?.length ?? 0) > 0;
   const composePlaceholder = props.connected
@@ -408,7 +425,14 @@ export function renderChat(props: ChatProps) {
         ${
           slash.active && slash.items.length > 0
             ? html`
-              <div class="chat-slash-suggestions" role="listbox" aria-label="Slash commands">
+              <div
+                class="chat-slash-suggestions"
+                role="listbox"
+                aria-label="Slash commands"
+                ${ref((el) => {
+                  slashContainer = el as HTMLDivElement | null;
+                })}
+              >
                 ${slash.items.map(
                   (cmd, index) => html`
                     <button
@@ -418,15 +442,16 @@ export function renderChat(props: ChatProps) {
                       aria-selected=${index === slashHighlight}
                       @mousedown=${(event: MouseEvent) => {
                         event.preventDefault();
-                        props.onDraftChange(cmd.name);
+                        const applied = cmd.prompt && cmd.prompt.trim() ? cmd.prompt : cmd.name;
+                        props.onDraftChange(applied);
                         props.onSlashHighlightChange?.(null);
                         props.onSlashModeChange?.(false);
                         queueMicrotask(() => {
                           if (!composeTextarea) {
                             return;
                           }
-                          composeTextarea.selectionStart = cmd.name.length;
-                          composeTextarea.selectionEnd = cmd.name.length;
+                          composeTextarea.selectionStart = applied.length;
+                          composeTextarea.selectionEnd = applied.length;
                         });
                       }}
                     >
@@ -458,12 +483,14 @@ export function renderChat(props: ChatProps) {
                     e.preventDefault();
                     const next = clampIndex((slashHighlight ?? 0) + 1, max);
                     props.onSlashHighlightChange?.(next);
+                    scrollSlashHighlightIntoView(next);
                     return;
                   }
                   if (e.key === "ArrowUp") {
                     e.preventDefault();
                     const next = clampIndex((slashHighlight ?? 0) - 1, max);
                     props.onSlashHighlightChange?.(next);
+                    scrollSlashHighlightIntoView(next);
                     return;
                   }
                   if (
@@ -476,15 +503,17 @@ export function renderChat(props: ChatProps) {
                     e.preventDefault();
                     const command = slash.items[slashHighlight ?? 0];
                     if (command) {
-                      props.onDraftChange(command.name);
+                      const applied =
+                        command.prompt && command.prompt.trim() ? command.prompt : command.name;
+                      props.onDraftChange(applied);
                       props.onSlashHighlightChange?.(null);
                       props.onSlashModeChange?.(false);
                       queueMicrotask(() => {
                         if (!composeTextarea) {
                           return;
                         }
-                        composeTextarea.selectionStart = command.name.length;
-                        composeTextarea.selectionEnd = command.name.length;
+                        composeTextarea.selectionStart = applied.length;
+                        composeTextarea.selectionEnd = applied.length;
                       });
                     }
                     return;
