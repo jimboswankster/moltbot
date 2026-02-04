@@ -28,10 +28,15 @@ function resolveControlUiRoot(): string | null {
       return null;
     }
   })();
+  // Entry script (e.g. dist/entry.js) — reliable when running via node /path/to/openclaw/dist/entry.js
+  const argv1 = process.argv[1];
+  const entryDistDir = argv1 ? path.dirname(path.resolve(argv1)) : null;
   const candidates = [
     // Packaged app: control-ui lives alongside the executable.
     execDir ? path.resolve(execDir, "control-ui") : null,
-    // Running from dist bundle in repo root: dist/control-ui
+    // Explicit: entry is in dist/ (e.g. dist/entry.js) -> dist/control-ui
+    entryDistDir ? path.join(entryDistDir, "control-ui") : null,
+    // Running from dist bundle: this file's dir is dist/ -> dist/control-ui
     path.resolve(here, "control-ui"),
     // Running from dist: dist/gateway/control-ui.js -> dist/control-ui
     path.resolve(here, "../control-ui"),
