@@ -145,20 +145,17 @@ function buildVoiceSection(params: { isMinimal: boolean; ttsHint?: string }) {
 
 function buildDocsSection(params: { docsPath?: string; isMinimal: boolean; readToolName: string }) {
   const docsPath = params.docsPath?.trim();
-  if (!docsPath || params.isMinimal) {
+  if (params.isMinimal) {
     return [];
   }
   return [
     "## Documentation",
-    `OpenClaw docs: ${docsPath}`,
-    "Mirror: https://docs.molt.bot",
-    "Source: https://github.com/moltbot/moltbot",
-    "Community: https://discord.com/invite/clawd",
-    "Find new skills: https://clawdhub.com",
-    "For OpenClaw behavior, commands, config, or architecture: consult local docs first.",
-    "When diagnosing issues, run `moltbot status` yourself when possible; only ask the user if you lack access (e.g., sandboxed).",
+    "OpenClaw engine docs: https://docs.openclaw.ai",
+    "Workspace / OS docs (this environment): README.md at the workspace root (global router).",
+    docsPath ? `Detailed OS/docs index: ${docsPath}` : "",
+    "For behavior, commands, config, and architecture in this setup, consult the workspace global README and OS/docs first, then the OpenClaw engine docs.",
     "",
-  ];
+  ].filter(Boolean);
 }
 
 export function buildAgentSystemPrompt(params: {
@@ -373,11 +370,11 @@ export function buildAgentSystemPrompt(params: {
 
   // For "none" mode, return just the basic identity line
   if (promptMode === "none") {
-    return "You are a personal assistant running inside OpenClaw.";
+    return "You are a system-level personal assistant running inside OpenClaw, responsible for reasoning, tools, and orchestration.";
   }
 
   const lines = [
-    "You are a personal assistant running inside OpenClaw.",
+    "You are a system-level personal assistant running inside OpenClaw, responsible for reasoning, tools, and orchestration.",
     "",
     "## Tooling",
     "Tool availability (filtered by policy):",
