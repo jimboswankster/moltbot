@@ -12,7 +12,12 @@
  * Derived from: workspace/docs/development/debug/a2a-bug/code-inspection.md
  */
 
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
+import type { OpenClawConfig } from "../../../config/config.js";
+import { loadSessionStore, saveSessionStore } from "../../../config/sessions.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Mocks
@@ -35,13 +40,14 @@ vi.mock("../sessions-announce-target.js", () => ({
   resolveAnnounceTarget: (opts: unknown) => resolveAnnounceTargetMock(opts),
 }));
 
+let sessionStorePath = "";
 vi.mock("../../../config/config.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../../config/config.js")>();
   return {
     ...actual,
     loadConfig: () =>
       ({
-        session: { scope: "per-sender", mainKey: "main" },
+        session: { scope: "per-sender", mainKey: "main", store: sessionStorePath },
         tools: { agentToAgent: { enabled: true } },
       }) as never,
   };
@@ -66,6 +72,7 @@ vi.mock("../../../logging/subsystem.js", () => ({
 // Imports
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { runA2AInboxBeforeAgentStart } from "../../a2a-inbox-hook.js";
 import {
   buildAgentToAgentReplyContext,
   buildAgentToAgentAnnounceContext,
@@ -75,6 +82,21 @@ import { runSessionsSendA2AFlow } from "../sessions-send-tool.a2a.js";
 // ─────────────────────────────────────────────────────────────────────────────
 // Test Utilities
 // ─────────────────────────────────────────────────────────────────────────────
+
+let tempDir = "";
+beforeEach(async () => {
+  tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-a2a-integration-"));
+  sessionStorePath = path.join(tempDir, "sessions.json");
+  await saveSessionStore(sessionStorePath, {});
+});
+
+afterEach(async () => {
+  if (tempDir) {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+  tempDir = "";
+  sessionStorePath = "";
+});
 
 function createDefaultParams(
   overrides: Partial<Parameters<typeof runSessionsSendA2AFlow>[0]> = {},
@@ -115,14 +137,14 @@ describe("A2A Integration - Tool Restriction Enforcement", () => {
    * This test verifies that the extraSystemPrompt passed to runAgentStep
    * contains the tool restriction instruction.
    */
-  it("passes tool restriction instruction in extraSystemPrompt during ping-pong", async () => {
-    // Observable: runAgentStepMock receives extraSystemPrompt with tool restriction
+  it("does not run ping-pong steps when using inbox flow", async () => {
+    // Observable: runAgentStepMock called once (announce only)
     resolveAnnounceTargetMock.mockResolvedValue({
       channel: "telegram",
       to: "user:123",
     });
 
-    runAgentStepMock.mockResolvedValueOnce("REPLY_SKIP").mockResolvedValueOnce("Announcement");
+    runAgentStepMock.mockResolvedValueOnce("Announcement");
 
     callGatewayMock.mockResolvedValue({ status: "ok" });
 
@@ -131,10 +153,9 @@ describe("A2A Integration - Tool Restriction Enforcement", () => {
     });
     await runSessionsSendA2AFlow(params);
 
-    // Verify the first call (ping-pong) includes tool restriction
-    const pingPongCall = runAgentStepMock.mock.calls[0][0] as { extraSystemPrompt: string };
-    expect(pingPongCall.extraSystemPrompt).toContain("Do NOT use tools");
-    expect(pingPongCall.extraSystemPrompt).toContain("REPLY_SKIP");
+    expect(runAgentStepMock).toHaveBeenCalledTimes(1);
+    const announceCall = runAgentStepMock.mock.calls[0][0] as { sessionKey: string };
+    expect(announceCall.sessionKey).toBe("agent:main:subagent:sub-001");
   });
 
   it("passes tool restriction instruction in extraSystemPrompt during announce", async () => {
@@ -189,6 +210,57 @@ describe("A2A Integration - Tool Restriction Enforcement", () => {
     expect(context).toContain("Do NOT use tools");
     // Should also mention what to do instead
     expect(context).toContain("ANNOUNCE_SKIP");
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Test Suite: A2A Integration - Inbox Injection
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  describe("A2A Integration - Inbox Injection", () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+    });
+
+    afterEach(() => {
+      vi.clearAllMocks();
+    });
+
+    it("writes inbox event and injects it into the next prompt", async () => {
+      resolveAnnounceTargetMock.mockResolvedValue({
+        channel: "telegram",
+        to: "user:123",
+      });
+
+      runAgentStepMock.mockResolvedValueOnce("Announcement to user");
+      callGatewayMock.mockResolvedValue({ status: "ok" });
+
+      const params = createDefaultParams({
+        roundOneReply: "Sub completed the task.",
+        waitRunId: "run-123",
+      });
+      await runSessionsSendA2AFlow(params);
+
+      const store = loadSessionStore(sessionStorePath, { skipCache: true });
+      const events = store["agent:main:main"]?.a2aInbox?.events ?? [];
+      expect(events.length).toBe(1);
+      expect(events[0]?.replyText).toBe("Announcement to user");
+
+      const cfg = {
+        session: { scope: "per-sender", mainKey: "main", store: sessionStorePath },
+        tools: { agentToAgent: { enabled: true } },
+      } as OpenClawConfig;
+
+      const injected = await runA2AInboxBeforeAgentStart({
+        cfg,
+        ctx: {
+          sessionKey: "agent:main:main",
+          runId: "master-run-1",
+        },
+      });
+
+      expect(injected?.prependContext).toContain("TRANSITIONAL_A2A_INBOX");
+      expect(injected?.prependContext).toContain("Announcement to user");
+    });
   });
 
   /**
@@ -249,30 +321,13 @@ describe("A2A Integration - Concurrency/Race Safeguard", () => {
     });
 
     const announcePrompts: string[] = [];
-    const replyCounts = { one: 0, two: 0 };
 
     runAgentStepMock.mockImplementation(
       async (opts: { message?: string; extraSystemPrompt?: string }) => {
         if (opts.message === "Agent-to-agent announce step.") {
           announcePrompts.push(opts.extraSystemPrompt ?? "");
-          return "Announcement";
         }
-
-        const message = String(opts.message ?? "");
-        const flowId = message.includes("flow=one")
-          ? "one"
-          : message.includes("flow=two")
-            ? "two"
-            : "unknown";
-        if (flowId === "one") {
-          replyCounts.one += 1;
-          return `flow=one reply ${replyCounts.one}`;
-        }
-        if (flowId === "two") {
-          replyCounts.two += 1;
-          return `flow=two reply ${replyCounts.two}`;
-        }
-        return "REPLY_SKIP";
+        return "Announcement";
       },
     );
 
@@ -281,10 +336,12 @@ describe("A2A Integration - Concurrency/Race Safeguard", () => {
     const params1 = createDefaultParams({
       maxPingPongTurns: 2,
       roundOneReply: "flow=one initial",
+      requesterSessionKey: undefined,
     });
     const params2 = createDefaultParams({
       maxPingPongTurns: 2,
       roundOneReply: "flow=two initial",
+      requesterSessionKey: undefined,
       targetSessionKey: "agent:main:subagent:sub-002",
       displayKey: "subagent:sub-002",
     });
@@ -299,12 +356,12 @@ describe("A2A Integration - Concurrency/Race Safeguard", () => {
     vi.useRealTimers();
 
     expect(announcePrompts.length).toBe(2);
-    expect(announcePrompts.some((prompt) => prompt.includes("Latest reply: flow=one reply"))).toBe(
-      true,
-    );
-    expect(announcePrompts.some((prompt) => prompt.includes("Latest reply: flow=two reply"))).toBe(
-      true,
-    );
+    expect(
+      announcePrompts.some((prompt) => prompt.includes("Latest reply: flow=one initial")),
+    ).toBe(true);
+    expect(
+      announcePrompts.some((prompt) => prompt.includes("Latest reply: flow=two initial")),
+    ).toBe(true);
   });
 
   it("resolves when gateway send is slow", async () => {
@@ -314,7 +371,7 @@ describe("A2A Integration - Concurrency/Race Safeguard", () => {
       to: "user:123",
     });
 
-    runAgentStepMock.mockResolvedValueOnce("REPLY_SKIP").mockResolvedValueOnce("Announcement");
+    runAgentStepMock.mockResolvedValueOnce("Announcement");
 
     callGatewayMock.mockImplementation(async () => {
       await new Promise((resolve) => setTimeout(resolve, 50));

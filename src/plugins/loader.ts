@@ -10,6 +10,7 @@ import type {
   PluginDiagnostic,
   PluginLogger,
 } from "./types.js";
+import { runA2AInboxBeforeAgentStart } from "../agents/a2a-inbox-hook.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { resolveUserPath } from "../utils.js";
 import { clearPluginCommands } from "./commands.js";
@@ -188,10 +189,27 @@ export function loadOpenClawPlugins(options: PluginLoadOptions = {}): PluginRegi
   clearPluginCommands();
 
   const runtime = createPluginRuntime();
-  const { registry, createApi } = createPluginRegistry({
+  const { registry, createApi, registerTypedHook } = createPluginRegistry({
     logger,
     runtime,
     coreGatewayHandlers: options.coreGatewayHandlers as Record<string, GatewayRequestHandler>,
+  });
+
+  const coreInboxRecord = createPluginRecord({
+    id: "core:a2a-inbox",
+    name: "A2A Inbox",
+    source: "builtin",
+    origin: "bundled",
+    workspaceDir: options.workspaceDir,
+    enabled: true,
+    configSchema: false,
+  });
+  registry.plugins.push(coreInboxRecord);
+  registerTypedHook(coreInboxRecord, "before_agent_start", async (_event, ctx) => {
+    return await runA2AInboxBeforeAgentStart({
+      cfg: options.config ?? {},
+      ctx,
+    });
   });
 
   const discovery = discoverOpenClawPlugins({

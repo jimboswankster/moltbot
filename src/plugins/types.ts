@@ -306,6 +306,7 @@ export type PluginHookAgentContext = {
   sessionKey?: string;
   workspaceDir?: string;
   messageProvider?: string;
+  runId?: string;
 };
 
 // before_agent_start hook

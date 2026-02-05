@@ -33,6 +33,11 @@ vi.mock("../sessions-announce-target.js", () => ({
   resolveAnnounceTarget: (opts: unknown) => resolveAnnounceTargetMock(opts),
 }));
 
+const recordA2AInboxEventMock = vi.fn();
+vi.mock("../../a2a-inbox.js", () => ({
+  recordA2AInboxEvent: (opts: unknown) => recordA2AInboxEventMock(opts),
+}));
+
 vi.mock("../../../config/config.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../../config/config.js")>();
   return {
@@ -217,69 +222,61 @@ describe("A2A Flow - Ping-Pong Mechanism", () => {
     vi.clearAllMocks();
   });
 
-  it("executes ping-pong loop when all conditions are met", async () => {
+  it("skips ping-pong even when conditions are met", async () => {
     // Observable: runAgentStepMock call count and arguments
     resolveAnnounceTargetMock.mockResolvedValue({
       channel: "telegram",
       to: "user:123",
     });
 
-    // Ping-pong: turn 1 replies, turn 2 skips
-    runAgentStepMock
-      .mockResolvedValueOnce("Requester acknowledges")
-      .mockResolvedValueOnce(REPLY_SKIP_TOKEN)
-      .mockResolvedValueOnce("Announcement message");
+    runAgentStepMock.mockResolvedValueOnce("Announcement message");
 
     callGatewayMock.mockResolvedValue({ status: "ok" });
 
     const params = createDefaultParams();
     await runSessionsSendA2AFlow(params);
 
-    // Verify ping-pong executed: 2 turns + 1 announce = 3 calls
-    expect(runAgentStepMock).toHaveBeenCalledTimes(3);
-
-    // Verify first ping-pong call targets requester session
+    // Only announce step runs
+    expect(runAgentStepMock).toHaveBeenCalledTimes(1);
     expect(runAgentStepMock.mock.calls[0][0]).toMatchObject({
-      sessionKey: "agent:main:main",
-      message: "Sub agent completed the task.",
+      sessionKey: "agent:main:subagent:sub-001",
+      message: "Agent-to-agent announce step.",
     });
   });
 
-  it("exits ping-pong early when agent replies with REPLY_SKIP token", async () => {
-    // Observable: runAgentStepMock call count (should be 2, not 5+1)
+  it("does not run ping-pong when REPLY_SKIP would be emitted", async () => {
+    // Observable: runAgentStepMock call count (announce only)
     resolveAnnounceTargetMock.mockResolvedValue({
       channel: "telegram",
       to: "user:123",
     });
 
-    runAgentStepMock
-      .mockResolvedValueOnce(REPLY_SKIP_TOKEN)
-      .mockResolvedValueOnce("Announcement message");
+    runAgentStepMock.mockResolvedValueOnce("Announcement message");
 
     callGatewayMock.mockResolvedValue({ status: "ok" });
 
     const params = createDefaultParams();
     await runSessionsSendA2AFlow(params);
 
-    // Only 2 calls: 1 failed ping-pong turn + 1 announce
-    expect(runAgentStepMock).toHaveBeenCalledTimes(2);
+    // Only announce step runs
+    expect(runAgentStepMock).toHaveBeenCalledTimes(1);
   });
 
-  it("exits ping-pong early when agent returns empty string", async () => {
+  it("does not run ping-pong when reply would be empty", async () => {
     // Observable: runAgentStepMock call count
     resolveAnnounceTargetMock.mockResolvedValue({
       channel: "telegram",
       to: "user:123",
     });
 
-    runAgentStepMock.mockResolvedValueOnce("").mockResolvedValueOnce("Announcement message");
+    runAgentStepMock.mockResolvedValueOnce("Announcement message");
 
     callGatewayMock.mockResolvedValue({ status: "ok" });
 
     const params = createDefaultParams();
     await runSessionsSendA2AFlow(params);
 
-    expect(runAgentStepMock).toHaveBeenCalledTimes(2);
+    expect(runAgentStepMock).toHaveBeenCalledTimes(1);
   });
 
   it("skips ping-pong when requesterSessionKey equals targetSessionKey", async () => {
@@ -457,21 +454,14 @@ describe("A2A Flow - Rate Limiting", () => {
     vi.clearAllMocks();
   });
 
-  it("delays 1000ms between ping-pong turns", async () => {
+  it("delays 1000ms before the announce step", async () => {
     // Observable: Timing behavior via fake timers
     resolveAnnounceTargetMock.mockResolvedValue({
       channel: "telegram",
       to: "user:123",
     });
 
-    let callOrder: string[] = [];
-    runAgentStepMock.mockImplementation(async () => {
-      callOrder.push(`call-${Date.now()}`);
-      if (callOrder.length < 3) return `Reply ${callOrder.length}`;
-      if (callOrder.length === 3) return REPLY_SKIP_TOKEN;
-      return "Announcement";
-    });
-
+    runAgentStepMock.mockResolvedValueOnce("Announcement");
     callGatewayMock.mockResolvedValue({ status: "ok" });
 
     const params = createDefaultParams({
@@ -480,12 +470,11 @@ describe("A2A Flow - Rate Limiting", () => {
 
     const flowPromise = runSessionsSendA2AFlow(params);
 
-    // Advance through all timers
-    await vi.runAllTimersAsync();
+    expect(runAgentStepMock).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1000);
     await flowPromise;
 
-    // Verify calls were made (timing is enforced by the delay() calls in SUT)
-    expect(runAgentStepMock.mock.calls.length).toBeGreaterThanOrEqual(3);
+    expect(runAgentStepMock).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -537,10 +526,10 @@ describe("A2A Flow - No Reply Early Exit", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Test Suite: A2A Flow - Message Injection Point (Documented Behavior)
+// Test Suite: A2A Flow - Inbox Recording
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("A2A Flow - Message Injection Tracking", () => {
+describe("A2A Flow - Inbox Recording", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -549,46 +538,30 @@ describe("A2A Flow - Message Injection Tracking", () => {
     vi.clearAllMocks();
   });
 
-  /**
-   * DOCUMENTED BEHAVIOR: Ping-pong injection mechanism
-   *
-   * The ping-pong loop calls runAgentStep with the sub's reply as the
-   * `message` parameter. This eventually results in the reply being
-   * sent to the master's session, where it appears as a user message.
-   *
-   * This test verifies the current behavior so any changes are detected.
-   */
-  it("passes sub reply as message parameter to runAgentStep in ping-pong", async () => {
-    // Observable: runAgentStepMock call arguments
+  it("records A2A completion into the requester inbox", async () => {
     resolveAnnounceTargetMock.mockResolvedValue({
       channel: "telegram",
       to: "user:123",
     });
 
-    runAgentStepMock
-      .mockResolvedValueOnce("Master acknowledges: got it!")
-      .mockResolvedValueOnce(REPLY_SKIP_TOKEN)
-      .mockResolvedValueOnce("Final announcement");
-
+    runAgentStepMock.mockResolvedValueOnce("Final announcement");
     callGatewayMock.mockResolvedValue({ status: "ok" });
 
     const params = createDefaultParams({
       roundOneReply: "Sub completed the task",
+      waitRunId: "run-123",
     });
     await runSessionsSendA2AFlow(params);
 
-    // Verify the first ping-pong call receives sub's reply as message
-    const firstCall = runAgentStepMock.mock.calls[0][0] as {
-      sessionKey: string;
-      message: string;
-    };
-    expect(firstCall.sessionKey).toBe("agent:main:main");
-    expect(firstCall.message).toBe("Sub completed the task");
-
-    // NOTE: This is the injection point. runAgentStep will call
-    // callGateway({ method: "agent", message: "Sub completed the task" })
-    // which injects the sub's reply into master's session as role=user.
-    // See code-inspection.md for detailed analysis and fix recommendations.
+    expect(recordA2AInboxEventMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionKey: "agent:main:main",
+        sourceSessionKey: "agent:main:subagent:sub-001",
+        sourceDisplayKey: "subagent:sub-001",
+        runId: "run-123",
+        replyText: "Final announcement",
+      }),
+    );
   });
 });
 
@@ -653,21 +626,14 @@ describe("A2A Flow - Max Turns Exhaustion", () => {
     vi.clearAllMocks();
   });
 
-  it("completes all ping-pong turns when no skip token received, then announces", async () => {
-    // Observable: runAgentStepMock called maxPingPongTurns + 1 (announce) times
+  it("announces using the latest reply when ping-pong is skipped", async () => {
+    // Observable: announce context contains latest reply
     resolveAnnounceTargetMock.mockResolvedValue({
       channel: "telegram",
       to: "user:123",
     });
 
-    // All 5 turns return valid replies (no skip)
-    runAgentStepMock
-      .mockResolvedValueOnce("Turn 1 reply")
-      .mockResolvedValueOnce("Turn 2 reply")
-      .mockResolvedValueOnce("Turn 3 reply")
-      .mockResolvedValueOnce("Turn 4 reply")
-      .mockResolvedValueOnce("Turn 5 reply")
-      .mockResolvedValueOnce("Final announcement"); // Announce step
+    runAgentStepMock.mockResolvedValueOnce("Final announcement");
 
     callGatewayMock.mockResolvedValue({ status: "ok" });
 
@@ -676,51 +642,31 @@ describe("A2A Flow - Max Turns Exhaustion", () => {
     });
     await runSessionsSendA2AFlow(params);
 
-    // Should call runAgentStep exactly 6 times: 5 ping-pong + 1 announce
-    expect(runAgentStepMock).toHaveBeenCalledTimes(6);
-
-    // Verify announce was called with the latest reply from turn 5
-    const announceCall = runAgentStepMock.mock.calls[5][0] as {
+    expect(runAgentStepMock).toHaveBeenCalledTimes(1);
+    const announceCall = runAgentStepMock.mock.calls[0][0] as {
       message: string;
       extraSystemPrompt: string;
     };
     expect(announceCall.message).toBe("Agent-to-agent announce step.");
-    expect(announceCall.extraSystemPrompt).toContain("Latest reply: Turn 5 reply");
+    expect(announceCall.extraSystemPrompt).toContain("Latest reply: Sub agent completed the task.");
   });
 
-  it("alternates between requester and target sessions during ping-pong", async () => {
-    // Observable: Session keys alternate between calls
+  it("does not call the requester session during announce-only flow", async () => {
     resolveAnnounceTargetMock.mockResolvedValue({
       channel: "telegram",
       to: "user:123",
     });
 
-    runAgentStepMock
-      .mockResolvedValueOnce("Reply 1")
-      .mockResolvedValueOnce("Reply 2")
-      .mockResolvedValueOnce(REPLY_SKIP_TOKEN)
-      .mockResolvedValueOnce("Announcement");
-
+    runAgentStepMock.mockResolvedValueOnce("Announcement");
     callGatewayMock.mockResolvedValue({ status: "ok" });
 
     const params = createDefaultParams({
       maxPingPongTurns: 5,
-      requesterSessionKey: "agent:main:main",
-      targetSessionKey: "agent:main:subagent:sub-001",
     });
     await runSessionsSendA2AFlow(params);
 
-    // First call should be to requester (master responds to sub's reply)
     const call1 = runAgentStepMock.mock.calls[0][0] as { sessionKey: string };
-    expect(call1.sessionKey).toBe("agent:main:main");
-
-    // Second call should be to target (sub responds to master's reply)
-    const call2 = runAgentStepMock.mock.calls[1][0] as { sessionKey: string };
-    expect(call2.sessionKey).toBe("agent:main:subagent:sub-001");
-
-    // Third call back to requester
-    const call3 = runAgentStepMock.mock.calls[2][0] as { sessionKey: string };
-    expect(call3.sessionKey).toBe("agent:main:main");
+    expect(call1.sessionKey).toBe("agent:main:subagent:sub-001");
   });
 });
 
@@ -737,17 +683,14 @@ describe("A2A Flow - Announce Skip Token Normalization", () => {
     vi.clearAllMocks();
   });
 
-  it("respects ANNOUNCE_SKIP with leading whitespace after ping-pong", async () => {
+  it("respects ANNOUNCE_SKIP with leading whitespace", async () => {
     // Observable: callGatewayMock NOT called with method:"send"
     resolveAnnounceTargetMock.mockResolvedValue({
       channel: "telegram",
       to: "user:123",
     });
 
-    runAgentStepMock
-      .mockResolvedValueOnce("Ping-pong reply")
-      .mockResolvedValueOnce(REPLY_SKIP_TOKEN)
-      .mockResolvedValueOnce("   ANNOUNCE_SKIP"); // Leading whitespace
+    runAgentStepMock.mockResolvedValueOnce("   ANNOUNCE_SKIP"); // Leading whitespace
 
     callGatewayMock.mockResolvedValue({ status: "ok" });
 
@@ -763,16 +706,14 @@ describe("A2A Flow - Announce Skip Token Normalization", () => {
     expect(sendCall).toBeUndefined();
   });
 
-  it("respects ANNOUNCE_SKIP with trailing whitespace after ping-pong", async () => {
+  it("respects ANNOUNCE_SKIP with trailing whitespace", async () => {
     // Observable: callGatewayMock NOT called with method:"send"
     resolveAnnounceTargetMock.mockResolvedValue({
       channel: "telegram",
       to: "user:123",
     });
 
-    runAgentStepMock
-      .mockResolvedValueOnce(REPLY_SKIP_TOKEN)
-      .mockResolvedValueOnce("ANNOUNCE_SKIP   "); // Trailing whitespace
+    runAgentStepMock.mockResolvedValueOnce("ANNOUNCE_SKIP   "); // Trailing whitespace
 
     callGatewayMock.mockResolvedValue({ status: "ok" });
 
@@ -865,121 +806,23 @@ describe("A2A Flow - Role/Source Attribution", () => {
     vi.clearAllMocks();
   });
 
-  /**
-   * GAP #2: Role/source distinction for injected messages
-   *
-   * DOCUMENTED BUG (from code-inspection.md):
-   * When ping-pong injects the sub reply into master's session via runAgentStep,
-   * the message arrives as role=user. The master agent then treats it as a new
-   * user request rather than a continuation of the A2A conversation.
-   *
-   * EXPECTED BEHAVIOR (post-fix):
-   * The callGateway({ method: "agent" }) call should include metadata to mark
-   * the message as an agent-to-agent reply, NOT a user message.
-   *
-   * This test will FAIL until the fix is implemented.
-   */
-  it.fails("includes sourceType in callGateway agent call during ping-pong (EXPECTED FIX)", async () => {
-    // Observable: callGatewayMock called with sourceType or source metadata
+  it("does not call the requester session during A2A flow", async () => {
     resolveAnnounceTargetMock.mockResolvedValue({
       channel: "telegram",
       to: "user:123",
     });
 
-    // Capture the callGateway calls made by runAgentStep
-    const agentCalls: Array<{ method: string; params: Record<string, unknown> }> = [];
-    callGatewayMock.mockImplementation(
-      async (opts: { method: string; params?: Record<string, unknown> }) => {
-        if (opts.method === "agent") {
-          agentCalls.push({ method: opts.method, params: opts.params || {} });
-          return { runId: "run-source-test" };
-        }
-        if (opts.method === "agent.wait") {
-          return { status: "ok" };
-        }
-        if (opts.method === "chat.history") {
-          return { messages: [{ role: "assistant", content: "Step reply" }] };
-        }
-        return {};
-      },
-    );
-
-    runAgentStepMock.mockImplementation(async (params: { message: string; sessionKey: string }) => {
-      // runAgentStep internally calls callGateway({ method: "agent", ... })
-      // We need to verify that call includes source metadata
-      await callGatewayMock({
-        method: "agent",
-        params: {
-          message: params.message,
-          sessionKey: params.sessionKey,
-          // EXPECTED: sourceType: "agent-reply" should be here
-        },
-      });
-      return "Reply from step";
-    });
+    runAgentStepMock.mockResolvedValueOnce("Announcement");
+    callGatewayMock.mockResolvedValue({ status: "ok" });
 
     const params = createDefaultParams({
       roundOneReply: "Sub completed the task",
-      maxPingPongTurns: 1,
+      maxPingPongTurns: 3,
     });
     await runSessionsSendA2AFlow(params);
 
-    // EXPECTED (post-fix): agent calls should include sourceType
-    // This assertion will fail until fix is implemented
-    const pingPongAgentCall = agentCalls.find((c) => c.method === "agent");
-    expect(pingPongAgentCall).toBeDefined();
-    expect(pingPongAgentCall?.params).toHaveProperty("sourceType", "agent-reply");
-  });
-
-  /**
-   * INTERFACE CONTRACT for role/source fix:
-   *
-   * The fix should modify runAgentStep (or the A2A flow caller) to pass:
-   * - sourceType: "agent-reply" | "user" | "system"
-   * - sourceSessionKey: string (the originating agent session)
-   *
-   * The gateway agent method should then inject the message with appropriate
-   * role attribution rather than defaulting to role=user.
-   */
-  it("documents the expected interface contract for sourceType", () => {
-    // Observable: Interface documentation assertions
-    const expectedInterface = {
-      // Current callGateway agent params
-      current: {
-        method: "agent",
-        params: {
-          message: "string",
-          sessionKey: "string",
-          idempotencyKey: "string",
-          deliver: false,
-          channel: "string",
-          lane: "string",
-          extraSystemPrompt: "string",
-          // Missing: sourceType, sourceSessionKey
-        },
-      },
-      // Expected callGateway agent params after fix
-      expected: {
-        method: "agent",
-        params: {
-          message: "string",
-          sessionKey: "string",
-          idempotencyKey: "string",
-          deliver: false,
-          channel: "string",
-          lane: "string",
-          extraSystemPrompt: "string",
-          // New fields for attribution
-          sourceType: "agent-reply", // "user" | "agent-reply" | "system"
-          sourceSessionKey: "string", // e.g., "agent:main:subagent:sub-001"
-        },
-      },
-    };
-
-    // Assert the interface contract is documented
-    expect(expectedInterface.expected.params.sourceType).toBe("agent-reply");
-    expect(expectedInterface.expected.params).toHaveProperty("sourceSessionKey");
-    expect(expectedInterface.current.params).not.toHaveProperty("sourceType");
+    const call1 = runAgentStepMock.mock.calls[0][0] as { sessionKey: string };
+    expect(call1.sessionKey).toBe("agent:main:subagent:sub-001");
   });
 });
 
@@ -989,7 +832,7 @@ describe("A2A Flow - Role/Source Attribution", () => {
  * [x] PHASE_1: Test inventory declared in describe() blocks
  * [x] PHASE_2: SUT (runSessionsSendA2AFlow, isReplySkip, etc.) actually invoked
  * [x] PHASE_3: Assertions verify behavior (call counts, params, return values)
- * [x] PHASE_4: test.fails has documented rationale (role/source fix)
+ * [x] PHASE_4: No test.fails used
  * [x] PHASE_5: Error paths tested (network errors, agent step failures)
  * [x] PHASE_6: Each test uses fresh mocks (beforeEach/afterEach cleanup)
  * [x] PHASE_7: Unit tests mock external boundaries only (gateway, logging)

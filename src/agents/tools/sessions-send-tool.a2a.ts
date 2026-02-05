@@ -1,19 +1,23 @@
 import crypto from "node:crypto";
 import type { GatewayMessageChannel } from "../../utils/message-channel.js";
+import { loadConfig } from "../../config/config.js";
 import { callGateway } from "../../gateway/call.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
+import { recordA2AInboxEvent } from "../a2a-inbox.js";
 import { AGENT_LANE_NESTED } from "../lanes.js";
 import { readLatestAssistantReply, runAgentStep } from "./agent-step.js";
 import { resolveAnnounceTarget } from "./sessions-announce-target.js";
-import {
-  buildAgentToAgentAnnounceContext,
-  buildAgentToAgentReplyContext,
-  isAnnounceSkip,
-  isReplySkip,
-} from "./sessions-send-helpers.js";
+import { buildAgentToAgentAnnounceContext, isAnnounceSkip } from "./sessions-send-helpers.js";
 
 const log = createSubsystemLogger("agents/sessions-send");
+
+// Rate limit delay between A2A agent steps to prevent API hammering
+const A2A_STEP_DELAY_MS = 1000;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 export async function runSessionsSendA2AFlow(params: {
   targetSessionKey: string;
@@ -57,43 +61,8 @@ export async function runSessionsSendA2AFlow(params: {
     });
     const targetChannel = announceTarget?.channel ?? "unknown";
 
-    if (
-      params.maxPingPongTurns > 0 &&
-      params.requesterSessionKey &&
-      params.requesterSessionKey !== params.targetSessionKey
-    ) {
-      let currentSessionKey = params.requesterSessionKey;
-      let nextSessionKey = params.targetSessionKey;
-      let incomingMessage = latestReply;
-      for (let turn = 1; turn <= params.maxPingPongTurns; turn += 1) {
-        const currentRole =
-          currentSessionKey === params.requesterSessionKey ? "requester" : "target";
-        const replyPrompt = buildAgentToAgentReplyContext({
-          requesterSessionKey: params.requesterSessionKey,
-          requesterChannel: params.requesterChannel,
-          targetSessionKey: params.displayKey,
-          targetChannel,
-          currentRole,
-          turn,
-          maxTurns: params.maxPingPongTurns,
-        });
-        const replyText = await runAgentStep({
-          sessionKey: currentSessionKey,
-          message: incomingMessage,
-          extraSystemPrompt: replyPrompt,
-          timeoutMs: params.announceTimeoutMs,
-          lane: AGENT_LANE_NESTED,
-        });
-        if (!replyText || isReplySkip(replyText)) {
-          break;
-        }
-        latestReply = replyText;
-        incomingMessage = replyText;
-        const swap = currentSessionKey;
-        currentSessionKey = nextSessionKey;
-        nextSessionKey = swap;
-      }
-    }
+    // Rate limit: delay before announce step
+    await delay(A2A_STEP_DELAY_MS);
 
     const announcePrompt = buildAgentToAgentAnnounceContext({
       requesterSessionKey: params.requesterSessionKey,
@@ -111,13 +80,14 @@ export async function runSessionsSendA2AFlow(params: {
       timeoutMs: params.announceTimeoutMs,
       lane: AGENT_LANE_NESTED,
     });
-    if (announceTarget && announceReply && announceReply.trim() && !isAnnounceSkip(announceReply)) {
+    const announceText = announceReply?.trim();
+    if (announceTarget && announceText && !isAnnounceSkip(announceText)) {
       try {
         await callGateway({
           method: "send",
           params: {
             to: announceTarget.to,
-            message: announceReply.trim(),
+            message: announceText,
             channel: announceTarget.channel,
             accountId: announceTarget.accountId,
             idempotencyKey: crypto.randomUUID(),
@@ -130,6 +100,23 @@ export async function runSessionsSendA2AFlow(params: {
           channel: announceTarget.channel,
           to: announceTarget.to,
           error: formatErrorMessage(err),
+        });
+      }
+    }
+
+    if (params.requesterSessionKey) {
+      const cfg = loadConfig();
+      const replyText =
+        announceText && !isAnnounceSkip(announceText) ? announceText : latestReply?.trim();
+      if (replyText) {
+        await recordA2AInboxEvent({
+          cfg,
+          sessionKey: params.requesterSessionKey,
+          sourceSessionKey: params.targetSessionKey,
+          sourceDisplayKey: params.displayKey,
+          runId: params.waitRunId ?? crypto.randomUUID(),
+          replyText,
+          now: Date.now(),
         });
       }
     }

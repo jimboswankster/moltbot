@@ -735,6 +735,7 @@ export async function runEmbeddedAttempt(
                 sessionKey: params.sessionKey,
                 workspaceDir: params.workspaceDir,
                 messageProvider: params.messageProvider ?? undefined,
+                runId: params.runId,
               },
             );
             if (hookResult?.prependContext) {
@@ -869,6 +870,7 @@ export async function runEmbeddedAttempt(
                 sessionKey: params.sessionKey,
                 workspaceDir: params.workspaceDir,
                 messageProvider: params.messageProvider ?? undefined,
+                runId: params.runId,
               },
             )
             .catch((err) => {

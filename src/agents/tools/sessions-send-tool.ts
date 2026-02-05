@@ -443,7 +443,7 @@ export function createSessionsSendTool(opts?: {
         const last = filtered.length > 0 ? filtered[filtered.length - 1] : undefined;
         const reply = last ? extractAssistantText(last) : undefined;
 
-        startA2AFlow(reply ?? undefined);
+        startA2AFlow(reply ?? undefined, runId);
 
         log.debug("sessions_send completed successfully", {
           toolCallId,
