@@ -17,6 +17,7 @@ export const TRANSITIONAL_A2A_INBOX_TAG = "TRANSITIONAL_A2A_INBOX";
 export const A2A_INBOX_SCHEMA_VERSION = 1;
 export const A2A_INBOX_MAX_EVENTS = 3;
 export const A2A_INBOX_MAX_CHARS = 500;
+export const A2A_INBOX_MAX_AGE_MS = 10 * 60 * 1000;
 
 const log = createSubsystemLogger("agents/a2a-inbox");
 
@@ -172,7 +173,42 @@ export async function injectA2AInboxPrependContext(params: {
     return undefined;
   }
 
-  const pending = events.filter((event) => !event.deliveredAt);
+  const pending: A2AInboxEvent[] = [];
+  const staleEvents: A2AInboxEvent[] = [];
+  const unsupportedEvents: A2AInboxEvent[] = [];
+  for (const event of events) {
+    if (event.schemaVersion !== A2A_INBOX_SCHEMA_VERSION) {
+      unsupportedEvents.push(event);
+      continue;
+    }
+    if (event.createdAt < now - A2A_INBOX_MAX_AGE_MS) {
+      staleEvents.push(event);
+      continue;
+    }
+    if (!event.deliveredAt) {
+      pending.push(event);
+    }
+  }
+
+  if (staleEvents.length > 0) {
+    log.warn("a2a_inbox_error", {
+      runId: params.runId,
+      sessionKey: canonicalKey,
+      sourceSessionKey: staleEvents[0]?.sourceSessionKey,
+      eventCount: staleEvents.length,
+      stale: true,
+    });
+  }
+
+  if (unsupportedEvents.length > 0) {
+    log.warn("a2a_inbox_error", {
+      runId: params.runId,
+      sessionKey: canonicalKey,
+      sourceSessionKey: unsupportedEvents[0]?.sourceSessionKey,
+      eventCount: unsupportedEvents.length,
+      unsupportedVersion: true,
+    });
+  }
   if (pending.length === 0) {
     return undefined;
   }

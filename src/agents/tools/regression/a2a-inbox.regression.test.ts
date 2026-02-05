@@ -16,6 +16,7 @@ import {
   buildA2AInboxPromptBlock,
   injectA2AInboxPrependContext,
   recordA2AInboxEvent,
+  A2A_INBOX_MAX_AGE_MS,
   TRANSITIONAL_A2A_INBOX_TAG,
   type A2AInboxEvent,
 } from "../../a2a-inbox.js";
@@ -277,6 +278,105 @@ describe("A2A Inbox - Policy Enforcement", () => {
           allowed: false,
           reason: "denied",
           eventCount: 0,
+        }),
+      );
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("A2A Inbox - Versioning + Staleness", () => {
+  it("skips stale events without clearing", async () => {
+    const { dir, cfg, sessionKey, storePath } = await setupSessionStore();
+    try {
+      await saveSessionStore(storePath, {
+        [sessionKey]: {
+          sessionId: "session-1",
+          updatedAt: Date.now(),
+          a2aInbox: {
+            events: [
+              {
+                schemaVersion: 1,
+                createdAt: 1738737600000,
+                runId: "run-stale",
+                sourceSessionKey: "agent:main:subagent:sub-001",
+                sourceDisplayKey: "subagent:sub-001",
+                replyText: "Old.",
+              },
+            ],
+          },
+        },
+      });
+
+      const now = 1738737600000 + A2A_INBOX_MAX_AGE_MS + 1000;
+      const result = await injectA2AInboxPrependContext({
+        cfg,
+        sessionKey,
+        runId: "master-run-stale",
+        now,
+      });
+
+      expect(result).toBeUndefined();
+      const store = loadSessionStore(storePath, { skipCache: true });
+      const event = store[sessionKey]?.a2aInbox?.events?.[0];
+      expect(event?.deliveredAt).toBeUndefined();
+      expect(logWarn).toHaveBeenCalledWith(
+        "a2a_inbox_error",
+        expect.objectContaining({
+          runId: "master-run-stale",
+          sessionKey,
+          sourceSessionKey: "agent:main:subagent:sub-001",
+          eventCount: 1,
+          stale: true,
+        }),
+      );
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("skips unsupported schema versions without clearing", async () => {
+    const { dir, cfg, sessionKey, storePath } = await setupSessionStore();
+    try {
+      await saveSessionStore(storePath, {
+        [sessionKey]: {
+          sessionId: "session-1",
+          updatedAt: Date.now(),
+          a2aInbox: {
+            events: [
+              {
+                schemaVersion: 999,
+                createdAt: 1738737600000,
+                runId: "run-unsupported",
+                sourceSessionKey: "agent:main:subagent:sub-002",
+                sourceDisplayKey: "subagent:sub-002",
+                replyText: "Unsupported.",
+              },
+            ],
+          },
+        },
+      });
+
+      const result = await injectA2AInboxPrependContext({
+        cfg,
+        sessionKey,
+        runId: "master-run-unsupported",
+        now: 1738737700000,
+      });
+
+      expect(result).toBeUndefined();
+      const store = loadSessionStore(storePath, { skipCache: true });
+      const event = store[sessionKey]?.a2aInbox?.events?.[0];
+      expect(event?.deliveredAt).toBeUndefined();
+      expect(logWarn).toHaveBeenCalledWith(
+        "a2a_inbox_error",
+        expect.objectContaining({
+          runId: "master-run-unsupported",
+          sessionKey,
+          sourceSessionKey: "agent:main:subagent:sub-002",
+          eventCount: 1,
+          unsupportedVersion: true,
         }),
       );
     } finally {
