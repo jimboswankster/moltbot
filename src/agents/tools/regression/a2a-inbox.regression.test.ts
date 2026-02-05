@@ -93,6 +93,72 @@ describe("A2A Inbox - Golden Master Prompt Snapshot", () => {
   });
 });
 
+describe("A2A Inbox - Bounds", () => {
+  it("limits the number of events injected", () => {
+    const events: A2AInboxEvent[] = [
+      {
+        schemaVersion: 1,
+        createdAt: 1,
+        runId: "run-1",
+        sourceSessionKey: "agent:main:subagent:sub-001",
+        sourceDisplayKey: "subagent:sub-001",
+        replyText: "First.",
+      },
+      {
+        schemaVersion: 1,
+        createdAt: 2,
+        runId: "run-2",
+        sourceSessionKey: "agent:main:subagent:sub-002",
+        sourceDisplayKey: "subagent:sub-002",
+        replyText: "Second.",
+      },
+      {
+        schemaVersion: 1,
+        createdAt: 3,
+        runId: "run-3",
+        sourceSessionKey: "agent:main:subagent:sub-003",
+        sourceDisplayKey: "subagent:sub-003",
+        replyText: "Third.",
+      },
+    ];
+
+    const result = buildA2AInboxPromptBlock({
+      events,
+      maxEvents: 2,
+      maxChars: 500,
+    });
+
+    expect(result.text).toContain("run-1");
+    expect(result.text).toContain("run-2");
+    expect(result.text).not.toContain("run-3");
+    expect(result.includedRunIds).toEqual(["run-1", "run-2"]);
+  });
+
+  it("truncates inbox summaries to max chars deterministically", () => {
+    const longText = "x".repeat(200);
+    const events: A2AInboxEvent[] = [
+      {
+        schemaVersion: 1,
+        createdAt: 1,
+        runId: "run-1",
+        sourceSessionKey: "agent:main:subagent:sub-001",
+        sourceDisplayKey: "subagent:sub-001",
+        replyText: longText,
+      },
+    ];
+
+    const result = buildA2AInboxPromptBlock({
+      events,
+      maxEvents: 3,
+      maxChars: 120,
+    });
+
+    expect(result.text.length).toBeLessThanOrEqual(120);
+    expect(result.text).toContain("...");
+    expect(result.truncated).toBe(true);
+  });
+});
+
 describe("A2A Inbox - Audit Logging", () => {
   it("logs a2a_inbox_event_written on write", async () => {
     const { dir, cfg, sessionKey } = await setupSessionStore();
