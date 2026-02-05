@@ -10,6 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../../config/config.js";
+import * as sessions from "../../../config/sessions.js";
 import { loadSessionStore, saveSessionStore } from "../../../config/sessions.js";
 import {
   buildA2AInboxPromptBlock,
@@ -278,6 +279,43 @@ describe("A2A Inbox - Policy Enforcement", () => {
           eventCount: 0,
         }),
       );
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("A2A Inbox - Fail Closed Clear Strategy", () => {
+  it("does not clear inbox events when injection fails", async () => {
+    const { dir, cfg, sessionKey, storePath } = await setupSessionStore();
+    try {
+      await recordA2AInboxEvent({
+        cfg,
+        sessionKey,
+        sourceSessionKey: "agent:main:subagent:sub-001",
+        sourceDisplayKey: "subagent:sub-001",
+        runId: "run-fail",
+        replyText: "Will fail.",
+        now: 1738737600000,
+      });
+
+      const updateSpy = vi
+        .spyOn(sessions, "updateSessionStore")
+        .mockRejectedValueOnce(new Error("boom"));
+
+      await expect(
+        injectA2AInboxPrependContext({
+          cfg,
+          sessionKey,
+          runId: "master-run-fail",
+          now: 1738737700000,
+        }),
+      ).rejects.toThrow("boom");
+
+      const store = loadSessionStore(storePath, { skipCache: true });
+      const event = store[sessionKey]?.a2aInbox?.events?.[0];
+      expect(event?.deliveredAt).toBeUndefined();
+      updateSpy.mockRestore();
     } finally {
       await fs.rm(dir, { recursive: true, force: true });
     }
