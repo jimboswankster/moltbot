@@ -75,8 +75,10 @@ import {
   resetToolStream as resetToolStreamInternal,
   type ToolStreamEntry,
 } from "./app-tool-stream";
+import { sweepActivity, type AgentActivity } from "./activity-hud-state";
 import { resolveInjectedAssistantIdentity } from "./assistant-identity";
 import { loadAssistantIdentity as loadAssistantIdentityInternal } from "./controllers/assistant-identity";
+import { loadChatHistory } from "./controllers/chat";
 import { loadSettings, type UiSettings } from "./storage";
 import { type ChatAttachment, type ChatQueueItem, type CronFormState } from "./ui-types";
 import {
@@ -138,6 +140,8 @@ export class OpenClawApp extends LitElement {
   @state() chatStream: string | null = null;
   @state() chatStreamStartedAt: number | null = null;
   @state() chatRunId: string | null = null;
+  pendingChatResync = false;
+  chatResyncTimer: number | null = null;
   @state() compactionStatus: import("./app-tool-stream").CompactionStatus | null = null;
   @state() chatAvatarUrl: string | null = null;
   @state() chatThinkingLevel: string | null = null;
@@ -283,9 +287,14 @@ export class OpenClawApp extends LitElement {
   private chatHasAutoScrolled = false;
   private chatUserNearBottom = true;
   @state() chatNewMessagesBelow = false;
+  @state() activityEntries: AgentActivity[] = [];
+  @state() activityDismissedSessionKeys: Set<string> = new Set();
+  activityBySession = new Map<string, AgentActivity>();
+  private activityTimer: number | null = null;
   private nodesPollInterval: number | null = null;
   private logsPollInterval: number | null = null;
   private debugPollInterval: number | null = null;
+  private activityHudSessionsPollInterval: number | null = null;
   private logsScrollFrame: number | null = null;
   private toolStreamById = new Map<string, ToolStreamEntry>();
   private toolStreamOrder: string[] = [];
@@ -296,6 +305,8 @@ export class OpenClawApp extends LitElement {
   private themeMedia: MediaQueryList | null = null;
   private themeMediaHandler: ((event: MediaQueryListEvent) => void) | null = null;
   private topbarObserver: ResizeObserver | null = null;
+  private chatPollingTimer: number | null = null;
+  private chatPollingInFlight = false;
 
   createRenderRoot() {
     return this;
@@ -317,10 +328,44 @@ export class OpenClawApp extends LitElement {
 
   protected updated(changed: Map<PropertyKey, unknown>) {
     handleUpdated(this as unknown as Parameters<typeof handleUpdated>[0], changed);
+    if (changed.has("chatRunId") || changed.has("connected")) {
+      this.updateChatPolling();
+    }
   }
 
   connect() {
     connectGatewayInternal(this as unknown as Parameters<typeof connectGatewayInternal>[0]);
+  }
+
+  private updateChatPolling() {
+    const shouldPoll = this.connected && Boolean(this.chatRunId);
+    if (!shouldPoll) {
+      if (this.chatPollingTimer != null) {
+        clearInterval(this.chatPollingTimer);
+        this.chatPollingTimer = null;
+      }
+      return;
+    }
+    if (this.chatPollingTimer != null) {
+      return;
+    }
+    // During an active run, poll chat history to keep the UI responsive
+    // even when streaming deltas drop.
+    this.chatPollingTimer = window.setInterval(async () => {
+      if (!this.connected || !this.client || !this.chatRunId) {
+        this.updateChatPolling();
+        return;
+      }
+      if (this.chatPollingInFlight) {
+        return;
+      }
+      this.chatPollingInFlight = true;
+      try {
+        await loadChatHistory(this);
+      } finally {
+        this.chatPollingInFlight = false;
+      }
+    }, 2000);
   }
 
   handleChatScroll(event: Event) {
@@ -349,12 +394,33 @@ export class OpenClawApp extends LitElement {
     resetChatScrollInternal(this as unknown as Parameters<typeof resetChatScrollInternal>[0]);
   }
 
+  handleDismissActivitySession(sessionKey: string) {
+    this.activityDismissedSessionKeys = new Set([...this.activityDismissedSessionKeys, sessionKey]);
+  }
+
   scrollToBottom() {
     resetChatScrollInternal(this as unknown as Parameters<typeof resetChatScrollInternal>[0]);
     scheduleChatScrollInternal(
       this as unknown as Parameters<typeof scheduleChatScrollInternal>[0],
       true,
     );
+  }
+
+  startActivityTicker() {
+    if (this.activityTimer != null) {
+      return;
+    }
+    this.activityTimer = window.setInterval(() => {
+      sweepActivity(this as unknown as Parameters<typeof sweepActivity>[0]);
+    }, 2000);
+  }
+
+  stopActivityTicker() {
+    if (this.activityTimer == null) {
+      return;
+    }
+    window.clearInterval(this.activityTimer);
+    this.activityTimer = null;
   }
 
   async loadAssistantIdentity() {

@@ -668,6 +668,11 @@ function buildChatItems(props: ChatProps): Array<ChatItem | MessageGroup> {
     } else {
       items.push({ kind: "reading-indicator", key });
     }
+  } else if (props.canAbort) {
+    // If a run is active but no stream is present (e.g. missed deltas),
+    // keep a lightweight "working" indicator visible.
+    const key = `stream:${props.sessionKey}:pending`;
+    items.push({ kind: "reading-indicator", key });
   }
 
   return groupMessages(items);

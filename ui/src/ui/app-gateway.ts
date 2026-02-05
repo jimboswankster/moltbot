@@ -8,6 +8,7 @@ import type { AgentsListResult, PresenceEntry, HealthSnapshot, StatusSummary } f
 import { CHAT_SESSIONS_ACTIVE_MINUTES, flushChatQueueForEvent } from "./app-chat";
 import { applySettings, loadCron, refreshActiveTab, setLastActiveSessionKey } from "./app-settings";
 import { handleAgentEvent, resetToolStream, type AgentEventPayload } from "./app-tool-stream";
+import { ensureMainActivity, noteChatActivity, syncSubagentsFromSessionsList, type AgentActivity } from "./activity-hud-state";
 import { loadAgents } from "./controllers/agents";
 import { loadAssistantIdentity } from "./controllers/assistant-identity";
 import { loadChatHistory } from "./controllers/chat";
@@ -46,7 +47,11 @@ type GatewayHost = {
   assistantAgentId: string | null;
   sessionKey: string;
   chatRunId: string | null;
+  pendingChatResync: boolean;
+  chatResyncTimer: number | null;
   refreshSessionsAfterChat: Set<string>;
+  activityEntries: AgentActivity[];
+  activityBySession: Map<string, AgentActivity>;
   execApprovalQueue: ExecApprovalRequest[];
   execApprovalError: string | null;
 };
@@ -110,6 +115,19 @@ function applySessionDefaults(host: GatewayHost, defaults?: SessionDefaultsSnaps
   }
 }
 
+function scheduleChatResync(host: GatewayHost, delayMs = 500) {
+  if (host.chatResyncTimer != null) {
+    window.clearTimeout(host.chatResyncTimer);
+  }
+  host.chatResyncTimer = window.setTimeout(() => {
+    host.chatResyncTimer = null;
+    if (!host.connected || !host.client) {
+      return;
+    }
+    void loadChatHistory(host as unknown as OpenClawApp);
+  }, delayMs);
+}
+
 export function connectGateway(host: GatewayHost) {
   host.lastError = null;
   host.hello = null;
@@ -129,17 +147,32 @@ export function connectGateway(host: GatewayHost) {
       host.lastError = null;
       host.hello = hello;
       applySnapshot(host, hello);
-      // Reset orphaned chat run state from before disconnect.
+      ensureMainActivity(host as unknown as Parameters<typeof ensureMainActivity>[0]);
+      // Reset orphaned chat run state from before disconnect unless we plan to resync.
       // Any in-flight run's final event was lost during the disconnect window.
-      host.chatRunId = null;
-      (host as unknown as { chatStream: string | null }).chatStream = null;
-      (host as unknown as { chatStreamStartedAt: number | null }).chatStreamStartedAt = null;
-      resetToolStream(host as unknown as Parameters<typeof resetToolStream>[0]);
+      if (!host.pendingChatResync) {
+        host.chatRunId = null;
+        (host as unknown as { chatStream: string | null }).chatStream = null;
+        (host as unknown as { chatStreamStartedAt: number | null }).chatStreamStartedAt = null;
+        resetToolStream(host as unknown as Parameters<typeof resetToolStream>[0]);
+      }
       void loadAssistantIdentity(host as unknown as OpenClawApp);
       void loadAgents(host as unknown as OpenClawApp);
       void loadNodes(host as unknown as OpenClawApp, { quiet: true });
       void loadDevices(host as unknown as OpenClawApp, { quiet: true });
       void refreshActiveTab(host as unknown as Parameters<typeof refreshActiveTab>[0]);
+      if (host.pendingChatResync) {
+        host.pendingChatResync = false;
+        scheduleChatResync(host, 800);
+      }
+      if (host.tab === "activity-hud") {
+        void loadSessions(host as unknown as OpenClawApp, { limit: 50, activeMinutes: 60 }).then(
+          () => {
+            syncSubagentsFromSessionsList(host as unknown as Parameters<typeof syncSubagentsFromSessionsList>[0]);
+            (host as unknown as OpenClawApp).requestUpdate();
+          },
+        );
+      }
     },
     onClose: ({ code, reason }) => {
       host.connected = false;
@@ -147,10 +180,15 @@ export function connectGateway(host: GatewayHost) {
       if (code !== 1012) {
         host.lastError = `disconnected (${code}): ${reason || "no reason"}`;
       }
+      if (host.chatRunId || (host as unknown as { chatStream: string | null }).chatStream) {
+        host.pendingChatResync = true;
+      }
     },
     onEvent: (evt) => handleGatewayEvent(host, evt),
     onGap: ({ expected, received }) => {
       host.lastError = `event gap detected (expected seq ${expected}, got ${received}); refresh recommended`;
+      host.pendingChatResync = true;
+      scheduleChatResync(host);
     },
   });
   host.client.start();
@@ -186,6 +224,7 @@ function handleGatewayEventUnsafe(host: GatewayHost, evt: GatewayEventFrame) {
 
   if (evt.event === "chat") {
     const payload = evt.payload as ChatEventPayload | undefined;
+    noteChatActivity(host as unknown as Parameters<typeof noteChatActivity>[0], payload);
     if (payload?.sessionKey) {
       setLastActiveSessionKey(
         host as unknown as Parameters<typeof setLastActiveSessionKey>[0],
