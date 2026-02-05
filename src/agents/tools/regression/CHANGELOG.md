@@ -8,3 +8,5 @@ and related integration tests. Each entry includes the commit hash and tests run
   Tests: none
 - Skip A2A flow in async sessions_send (commit: 36bcb53d4)
   Tests: `npx vitest run src/agents/tools/regression/ src/gateway/server-methods/send-a2a-announce.integration.test.ts`
+- Add A2A inbox golden-master prompt snapshot (commit: 423112de4)
+  Tests: `npx vitest run src/agents/tools/regression/ src/gateway/server-methods/send-a2a-announce.integration.test.ts`
