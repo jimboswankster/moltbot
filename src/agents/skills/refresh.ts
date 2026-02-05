@@ -1,6 +1,7 @@
 import chokidar, { type FSWatcher } from "chokidar";
 import path from "node:path";
 import type { OpenClawConfig } from "../../config/config.js";
+import { formatErrorMessage, isFileWatchLimitError } from "../../infra/errors.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { CONFIG_DIR, resolveUserPath } from "../../utils.js";
 import { resolvePluginSkillDirs } from "./plugin-skills.js";
@@ -134,16 +135,25 @@ export function ensureSkillsWatcher(params: { workspaceDir: string; config?: Ope
     void existing.watcher.close().catch(() => {});
   }
 
-  const watcher = chokidar.watch(watchPaths, {
-    ignoreInitial: true,
-    awaitWriteFinish: {
-      stabilityThreshold: debounceMs,
-      pollInterval: 100,
-    },
-    // Avoid FD exhaustion on macOS when a workspace contains huge trees.
-    // This watcher only needs to react to skill changes.
-    ignored: DEFAULT_SKILLS_WATCH_IGNORED,
-  });
+  let watcher: FSWatcher;
+  try {
+    watcher = chokidar.watch(watchPaths, {
+      ignoreInitial: true,
+      awaitWriteFinish: {
+        stabilityThreshold: debounceMs,
+        pollInterval: 100,
+      },
+      // Avoid FD exhaustion on macOS when a workspace contains huge trees.
+      // This watcher only needs to react to skill changes.
+      ignored: DEFAULT_SKILLS_WATCH_IGNORED,
+    });
+  } catch (err) {
+    const hint = isFileWatchLimitError(err)
+      ? " (watch limit reached; disable skills.load.watch or raise file limits)"
+      : "";
+    log.warn(`skills watcher failed to start (${workspaceDir}): ${formatErrorMessage(err)}${hint}`);
+    return;
+  }
 
   const state: SkillsWatchState = { watcher, pathsKey, debounceMs };
 
@@ -168,7 +178,10 @@ export function ensureSkillsWatcher(params: { workspaceDir: string; config?: Ope
   watcher.on("change", (p) => schedule(p));
   watcher.on("unlink", (p) => schedule(p));
   watcher.on("error", (err) => {
-    log.warn(`skills watcher error (${workspaceDir}): ${String(err)}`);
+    const hint = isFileWatchLimitError(err) ? " (watch limit reached; disabling skills watch)" : "";
+    log.warn(`skills watcher error (${workspaceDir}): ${formatErrorMessage(err)}${hint}`);
+    void watcher.close().catch(() => {});
+    watchers.delete(workspaceDir);
   });
 
   watchers.set(workspaceDir, state);

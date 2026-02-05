@@ -38,3 +38,8 @@ export function formatUncaughtError(err: unknown): string {
   }
   return formatErrorMessage(err);
 }
+
+export function isFileWatchLimitError(err: unknown): boolean {
+  const code = extractErrorCode(err);
+  return code === "EMFILE" || code === "ENOSPC";
+}

@@ -17,6 +17,7 @@ import type {
 import { resolveAgentDir, resolveAgentWorkspaceDir } from "../agents/agent-scope.js";
 import { resolveMemorySearchConfig } from "../agents/memory-search.js";
 import { resolveSessionTranscriptsDirForAgent } from "../config/sessions/paths.js";
+import { formatErrorMessage, isFileWatchLimitError } from "../infra/errors.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { onSessionTranscriptUpdate } from "../sessions/transcript-events.js";
 import { resolveUserPath } from "../utils.js";
@@ -147,6 +148,7 @@ export class MemoryIndexManager implements MemorySearchManager {
   private vectorReady: Promise<boolean> | null = null;
   private watcher: FSWatcher | null = null;
   private watchTimer: NodeJS.Timeout | null = null;
+  private watchFailed = false;
   private sessionWatchTimer: NodeJS.Timeout | null = null;
   private sessionUnsubscribe: (() => void) | null = null;
   private intervalTimer: NodeJS.Timeout | null = null;
@@ -805,7 +807,12 @@ export class MemoryIndexManager implements MemorySearchManager {
   }
 
   private ensureWatcher() {
-    if (!this.sources.has("memory") || !this.settings.sync.watch || this.watcher) {
+    if (
+      !this.sources.has("memory") ||
+      !this.settings.sync.watch ||
+      this.watcher ||
+      this.watchFailed
+    ) {
       return;
     }
     const additionalPaths = normalizeExtraMemoryPaths(this.workspaceDir, this.settings.extraPaths)
@@ -824,20 +831,42 @@ export class MemoryIndexManager implements MemorySearchManager {
       path.join(this.workspaceDir, "memory"),
       ...additionalPaths,
     ]);
-    this.watcher = chokidar.watch(Array.from(watchPaths), {
-      ignoreInitial: true,
-      awaitWriteFinish: {
-        stabilityThreshold: this.settings.sync.watchDebounceMs,
-        pollInterval: 100,
-      },
-    });
+    let watcher: FSWatcher;
+    try {
+      watcher = chokidar.watch(Array.from(watchPaths), {
+        ignoreInitial: true,
+        awaitWriteFinish: {
+          stabilityThreshold: this.settings.sync.watchDebounceMs,
+          pollInterval: 100,
+        },
+      });
+    } catch (err) {
+      this.watchFailed = true;
+      const hint = isFileWatchLimitError(err)
+        ? " (watch limit reached; disable agents.defaults.memorySearch.sync.watch or raise file limits)"
+        : "";
+      log.warn(`memory watcher failed to start: ${formatErrorMessage(err)}${hint}`);
+      return;
+    }
+    this.watcher = watcher;
     const markDirty = () => {
       this.dirty = true;
       this.scheduleWatchSync();
     };
-    this.watcher.on("add", markDirty);
-    this.watcher.on("change", markDirty);
-    this.watcher.on("unlink", markDirty);
+    watcher.on("add", markDirty);
+    watcher.on("change", markDirty);
+    watcher.on("unlink", markDirty);
+    watcher.on("error", (err) => {
+      this.watchFailed = true;
+      const hint = isFileWatchLimitError(err)
+        ? " (watch limit reached; disabling memory watch)"
+        : "";
+      log.warn(`memory watcher error: ${formatErrorMessage(err)}${hint}`);
+      void watcher.close().catch(() => {});
+      if (this.watcher === watcher) {
+        this.watcher = null;
+      }
+    });
   }
 
   private ensureSessionListener() {
