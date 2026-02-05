@@ -11,6 +11,7 @@ import { resolveSessionStoreKey } from "../gateway/session-utils.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { resolveAgentIdFromSessionKey } from "../routing/session-key.js";
 import { resolveDefaultAgentId } from "./agent-scope.js";
+import { createAgentToAgentPolicy } from "./tools/sessions-helpers.js";
 
 export const TRANSITIONAL_A2A_INBOX_TAG = "TRANSITIONAL_A2A_INBOX";
 export const A2A_INBOX_SCHEMA_VERSION = 1;
@@ -94,6 +95,21 @@ export async function recordA2AInboxEvent(params: {
   now?: number;
 }): Promise<{ written: boolean; eventId: string | null }> {
   const now = params.now ?? Date.now();
+  const policy = createAgentToAgentPolicy(params.cfg);
+  const requesterAgentId = resolveAgentIdFromSessionKey(params.sessionKey);
+  const targetAgentId = resolveAgentIdFromSessionKey(params.sourceSessionKey);
+  if (!policy.isAllowed(requesterAgentId, targetAgentId)) {
+    log.info("a2a_inbox_event_written", {
+      runId: params.runId,
+      sessionKey: params.sessionKey,
+      sourceSessionKey: params.sourceSessionKey,
+      eventCount: 0,
+      allowed: false,
+      reason: "denied",
+    });
+    return { written: false, eventId: null };
+  }
+
   const { storePath, canonicalKey } = resolveInboxStoreTarget(params.cfg, params.sessionKey);
   const eventId = crypto.randomUUID();
   let written = false;

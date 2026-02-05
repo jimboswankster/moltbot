@@ -10,7 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../../config/config.js";
-import { saveSessionStore } from "../../../config/sessions.js";
+import { loadSessionStore, saveSessionStore } from "../../../config/sessions.js";
 import {
   buildA2AInboxPromptBlock,
   injectA2AInboxPrependContext,
@@ -31,6 +31,18 @@ vi.mock("../../../logging/subsystem.js", () => ({
     warn: logWarn,
     error: logError,
     debug: logDebug,
+    child: () => ({
+      info: logInfo,
+      warn: logWarn,
+      error: logError,
+      debug: logDebug,
+      child: () => ({
+        info: logInfo,
+        warn: logWarn,
+        error: logError,
+        debug: logDebug,
+      }),
+    }),
   }),
 }));
 
@@ -224,6 +236,46 @@ describe("A2A Inbox - Audit Logging", () => {
           sessionKey,
           sourceSessionKey: "agent:main:subagent:sub-001",
           eventCount: 1,
+        }),
+      );
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("A2A Inbox - Policy Enforcement", () => {
+  it("blocks inbox writes when agentToAgent allowlist denies", async () => {
+    const { dir, cfg, sessionKey, storePath } = await setupSessionStore();
+    cfg.tools = {
+      agentToAgent: {
+        enabled: true,
+        allow: ["main"],
+      },
+    };
+    try {
+      const result = await recordA2AInboxEvent({
+        cfg,
+        sessionKey,
+        sourceSessionKey: "agent:other:main",
+        sourceDisplayKey: "other",
+        runId: "run-999",
+        replyText: "Denied.",
+        now: 1738737600000,
+      });
+
+      expect(result.written).toBe(false);
+      const store = loadSessionStore(storePath, { skipCache: true });
+      expect(store[sessionKey]?.a2aInbox).toBeUndefined();
+      expect(logInfo).toHaveBeenCalledWith(
+        "a2a_inbox_event_written",
+        expect.objectContaining({
+          runId: "run-999",
+          sessionKey,
+          sourceSessionKey: "agent:other:main",
+          allowed: false,
+          reason: "denied",
+          eventCount: 0,
         }),
       );
     } finally {
