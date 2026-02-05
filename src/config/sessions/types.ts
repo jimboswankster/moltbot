@@ -22,6 +22,21 @@ export type SessionOrigin = {
   threadId?: string | number;
 };
 
+export type A2AInboxEvent = {
+  schemaVersion: 1;
+  createdAt: number;
+  runId: string;
+  sourceSessionKey: string;
+  sourceDisplayKey?: string;
+  replyText: string;
+  deliveredAt?: number;
+  deliveredRunId?: string;
+};
+
+export type A2AInboxState = {
+  events: A2AInboxEvent[];
+};
+
 export type SessionEntry = {
   /**
    * Last delivered heartbeat payload (used to suppress duplicate heartbeat notifications).
@@ -93,6 +108,7 @@ export type SessionEntry = {
   lastThreadId?: string | number;
   skillsSnapshot?: SessionSkillSnapshot;
   systemPromptReport?: SessionSystemPromptReport;
+  a2aInbox?: A2AInboxState;
 };
 
 export function mergeSessionEntry(

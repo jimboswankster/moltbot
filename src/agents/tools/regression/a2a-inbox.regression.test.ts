@@ -5,12 +5,63 @@
  * QC Protocol: TEST-QA-PASSING-FAILURE v1.0.0
  */
 
-import { describe, expect, it } from "vitest";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { OpenClawConfig } from "../../../config/config.js";
+import { saveSessionStore } from "../../../config/sessions.js";
 import {
   buildA2AInboxPromptBlock,
+  injectA2AInboxPrependContext,
+  recordA2AInboxEvent,
   TRANSITIONAL_A2A_INBOX_TAG,
   type A2AInboxEvent,
 } from "../../a2a-inbox.js";
+
+const { logInfo, logWarn, logError, logDebug } = vi.hoisted(() => ({
+  logInfo: vi.fn(),
+  logWarn: vi.fn(),
+  logError: vi.fn(),
+  logDebug: vi.fn(),
+}));
+vi.mock("../../../logging/subsystem.js", () => ({
+  createSubsystemLogger: () => ({
+    info: logInfo,
+    warn: logWarn,
+    error: logError,
+    debug: logDebug,
+  }),
+}));
+
+async function setupSessionStore() {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-a2a-inbox-"));
+  const storePath = path.join(dir, "sessions.json");
+  const sessionKey = "agent:main:main";
+  const cfg = {
+    session: {
+      store: storePath,
+      scope: "per-sender",
+      mainKey: "main",
+    },
+  } as OpenClawConfig;
+
+  await saveSessionStore(storePath, {
+    [sessionKey]: {
+      sessionId: "session-1",
+      updatedAt: Date.now(),
+    },
+  });
+
+  return { dir, storePath, sessionKey, cfg };
+}
+
+afterEach(async () => {
+  logInfo.mockReset();
+  logWarn.mockReset();
+  logError.mockReset();
+  logDebug.mockReset();
+});
 
 describe("A2A Inbox - Golden Master Prompt Snapshot", () => {
   it("builds the transitional inbox block without user-role injection", () => {
@@ -42,12 +93,85 @@ describe("A2A Inbox - Golden Master Prompt Snapshot", () => {
   });
 });
 
+describe("A2A Inbox - Audit Logging", () => {
+  it("logs a2a_inbox_event_written on write", async () => {
+    const { dir, cfg, sessionKey } = await setupSessionStore();
+    try {
+      await recordA2AInboxEvent({
+        cfg,
+        sessionKey,
+        sourceSessionKey: "agent:main:subagent:sub-001",
+        sourceDisplayKey: "subagent:sub-001",
+        runId: "run-123",
+        replyText: "Done.",
+        now: 1738737600000,
+      });
+
+      expect(logInfo).toHaveBeenCalledWith(
+        "a2a_inbox_event_written",
+        expect.objectContaining({
+          runId: "run-123",
+          sessionKey,
+          sourceSessionKey: "agent:main:subagent:sub-001",
+          eventCount: 1,
+        }),
+      );
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("logs a2a_inbox_injected and a2a_inbox_cleared on injection", async () => {
+    const { dir, cfg, sessionKey } = await setupSessionStore();
+    try {
+      await recordA2AInboxEvent({
+        cfg,
+        sessionKey,
+        sourceSessionKey: "agent:main:subagent:sub-001",
+        sourceDisplayKey: "subagent:sub-001",
+        runId: "run-456",
+        replyText: "Finished.",
+        now: 1738737600000,
+      });
+
+      const result = await injectA2AInboxPrependContext({
+        cfg,
+        sessionKey,
+        runId: "master-run-1",
+        now: 1738737700000,
+      });
+
+      expect(result?.prependContext).toContain(TRANSITIONAL_A2A_INBOX_TAG);
+      expect(logInfo).toHaveBeenCalledWith(
+        "a2a_inbox_injected",
+        expect.objectContaining({
+          runId: "master-run-1",
+          sessionKey,
+          sourceSessionKey: "agent:main:subagent:sub-001",
+          eventCount: 1,
+        }),
+      );
+      expect(logInfo).toHaveBeenCalledWith(
+        "a2a_inbox_cleared",
+        expect.objectContaining({
+          runId: "master-run-1",
+          sessionKey,
+          sourceSessionKey: "agent:main:subagent:sub-001",
+          eventCount: 1,
+        }),
+      );
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 /**
  * QC PROTOCOL CHECKLIST (Protocol: TEST-QA-PASSING-FAILURE v1.0.0)
  * ─────────────────────────────────────────────────────────────────
  * [x] PHASE_1: Test inventory declared in describe() blocks
- * [x] PHASE_2: SUT invoked (buildA2AInboxPromptBlock)
- * [x] PHASE_3: Assertions verify behavior (tag, content, snapshot)
+ * [x] PHASE_2: SUT invoked (buildA2AInboxPromptBlock, record/inject)
+ * [x] PHASE_3: Assertions verify behavior (tag, content, snapshot, logs)
  * [x] PHASE_4: No test.fails used
  * [x] PHASE_5: Error paths not required for golden-master snapshot
  * [x] PHASE_6: Deterministic inputs (fixed timestamps)
