@@ -10,3 +10,5 @@ and related integration tests. Each entry includes the commit hash and tests run
   Tests: `npx vitest run src/agents/tools/regression/ src/gateway/server-methods/send-a2a-announce.integration.test.ts`
 - Add A2A inbox golden-master prompt snapshot (commit: 423112de4)
   Tests: `npx vitest run src/agents/tools/regression/ src/gateway/server-methods/send-a2a-announce.integration.test.ts`
+- Add A2A inbox audit logging coverage (commit: 3d37bb2bf)
+  Tests: `npx vitest run src/agents/tools/regression/ src/gateway/server-methods/send-a2a-announce.integration.test.ts`
