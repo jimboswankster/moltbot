@@ -17,7 +17,7 @@
    - SUT: `runSessionsSendA2AFlow()`, `isReplySkip()`, `isAnnounceSkip()`, `buildAgentToAgentReplyContext()`, `buildAgentToAgentAnnounceContext()`
    - Coverage: A2A flow ping-pong, announce, skip tokens, rate limiting, role/source attribution
 
-2. **sessions-send-async.regression.test.ts** (12 tests)
+2. **sessions-send-async.regression.test.ts** (13 tests)
    - Protocol: Unit Test Protocol
    - SUT: `createSessionsSendTool().execute()`
    - Coverage: Async/sync modes, cross-agent detection, documented gaps
@@ -27,7 +27,7 @@
    - SUT: `createSessionsSendTool().execute()` with dynamic config mocks
    - Coverage: `agentToAgent.enabled`, `session.scope` config variations
 
-4. **a2a-integration.regression.test.ts** (8 tests)
+4. **a2a-integration.regression.test.ts** (7 tests)
    - Protocol: Integration Test Protocol
    - SUT: `runSessionsSendA2AFlow()`, context builders
    - Coverage: Tool restriction, concurrency safeguards
@@ -57,7 +57,7 @@
 | A2A Flow - History Reply Retrieval (Gap #6) | 2 | `readLatestAssistantReply()` integration |
 | A2A Flow - Role/Source Attribution (Gap #2) | 2 | Interface contract for fix (1 test.fails) |
 
-**sessions-send-async.regression.test.ts (12 tests):**
+**sessions-send-async.regression.test.ts (13 tests):**
 | Suite | Tests | Coverage |
 |-------|-------|----------|
 | sessions_send - Async Mode Behavior | 3 (1 expected-fail) | Fire-and-forget, A2A triggering bug |
@@ -65,6 +65,7 @@
 | sessions_send - Cross-Agent Detection | 2 | Requester/target key passing |
 | sessions_send - Timeout and Error Handling | 3 | Timeout, error, gateway throw |
 | sessions_send - Message Role/Source (Gap #2) | 2 | Role attribution documentation |
+| sessions_send - Gateway Mirror (Gap #1) | 1 | Mirror risk documentation |
 
 **config-variation.regression.test.ts (5 tests):**
 | Suite | Tests | Coverage |
@@ -72,7 +73,7 @@
 | Config Variation: agentToAgent.enabled | 3 (2 test.fails) | A2A enabled/disabled behavior |
 | Config Variation: session.scope | 2 | per-sender, global scope |
 
-**a2a-integration.regression.test.ts (8 tests):**
+**a2a-integration.regression.test.ts (7 tests):**
 | Suite | Tests | Coverage |
 |-------|-------|----------|
 | Tool Restriction Enforcement (Gap #7) | 5 | extraSystemPrompt verification |
@@ -356,9 +357,9 @@ afterEach(() => {
 
 ```
 ✓ src/agents/tools/regression/a2a-flow.regression.test.ts  (33 tests)
-✓ src/agents/tools/regression/sessions-send-async.regression.test.ts  (12 tests)
+✓ src/agents/tools/regression/sessions-send-async.regression.test.ts  (13 tests)
 ✓ src/agents/tools/regression/config-variation.regression.test.ts  (5 tests)
-✓ src/agents/tools/regression/a2a-integration.regression.test.ts  (8 tests)
+✓ src/agents/tools/regression/a2a-integration.regression.test.ts  (7 tests)
 ✓ src/gateway/server-methods/send-a2a-announce.integration.test.ts  (5 tests)
 
 Test Files  5 passed (5)

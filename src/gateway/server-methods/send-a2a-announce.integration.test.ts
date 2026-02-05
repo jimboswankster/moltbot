@@ -17,9 +17,15 @@ import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 // Mocks for integration boundary
 // ─────────────────────────────────────────────────────────────────────────────
 
-const appendAssistantMessageMock = vi.fn(async () => ({ ok: true, sessionFile: "x" }));
-const recordSessionMetaMock = vi.fn(async () => ({ ok: true }));
-const deliverOutboundPayloadsMock = vi.fn();
+const mocks = vi.hoisted(() => ({
+  appendAssistantMessageToSessionTranscript: vi.fn(async () => ({ ok: true, sessionFile: "x" })),
+  sendText: vi.fn().mockResolvedValue({ messageId: "m1", chatId: "c1" }),
+  sendMedia: vi.fn().mockResolvedValue({ messageId: "m2", chatId: "c1" }),
+  ensureOutboundSessionEntry: vi.fn(async () => undefined),
+  resolveOutboundSessionRoute: vi.fn(async () => ({
+    sessionKey: "agent:main:slack:channel:resolved",
+  })),
+}));
 
 vi.mock("../../config/config.js", async () => {
   const actual =
@@ -33,16 +39,24 @@ vi.mock("../../config/config.js", async () => {
 });
 
 vi.mock("../../channels/plugins/index.js", () => ({
-  getChannelPlugin: () => ({ outbound: {} }),
+  getChannelPlugin: () => ({ outbound: { sendText: true, sendMedia: true } }),
   normalizeChannelId: (value: string) => value,
+}));
+
+vi.mock("../../channels/plugins/outbound/load.js", () => ({
+  loadChannelOutboundAdapter: async () => ({
+    sendText: (opts: unknown) => mocks.sendText(opts),
+    sendMedia: (opts: unknown) => mocks.sendMedia(opts),
+  }),
 }));
 
 vi.mock("../../infra/outbound/targets.js", () => ({
   resolveOutboundTarget: () => ({ ok: true, to: "resolved-target" }),
 }));
 
-vi.mock("../../infra/outbound/deliver.js", () => ({
-  deliverOutboundPayloads: (opts: unknown) => deliverOutboundPayloadsMock(opts),
+vi.mock("../../infra/outbound/outbound-session.js", () => ({
+  ensureOutboundSessionEntry: (opts: unknown) => mocks.ensureOutboundSessionEntry(opts),
+  resolveOutboundSessionRoute: (opts: unknown) => mocks.resolveOutboundSessionRoute(opts),
 }));
 
 vi.mock("../../config/sessions.js", async () => {
@@ -51,8 +65,8 @@ vi.mock("../../config/sessions.js", async () => {
   );
   return {
     ...actual,
-    appendAssistantMessageToSessionTranscript: (opts: unknown) => appendAssistantMessageMock(opts),
-    recordSessionMetaFromInbound: (opts: unknown) => recordSessionMetaMock(opts),
+    appendAssistantMessageToSessionTranscript: (opts: unknown) =>
+      mocks.appendAssistantMessageToSessionTranscript(opts),
   };
 });
 
@@ -79,6 +93,7 @@ const makeContext = (): GatewayRequestContext =>
 describe("Gateway Send - A2A Announce Mirror Behavior", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.sendText.mockResolvedValue({ messageId: "m1", chatId: "c1" });
   });
 
   afterEach(() => {
@@ -95,9 +110,8 @@ describe("Gateway Send - A2A Announce Mirror Behavior", () => {
    *
    * This test verifies the mirror path is called exactly once per send.
    */
-  it("calls deliverOutboundPayloads with mirror config when sessionKey provided", async () => {
-    // Observable: deliverOutboundPayloadsMock called with mirror object
-    deliverOutboundPayloadsMock.mockResolvedValue([{ messageId: "m1", channel: "telegram" }]);
+  it("persists mirror when sessionKey provided", async () => {
+    // Observable: mirror persisted via appendAssistantMessageToSessionTranscript
 
     const respond = vi.fn();
     await sendHandlers.send({
@@ -115,33 +129,17 @@ describe("Gateway Send - A2A Announce Mirror Behavior", () => {
       isWebchatConnect: () => false,
     });
 
-    // Verify deliverOutboundPayloads was called exactly once
-    expect(deliverOutboundPayloadsMock).toHaveBeenCalledTimes(1);
-
-    // Verify mirror config was passed
-    expect(deliverOutboundPayloadsMock).toHaveBeenCalledWith(
+    expect(mocks.appendAssistantMessageToSessionTranscript).toHaveBeenCalledTimes(1);
+    expect(mocks.appendAssistantMessageToSessionTranscript).toHaveBeenCalledWith(
       expect.objectContaining({
-        mirror: expect.objectContaining({
-          sessionKey: "agent:main:main",
-          text: "A2A announce: Task completed successfully!",
-        }),
+        sessionKey: "agent:main:main",
+        text: "A2A announce: Task completed successfully!",
       }),
     );
   });
 
   it("persists mirror once per send when sessionKey provided", async () => {
-    // Observable: appendAssistantMessageMock called once via delivery layer
-    deliverOutboundPayloadsMock.mockImplementation(
-      async (opts: { mirror?: { sessionKey?: string; text?: string } }) => {
-        if (opts.mirror?.sessionKey) {
-          await appendAssistantMessageMock({
-            sessionKey: opts.mirror.sessionKey,
-            text: opts.mirror.text,
-          });
-        }
-        return [{ messageId: "m2", channel: "telegram" }];
-      },
-    );
+    // Observable: appendAssistantMessageToSessionTranscript called once via delivery layer
 
     const respond = vi.fn();
     await sendHandlers.send({
@@ -160,26 +158,16 @@ describe("Gateway Send - A2A Announce Mirror Behavior", () => {
     });
 
     // Mirror is persisted once via delivery layer
-    expect(appendAssistantMessageMock).toHaveBeenCalledTimes(1);
-    expect(appendAssistantMessageMock).toHaveBeenCalledWith(
+    expect(mocks.appendAssistantMessageToSessionTranscript).toHaveBeenCalledTimes(1);
+    expect(mocks.appendAssistantMessageToSessionTranscript).toHaveBeenCalledWith(
       expect.objectContaining({
         sessionKey: "agent:main:subagent:task-001",
-      }),
-    );
-
-    // Verify mirror was delegated to delivery layer
-    expect(deliverOutboundPayloadsMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        mirror: expect.objectContaining({
-          sessionKey: "agent:main:subagent:task-001",
-        }),
       }),
     );
   });
 
   it("lowercases session key in mirror to prevent case-based duplicates", async () => {
     // Observable: mirror.sessionKey is lowercased
-    deliverOutboundPayloadsMock.mockResolvedValue([{ messageId: "m3", channel: "telegram" }]);
 
     const respond = vi.fn();
     await sendHandlers.send({
@@ -198,11 +186,9 @@ describe("Gateway Send - A2A Announce Mirror Behavior", () => {
     });
 
     // Verify session key is lowercased to prevent case-based duplicates
-    expect(deliverOutboundPayloadsMock).toHaveBeenCalledWith(
+    expect(mocks.appendAssistantMessageToSessionTranscript).toHaveBeenCalledWith(
       expect.objectContaining({
-        mirror: expect.objectContaining({
-          sessionKey: "agent:main:slack:channel:c123", // Lowercased
-        }),
+        sessionKey: "agent:main:slack:channel:c123", // Lowercased
       }),
     );
   });
@@ -213,9 +199,9 @@ describe("Gateway Send - A2A Announce Mirror Behavior", () => {
    * If deliverOutboundPayloads throws or returns empty, the mirror should
    * NOT be persisted (no partial state).
    */
-  it("does not persist mirror when delivery returns no results", async () => {
+  it("does not persist mirror when delivery fails", async () => {
     // Observable: respond called with error, no mirror persisted
-    deliverOutboundPayloadsMock.mockResolvedValue([]);
+    mocks.sendText.mockRejectedValueOnce(new Error("Delivery failed"));
 
     const respond = vi.fn();
     await sendHandlers.send({
@@ -233,30 +219,21 @@ describe("Gateway Send - A2A Announce Mirror Behavior", () => {
       isWebchatConnect: () => false,
     });
 
-    // deliverOutboundPayloads was called with mirror config
-    expect(deliverOutboundPayloadsMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        mirror: expect.objectContaining({
-          sessionKey: "agent:main:main",
-        }),
-      }),
-    );
-
-    // Response should indicate failure (no delivery result)
+    // Response should indicate failure
     expect(respond).toHaveBeenCalledWith(
       false,
       undefined,
       expect.objectContaining({
         code: "UNAVAILABLE", // Error code is a string, not a number
-        message: expect.stringContaining("No delivery result"),
+        message: expect.stringContaining("Delivery failed"),
       }),
       expect.objectContaining({
         channel: "telegram",
       }),
     );
 
-    // Even though delivery returned no results, mirror persistence should not occur
-    expect(appendAssistantMessageMock).not.toHaveBeenCalled();
+    // Delivery failed, so mirror persistence should not occur
+    expect(mocks.appendAssistantMessageToSessionTranscript).not.toHaveBeenCalled();
   });
 });
 
@@ -267,6 +244,7 @@ describe("Gateway Send - A2A Announce Mirror Behavior", () => {
 describe("Gateway Send - A2A Announce Without SessionKey", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.sendText.mockResolvedValue({ messageId: "m1", chatId: "c1" });
   });
 
   afterEach(() => {
@@ -274,8 +252,7 @@ describe("Gateway Send - A2A Announce Without SessionKey", () => {
   });
 
   it("derives session key when not provided (fallback path)", async () => {
-    // Observable: recordSessionMetaMock called for derived session
-    deliverOutboundPayloadsMock.mockResolvedValue([{ messageId: "m5", channel: "telegram" }]);
+    // Observable: ensureOutboundSessionEntry called for derived session
 
     const respond = vi.fn();
     await sendHandlers.send({
@@ -293,15 +270,13 @@ describe("Gateway Send - A2A Announce Without SessionKey", () => {
       isWebchatConnect: () => false,
     });
 
-    // Should call recordSessionMetaFromInbound for derived route
-    expect(recordSessionMetaMock).toHaveBeenCalled();
+    // Should call ensureOutboundSessionEntry for derived route
+    expect(mocks.ensureOutboundSessionEntry).toHaveBeenCalled();
 
     // Mirror should use derived session key
-    expect(deliverOutboundPayloadsMock).toHaveBeenCalledWith(
+    expect(mocks.appendAssistantMessageToSessionTranscript).toHaveBeenCalledWith(
       expect.objectContaining({
-        mirror: expect.objectContaining({
-          agentId: "main", // Derived from config
-        }),
+        sessionKey: "agent:main:slack:channel:resolved",
       }),
     );
   });
