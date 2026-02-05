@@ -9,6 +9,7 @@ import {
   renderReadingIndicatorGroup,
   renderStreamingGroup,
 } from "../chat/grouped-render";
+import { extractTextCached } from "../chat/message-extract";
 import { normalizeMessage, normalizeRoleForGrouping } from "../chat/message-normalizer";
 import { icons } from "../icons";
 import {
@@ -616,6 +617,57 @@ function groupMessages(items: ChatItem[]): Array<ChatItem | MessageGroup> {
   return result;
 }
 
+function splitSystemPreface(message: unknown): Array<ChatItem> | null {
+  const m = message as Record<string, unknown>;
+  const role = typeof m.role === "string" ? m.role.toLowerCase() : "";
+  if (role !== "user") {
+    return null;
+  }
+  const text = extractTextCached(message);
+  if (!text) {
+    return null;
+  }
+  const separator = "\n\n";
+  const separatorIndex = text.indexOf(separator);
+  if (separatorIndex < 0) {
+    return null;
+  }
+  const prefix = text.slice(0, separatorIndex);
+  const rest = text.slice(separatorIndex + separator.length).trim();
+  if (!rest) {
+    return null;
+  }
+  const prefixLines = prefix
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (prefixLines.length === 0 || !prefixLines.every((line) => line.startsWith("System: "))) {
+    return null;
+  }
+  const timestamp =
+    typeof m.timestamp === "number" ? m.timestamp : Date.now();
+  return [
+    {
+      kind: "message",
+      key: `${messageKey(message, 0)}:system`,
+      message: {
+        role: "system",
+        content: prefix,
+        timestamp,
+      },
+    },
+    {
+      kind: "message",
+      key: `${messageKey(message, 0)}:user`,
+      message: {
+        role: "user",
+        content: rest,
+        timestamp,
+      },
+    },
+  ];
+}
+
 function buildChatItems(props: ChatProps): Array<ChatItem | MessageGroup> {
   const items: ChatItem[] = [];
   const history = Array.isArray(props.messages) ? props.messages : [];
@@ -640,11 +692,12 @@ function buildChatItems(props: ChatProps): Array<ChatItem | MessageGroup> {
       continue;
     }
 
-    items.push({
-      kind: "message",
-      key: messageKey(msg, i),
-      message: msg,
-    });
+    const split = splitSystemPreface(msg);
+    if (split) {
+      items.push(...split);
+      continue;
+    }
+    items.push({ kind: "message", key: messageKey(msg, i), message: msg });
   }
   if (props.showThinking) {
     for (let i = 0; i < tools.length; i++) {
@@ -668,7 +721,7 @@ function buildChatItems(props: ChatProps): Array<ChatItem | MessageGroup> {
     } else {
       items.push({ kind: "reading-indicator", key });
     }
-  } else if (props.canAbort) {
+  } else if (props.canAbort || props.sending) {
     // If a run is active but no stream is present (e.g. missed deltas),
     // keep a lightweight "working" indicator visible.
     const key = `stream:${props.sessionKey}:pending`;
