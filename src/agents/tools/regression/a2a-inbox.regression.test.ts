@@ -539,18 +539,62 @@ describe("A2A Inbox - Fail Closed Clear Strategy", () => {
         .spyOn(sessions, "updateSessionStore")
         .mockRejectedValueOnce(new Error("boom"));
 
-      await expect(
-        injectA2AInboxPrependContext({
-          cfg,
-          sessionKey,
-          runId: "master-run-fail",
-          now: 1738737700000,
-        }),
-      ).rejects.toThrow("boom");
+      const result = await injectA2AInboxPrependContext({
+        cfg,
+        sessionKey,
+        runId: "master-run-fail",
+        now: 1738737700000,
+      });
+
+      expect(result).toBeUndefined();
 
       const store = loadSessionStore(storePath, { skipCache: true });
       const event = store[sessionKey]?.a2aInbox?.events?.[0];
       expect(event?.deliveredAt).toBeUndefined();
+      expect(logError).toHaveBeenCalledWith(
+        "a2a_inbox_error",
+        expect.objectContaining({
+          runId: "master-run-fail",
+          sessionKey,
+        }),
+      );
+      updateSpy.mockRestore();
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("A2A Inbox - Failure Visibility", () => {
+  it("logs a2a_inbox_error on write failures", async () => {
+    const { dir, cfg, sessionKey, storePath } = await setupSessionStore();
+    try {
+      const updateSpy = vi
+        .spyOn(sessions, "updateSessionStore")
+        .mockRejectedValueOnce(new Error("boom"));
+
+      const result = await recordA2AInboxEvent({
+        cfg,
+        sessionKey,
+        sourceSessionKey: "agent:main:subagent:sub-001",
+        sourceDisplayKey: "subagent:sub-001",
+        runId: "run-error",
+        replyText: "Error.",
+        now: 1738737600000,
+      });
+
+      expect(result.written).toBe(false);
+      expect(logError).toHaveBeenCalledWith(
+        "a2a_inbox_error",
+        expect.objectContaining({
+          runId: "run-error",
+          sessionKey,
+          sourceSessionKey: "agent:main:subagent:sub-001",
+        }),
+      );
+
+      const store = loadSessionStore(storePath, { skipCache: true });
+      expect(store[sessionKey]?.a2aInbox).toBeUndefined();
       updateSpy.mockRestore();
     } finally {
       await fs.rm(dir, { recursive: true, force: true });

@@ -8,6 +8,7 @@ import {
 } from "../config/sessions.js";
 import { resolveStorePath } from "../config/sessions/paths.js";
 import { resolveSessionStoreKey } from "../gateway/session-utils.js";
+import { formatErrorMessage } from "../infra/errors.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { resolveAgentIdFromSessionKey } from "../routing/session-key.js";
 import { resolveDefaultAgentId } from "./agent-scope.js";
@@ -165,31 +166,41 @@ export async function recordA2AInboxEvent(params: {
   const eventId = crypto.randomUUID();
   let written = false;
 
-  await updateSessionStore(storePath, (store) => {
-    const existing = store[canonicalKey];
-    const inbox = existing?.a2aInbox;
-    const events = Array.isArray(inbox?.events) ? inbox?.events : [];
-    if (events.some((event) => event.runId === params.runId)) {
-      return;
-    }
-    const nextEvent: A2AInboxEvent = {
-      schemaVersion: A2A_INBOX_SCHEMA_VERSION,
-      createdAt: now,
-      runId: params.runId,
-      sourceSessionKey: params.sourceSessionKey,
-      sourceDisplayKey: params.sourceDisplayKey,
-      replyText: params.replyText,
-    };
-    const next = mergeSessionEntry(existing, {
-      sessionId: existing?.sessionId ?? crypto.randomUUID(),
-      updatedAt: now,
-      a2aInbox: {
-        events: [...events, nextEvent],
-      },
+  try {
+    await updateSessionStore(storePath, (store) => {
+      const existing = store[canonicalKey];
+      const inbox = existing?.a2aInbox;
+      const events = Array.isArray(inbox?.events) ? inbox?.events : [];
+      if (events.some((event) => event.runId === params.runId)) {
+        return;
+      }
+      const nextEvent: A2AInboxEvent = {
+        schemaVersion: A2A_INBOX_SCHEMA_VERSION,
+        createdAt: now,
+        runId: params.runId,
+        sourceSessionKey: params.sourceSessionKey,
+        sourceDisplayKey: params.sourceDisplayKey,
+        replyText: params.replyText,
+      };
+      const next = mergeSessionEntry(existing, {
+        sessionId: existing?.sessionId ?? crypto.randomUUID(),
+        updatedAt: now,
+        a2aInbox: {
+          events: [...events, nextEvent],
+        },
+      });
+      store[canonicalKey] = next;
+      written = true;
     });
-    store[canonicalKey] = next;
-    written = true;
-  });
+  } catch (err) {
+    log.error("a2a_inbox_error", {
+      runId: params.runId,
+      sessionKey: canonicalKey,
+      sourceSessionKey: params.sourceSessionKey,
+      error: formatErrorMessage(err),
+    });
+    return { written: false, eventId: null };
+  }
 
   if (written) {
     log.info("a2a_inbox_event_written", {
@@ -216,112 +227,122 @@ export async function injectA2AInboxPrependContext(params: {
   }
   const now = params.now ?? Date.now();
   const { storePath, canonicalKey } = resolveInboxStoreTarget(params.cfg, sessionKey);
-  const store = loadSessionStore(storePath, { skipCache: true });
-  const entry = store[canonicalKey];
-  const inbox = entry?.a2aInbox;
-  if (!inbox) {
-    return undefined;
-  }
-  const validation = validateA2AInboxState(inbox);
-  if (!validation.ok) {
-    log.warn("a2a_inbox_error", {
-      runId: params.runId,
-      sessionKey: canonicalKey,
-      validationFailed: true,
-      reason: validation.error,
-    });
-    return undefined;
-  }
 
-  const events = validation.events;
-  if (events.length === 0) {
-    return undefined;
-  }
-
-  const pending: A2AInboxEvent[] = [];
-  const staleEvents: A2AInboxEvent[] = [];
-  const unsupportedEvents: A2AInboxEvent[] = [];
-  for (const event of events) {
-    if (event.schemaVersion !== A2A_INBOX_SCHEMA_VERSION) {
-      unsupportedEvents.push(event);
-      continue;
+  try {
+    const store = loadSessionStore(storePath, { skipCache: true });
+    const entry = store[canonicalKey];
+    const inbox = entry?.a2aInbox;
+    if (!inbox) {
+      return undefined;
     }
-    if (event.createdAt < now - A2A_INBOX_MAX_AGE_MS) {
-      staleEvents.push(event);
-      continue;
+    const validation = validateA2AInboxState(inbox);
+    if (!validation.ok) {
+      log.warn("a2a_inbox_error", {
+        runId: params.runId,
+        sessionKey: canonicalKey,
+        validationFailed: true,
+        reason: validation.error,
+      });
+      return undefined;
     }
-    if (!event.deliveredAt) {
-      pending.push(event);
+
+    const events = validation.events;
+    if (events.length === 0) {
+      return undefined;
     }
-  }
 
-  if (staleEvents.length > 0) {
-    log.warn("a2a_inbox_error", {
-      runId: params.runId,
-      sessionKey: canonicalKey,
-      sourceSessionKey: staleEvents[0]?.sourceSessionKey,
-      eventCount: staleEvents.length,
-      stale: true,
-    });
-  }
-
-  if (unsupportedEvents.length > 0) {
-    log.warn("a2a_inbox_error", {
-      runId: params.runId,
-      sessionKey: canonicalKey,
-      sourceSessionKey: unsupportedEvents[0]?.sourceSessionKey,
-      eventCount: unsupportedEvents.length,
-      unsupportedVersion: true,
-    });
-  }
-  if (pending.length === 0) {
-    return undefined;
-  }
-
-  const block = buildA2AInboxPromptBlock({
-    events: pending,
-    maxEvents: A2A_INBOX_MAX_EVENTS,
-    maxChars: A2A_INBOX_MAX_CHARS,
-  });
-  if (!block.text) {
-    return undefined;
-  }
-
-  await updateSessionStore(storePath, (mutable) => {
-    const current = mutable[canonicalKey];
-    if (!current?.a2aInbox?.events) {
-      return;
-    }
-    const nextEvents = current.a2aInbox.events.map((event) => {
-      if (!block.includedRunIds.includes(event.runId)) {
-        return event;
+    const pending: A2AInboxEvent[] = [];
+    const staleEvents: A2AInboxEvent[] = [];
+    const unsupportedEvents: A2AInboxEvent[] = [];
+    for (const event of events) {
+      if (event.schemaVersion !== A2A_INBOX_SCHEMA_VERSION) {
+        unsupportedEvents.push(event);
+        continue;
       }
-      return { ...event, deliveredAt: now, deliveredRunId: params.runId };
-    });
-    mutable[canonicalKey] = mergeSessionEntry(current, {
-      updatedAt: now,
-      a2aInbox: {
-        events: nextEvents,
-      },
-    });
-  });
+      if (event.createdAt < now - A2A_INBOX_MAX_AGE_MS) {
+        staleEvents.push(event);
+        continue;
+      }
+      if (!event.deliveredAt) {
+        pending.push(event);
+      }
+    }
 
-  const sourceSessionKey = pending[0]?.sourceSessionKey;
-  const eventCount = block.includedRunIds.length;
-  if (eventCount > 0) {
-    log.info("a2a_inbox_injected", {
+    if (staleEvents.length > 0) {
+      log.warn("a2a_inbox_error", {
+        runId: params.runId,
+        sessionKey: canonicalKey,
+        sourceSessionKey: staleEvents[0]?.sourceSessionKey,
+        eventCount: staleEvents.length,
+        stale: true,
+      });
+    }
+
+    if (unsupportedEvents.length > 0) {
+      log.warn("a2a_inbox_error", {
+        runId: params.runId,
+        sessionKey: canonicalKey,
+        sourceSessionKey: unsupportedEvents[0]?.sourceSessionKey,
+        eventCount: unsupportedEvents.length,
+        unsupportedVersion: true,
+      });
+    }
+    if (pending.length === 0) {
+      return undefined;
+    }
+
+    const block = buildA2AInboxPromptBlock({
+      events: pending,
+      maxEvents: A2A_INBOX_MAX_EVENTS,
+      maxChars: A2A_INBOX_MAX_CHARS,
+    });
+    if (!block.text) {
+      return undefined;
+    }
+
+    await updateSessionStore(storePath, (mutable) => {
+      const current = mutable[canonicalKey];
+      if (!current?.a2aInbox?.events) {
+        return;
+      }
+      const nextEvents = current.a2aInbox.events.map((event) => {
+        if (!block.includedRunIds.includes(event.runId)) {
+          return event;
+        }
+        return { ...event, deliveredAt: now, deliveredRunId: params.runId };
+      });
+      mutable[canonicalKey] = mergeSessionEntry(current, {
+        updatedAt: now,
+        a2aInbox: {
+          events: nextEvents,
+        },
+      });
+    });
+
+    const sourceSessionKey = pending[0]?.sourceSessionKey;
+    const eventCount = block.includedRunIds.length;
+    if (eventCount > 0) {
+      log.info("a2a_inbox_injected", {
+        runId: params.runId,
+        sessionKey: canonicalKey,
+        sourceSessionKey,
+        eventCount,
+      });
+      log.info("a2a_inbox_cleared", {
+        runId: params.runId,
+        sessionKey: canonicalKey,
+        sourceSessionKey,
+        eventCount,
+      });
+    }
+
+    return { prependContext: block.text };
+  } catch (err) {
+    log.error("a2a_inbox_error", {
       runId: params.runId,
       sessionKey: canonicalKey,
-      sourceSessionKey,
-      eventCount,
+      error: formatErrorMessage(err),
     });
-    log.info("a2a_inbox_cleared", {
-      runId: params.runId,
-      sessionKey: canonicalKey,
-      sourceSessionKey,
-      eventCount,
-    });
+    return undefined;
   }
-
-  return { prependContext: block.text };
 }
