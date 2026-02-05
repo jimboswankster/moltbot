@@ -18,3 +18,5 @@ and related integration tests. Each entry includes the commit hash and tests run
   Tests: `npx vitest run src/agents/tools/regression/ src/gateway/server-methods/send-a2a-announce.integration.test.ts`
 - Add fail-closed inbox clear coverage (commit: 23d760e24)
   Tests: `npx vitest run src/agents/tools/regression/ src/gateway/server-methods/send-a2a-announce.integration.test.ts`
+- Skip stale/unsupported inbox events (commit: c0ff94b92)
+  Tests: `npx vitest run src/agents/tools/regression/ src/gateway/server-methods/send-a2a-announce.integration.test.ts`
