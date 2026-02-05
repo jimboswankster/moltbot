@@ -351,9 +351,58 @@ describe("deliverOutboundPayloads", () => {
       },
     });
 
+    // CRITICAL: Exactly one transcript entry - prevents double-storage in A2A announce path
+    expect(mocks.appendAssistantMessageToSessionTranscript).toHaveBeenCalledTimes(1);
     expect(mocks.appendAssistantMessageToSessionTranscript).toHaveBeenCalledWith(
       expect.objectContaining({ text: "report.pdf" }),
     );
+  });
+
+  it("does not mirror when delivery returns no results (empty payloads)", async () => {
+    const sendTelegram = vi.fn().mockResolvedValue({ messageId: "m1", chatId: "c1" });
+    const cfg: OpenClawConfig = {
+      channels: { telegram: { botToken: "tok-1" } },
+    };
+    mocks.appendAssistantMessageToSessionTranscript.mockClear();
+
+    // Empty/whitespace-only payloads are normalized out
+    await deliverOutboundPayloads({
+      cfg,
+      channel: "telegram",
+      to: "123",
+      payloads: [{ text: "   " }], // Whitespace-only - normalized to empty
+      deps: { sendTelegram },
+      mirror: {
+        sessionKey: "agent:main:main",
+        text: "   ",
+      },
+    });
+
+    // No delivery results means no mirror storage
+    expect(mocks.appendAssistantMessageToSessionTranscript).not.toHaveBeenCalled();
+  });
+
+  it("does not mirror when mirror.text is empty", async () => {
+    const sendTelegram = vi.fn().mockResolvedValue({ messageId: "m1", chatId: "c1" });
+    const cfg: OpenClawConfig = {
+      channels: { telegram: { botToken: "tok-1" } },
+    };
+    mocks.appendAssistantMessageToSessionTranscript.mockClear();
+
+    await deliverOutboundPayloads({
+      cfg,
+      channel: "telegram",
+      to: "123",
+      payloads: [{ text: "hello" }],
+      deps: { sendTelegram },
+      mirror: {
+        sessionKey: "agent:main:main",
+        text: "", // Empty mirror text
+      },
+    });
+
+    // Empty mirror text should not trigger storage
+    expect(mocks.appendAssistantMessageToSessionTranscript).not.toHaveBeenCalled();
   });
 });
 
