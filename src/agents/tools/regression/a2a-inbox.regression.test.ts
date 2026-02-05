@@ -434,6 +434,93 @@ describe("A2A Inbox - Schema Validation", () => {
   });
 });
 
+describe("A2A Inbox - Scope + Idempotence", () => {
+  it("dedupes inbox events by runId", async () => {
+    const { dir, cfg, sessionKey, storePath } = await setupSessionStore();
+    try {
+      await recordA2AInboxEvent({
+        cfg,
+        sessionKey,
+        sourceSessionKey: "agent:main:subagent:sub-001",
+        sourceDisplayKey: "subagent:sub-001",
+        runId: "run-dup",
+        replyText: "First.",
+        now: 1738737600000,
+      });
+      await recordA2AInboxEvent({
+        cfg,
+        sessionKey,
+        sourceSessionKey: "agent:main:subagent:sub-001",
+        sourceDisplayKey: "subagent:sub-001",
+        runId: "run-dup",
+        replyText: "Second.",
+        now: 1738737600001,
+      });
+
+      const store = loadSessionStore(storePath, { skipCache: true });
+      const events = store[sessionKey]?.a2aInbox?.events ?? [];
+      expect(events.length).toBe(1);
+      expect(events[0]?.replyText).toBe("First.");
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("only injects events scoped to the active session", async () => {
+    const { dir, cfg, sessionKey, storePath } = await setupSessionStore();
+    const otherKey = "agent:main:other";
+    try {
+      await saveSessionStore(storePath, {
+        [sessionKey]: {
+          sessionId: "session-1",
+          updatedAt: Date.now(),
+          a2aInbox: {
+            events: [
+              {
+                schemaVersion: 1,
+                createdAt: 1738737600000,
+                runId: "run-main",
+                sourceSessionKey: "agent:main:subagent:sub-001",
+                sourceDisplayKey: "subagent:sub-001",
+                replyText: "Main event.",
+              },
+            ],
+          },
+        },
+        [otherKey]: {
+          sessionId: "session-2",
+          updatedAt: Date.now(),
+          a2aInbox: {
+            events: [
+              {
+                schemaVersion: 1,
+                createdAt: 1738737600000,
+                runId: "run-other",
+                sourceSessionKey: "agent:main:subagent:sub-002",
+                sourceDisplayKey: "subagent:sub-002",
+                replyText: "Other event.",
+              },
+            ],
+          },
+        },
+      });
+
+      await injectA2AInboxPrependContext({
+        cfg,
+        sessionKey,
+        runId: "master-run-scope",
+        now: 1738737700000,
+      });
+
+      const store = loadSessionStore(storePath, { skipCache: true });
+      const otherEvent = store[otherKey]?.a2aInbox?.events?.[0];
+      expect(otherEvent?.deliveredAt).toBeUndefined();
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("A2A Inbox - Fail Closed Clear Strategy", () => {
   it("does not clear inbox events when injection fails", async () => {
     const { dir, cfg, sessionKey, storePath } = await setupSessionStore();
