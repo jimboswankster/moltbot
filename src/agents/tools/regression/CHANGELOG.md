@@ -14,3 +14,5 @@ and related integration tests. Each entry includes the commit hash and tests run
   Tests: `npx vitest run src/agents/tools/regression/ src/gateway/server-methods/send-a2a-announce.integration.test.ts`
 - Add A2A inbox bounds coverage (commit: c896930fd)
   Tests: `npx vitest run src/agents/tools/regression/ src/gateway/server-methods/send-a2a-announce.integration.test.ts`
+- Enforce A2A inbox allowlist gating (commit: aa03a2245)
+  Tests: `npx vitest run src/agents/tools/regression/ src/gateway/server-methods/send-a2a-announce.integration.test.ts`
