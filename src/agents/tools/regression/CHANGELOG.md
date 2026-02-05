@@ -6,5 +6,5 @@ and related integration tests. Each entry includes the commit hash and tests run
 ## 2026-02-05
 - Initialize changelog (commit: 9a2c9bf7e)
   Tests: none
-- Skip A2A flow in async sessions_send (commit: TBD)
+- Skip A2A flow in async sessions_send (commit: 36bcb53d4)
   Tests: `npx vitest run src/agents/tools/regression/ src/gateway/server-methods/send-a2a-announce.integration.test.ts`
