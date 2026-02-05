@@ -34,6 +34,56 @@ type A2AInboxStoreTarget = {
   canonicalKey: string;
 };
 
+type A2AInboxValidationResult =
+  | { ok: true; events: A2AInboxEvent[] }
+  | { ok: false; error: string };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function validateA2AInboxState(value: unknown): A2AInboxValidationResult {
+  if (!isRecord(value)) {
+    return { ok: false, error: "a2aInbox is not an object" };
+  }
+  const events = value.events;
+  if (!Array.isArray(events)) {
+    return { ok: false, error: "a2aInbox.events is not an array" };
+  }
+
+  for (const event of events) {
+    if (!isRecord(event)) {
+      return { ok: false, error: "a2aInbox.event is not an object" };
+    }
+    if (typeof event.schemaVersion !== "number") {
+      return { ok: false, error: "a2aInbox.event.schemaVersion is invalid" };
+    }
+    if (typeof event.createdAt !== "number") {
+      return { ok: false, error: "a2aInbox.event.createdAt is invalid" };
+    }
+    if (typeof event.runId !== "string") {
+      return { ok: false, error: "a2aInbox.event.runId is invalid" };
+    }
+    if (typeof event.sourceSessionKey !== "string") {
+      return { ok: false, error: "a2aInbox.event.sourceSessionKey is invalid" };
+    }
+    if (typeof event.replyText !== "string") {
+      return { ok: false, error: "a2aInbox.event.replyText is invalid" };
+    }
+    if (event.sourceDisplayKey !== undefined && typeof event.sourceDisplayKey !== "string") {
+      return { ok: false, error: "a2aInbox.event.sourceDisplayKey is invalid" };
+    }
+    if (event.deliveredAt !== undefined && typeof event.deliveredAt !== "number") {
+      return { ok: false, error: "a2aInbox.event.deliveredAt is invalid" };
+    }
+    if (event.deliveredRunId !== undefined && typeof event.deliveredRunId !== "string") {
+      return { ok: false, error: "a2aInbox.event.deliveredRunId is invalid" };
+    }
+  }
+
+  return { ok: true, events: events as A2AInboxEvent[] };
+}
+
 function resolveInboxStoreTarget(cfg: OpenClawConfig, sessionKey: string): A2AInboxStoreTarget {
   const canonicalKey = resolveSessionStoreKey({ cfg, sessionKey });
   const agentId =
@@ -168,7 +218,22 @@ export async function injectA2AInboxPrependContext(params: {
   const { storePath, canonicalKey } = resolveInboxStoreTarget(params.cfg, sessionKey);
   const store = loadSessionStore(storePath, { skipCache: true });
   const entry = store[canonicalKey];
-  const events = Array.isArray(entry?.a2aInbox?.events) ? entry?.a2aInbox?.events : [];
+  const inbox = entry?.a2aInbox;
+  if (!inbox) {
+    return undefined;
+  }
+  const validation = validateA2AInboxState(inbox);
+  if (!validation.ok) {
+    log.warn("a2a_inbox_error", {
+      runId: params.runId,
+      sessionKey: canonicalKey,
+      validationFailed: true,
+      reason: validation.error,
+    });
+    return undefined;
+  }
+
+  const events = validation.events;
   if (events.length === 0) {
     return undefined;
   }

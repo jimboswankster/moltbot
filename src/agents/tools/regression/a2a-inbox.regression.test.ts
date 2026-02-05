@@ -385,6 +385,55 @@ describe("A2A Inbox - Versioning + Staleness", () => {
   });
 });
 
+describe("A2A Inbox - Schema Validation", () => {
+  it("blocks injection when inbox schema is invalid", async () => {
+    const { dir, cfg, sessionKey, storePath } = await setupSessionStore();
+    try {
+      await saveSessionStore(storePath, {
+        [sessionKey]: {
+          sessionId: "session-1",
+          updatedAt: Date.now(),
+          a2aInbox: {
+            events: [
+              {
+                schemaVersion: 1,
+                createdAt: "not-a-number",
+                runId: "run-bad",
+                sourceSessionKey: "agent:main:subagent:sub-001",
+                replyText: "Bad.",
+              },
+            ],
+          },
+        },
+      });
+
+      const result = await injectA2AInboxPrependContext({
+        cfg,
+        sessionKey,
+        runId: "master-run-bad",
+        now: 1738737700000,
+      });
+
+      expect(result).toBeUndefined();
+      const store = loadSessionStore(storePath, { skipCache: true });
+      const event = store[sessionKey]?.a2aInbox?.events?.[0] as
+        | { deliveredAt?: number }
+        | undefined;
+      expect(event?.deliveredAt).toBeUndefined();
+      expect(logWarn).toHaveBeenCalledWith(
+        "a2a_inbox_error",
+        expect.objectContaining({
+          runId: "master-run-bad",
+          sessionKey,
+          validationFailed: true,
+        }),
+      );
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("A2A Inbox - Fail Closed Clear Strategy", () => {
   it("does not clear inbox events when injection fails", async () => {
     const { dir, cfg, sessionKey, storePath } = await setupSessionStore();
