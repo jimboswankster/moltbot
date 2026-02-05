@@ -2,6 +2,7 @@ import chokidar, { type FSWatcher } from "chokidar";
 import type { OpenClawConfig, ConfigFileSnapshot, GatewayReloadMode } from "../config/config.js";
 import { type ChannelId, listChannelPlugins } from "../channels/plugins/index.js";
 import { formatErrorMessage, isFileWatchLimitError } from "../infra/errors.js";
+import { recordWatcherDisabled } from "../infra/watchers-telemetry.js";
 import { getActivePluginRegistry } from "../plugins/runtime.js";
 
 export type GatewayReloadSettings = {
@@ -367,7 +368,9 @@ export function startGatewayConfigReloader(opts: {
     const hint = isFileWatchLimitError(err)
       ? " (watch limit reached; disable gateway.reload.mode or raise file limits)"
       : "";
-    opts.log.warn(`config watcher failed to start: ${formatErrorMessage(err)}${hint}`);
+    const message = formatErrorMessage(err);
+    opts.log.warn(`config watcher failed to start: ${message}${hint}`);
+    recordWatcherDisabled("config-reload", message);
     return {
       stop: async () => {},
     };
@@ -382,7 +385,9 @@ export function startGatewayConfigReloader(opts: {
       return;
     }
     watcherClosed = true;
-    opts.log.warn(`config watcher error: ${String(err)}`);
+    const message = formatErrorMessage(err);
+    opts.log.warn(`config watcher error: ${message}`);
+    recordWatcherDisabled("config-reload", message);
     void watcher.close().catch(() => {});
   });
 

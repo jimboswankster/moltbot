@@ -2,6 +2,7 @@ import chokidar, { type FSWatcher } from "chokidar";
 import path from "node:path";
 import type { OpenClawConfig } from "../../config/config.js";
 import { formatErrorMessage, isFileWatchLimitError } from "../../infra/errors.js";
+import { recordWatcherDisabled } from "../../infra/watchers-telemetry.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { CONFIG_DIR, resolveUserPath } from "../../utils.js";
 import { resolvePluginSkillDirs } from "./plugin-skills.js";
@@ -151,7 +152,9 @@ export function ensureSkillsWatcher(params: { workspaceDir: string; config?: Ope
     const hint = isFileWatchLimitError(err)
       ? " (watch limit reached; disable skills.load.watch or raise file limits)"
       : "";
-    log.warn(`skills watcher failed to start (${workspaceDir}): ${formatErrorMessage(err)}${hint}`);
+    const message = formatErrorMessage(err);
+    log.warn(`skills watcher failed to start (${workspaceDir}): ${message}${hint}`);
+    recordWatcherDisabled("skills", message);
     return;
   }
 
@@ -179,7 +182,9 @@ export function ensureSkillsWatcher(params: { workspaceDir: string; config?: Ope
   watcher.on("unlink", (p) => schedule(p));
   watcher.on("error", (err) => {
     const hint = isFileWatchLimitError(err) ? " (watch limit reached; disabling skills watch)" : "";
-    log.warn(`skills watcher error (${workspaceDir}): ${formatErrorMessage(err)}${hint}`);
+    const message = formatErrorMessage(err);
+    log.warn(`skills watcher error (${workspaceDir}): ${message}${hint}`);
+    recordWatcherDisabled("skills", message);
     void watcher.close().catch(() => {});
     watchers.delete(workspaceDir);
   });

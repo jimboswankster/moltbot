@@ -11,6 +11,7 @@ import type { RuntimeEnv } from "../runtime.js";
 import { isTruthyEnvValue } from "../infra/env.js";
 import { formatErrorMessage, isFileWatchLimitError } from "../infra/errors.js";
 import { SafeOpenError, openFileWithinRoot } from "../infra/fs-safe.js";
+import { recordWatcherDisabled } from "../infra/watchers-telemetry.js";
 import { detectMime } from "../media/mime.js";
 import { ensureDir, resolveUserPath } from "../utils.js";
 import {
@@ -315,7 +316,9 @@ export async function createCanvasHostHandler(
       const hint = isFileWatchLimitError(err)
         ? " (watch limit reached; disable gateway.canvasHost.liveReload or raise file limits)"
         : "";
-      opts.runtime.error(`canvasHost watcher failed to start: ${formatErrorMessage(err)}${hint}`);
+      const message = formatErrorMessage(err);
+      opts.runtime.error(`canvasHost watcher failed to start: ${message}${hint}`);
+      recordWatcherDisabled("canvas-live-reload", message);
       watcherClosed = true;
     }
   }
@@ -325,9 +328,11 @@ export async function createCanvasHostHandler(
       return;
     }
     watcherClosed = true;
+    const message = formatErrorMessage(err);
     opts.runtime.error(
-      `canvasHost watcher error: ${String(err)} (live reload disabled; consider canvasHost.liveReload=false or a smaller canvasHost.root)`,
+      `canvasHost watcher error: ${message} (live reload disabled; consider canvasHost.liveReload=false or a smaller canvasHost.root)`,
     );
+    recordWatcherDisabled("canvas-live-reload", message);
     void watcher.close().catch(() => {});
   });
 

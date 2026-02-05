@@ -1,5 +1,6 @@
 import type { MemoryProviderStatus } from "../memory/types.js";
 import type { RuntimeEnv } from "../runtime.js";
+import type { StatusSummary } from "./status.types.js";
 import { withProgress } from "../cli/progress.js";
 import { loadConfig } from "../config/config.js";
 import { buildGatewayConnectionDetails, callGateway } from "../gateway/call.js";
@@ -25,6 +26,22 @@ type MemoryPluginStatus = {
   slot: string | null;
   reason?: string;
 };
+
+function extractWatcherSummary(value: unknown): StatusSummary["watchers"] | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const watchers = (value as { watchers?: unknown }).watchers;
+  if (!watchers || typeof watchers !== "object") {
+    return null;
+  }
+  const disabledCount = (watchers as { disabledCount?: unknown }).disabledCount;
+  const disabled = (watchers as { disabled?: unknown }).disabled;
+  if (typeof disabledCount !== "number" || !Array.isArray(disabled)) {
+    return null;
+  }
+  return watchers as StatusSummary["watchers"];
+}
 
 function resolveMemoryPluginStatus(cfg: ReturnType<typeof loadConfig>): MemoryPluginStatus {
   const pluginsEnabled = cfg.plugins?.enabled !== false;
@@ -173,6 +190,10 @@ export async function scanStatus(
 
       progress.setLabel("Reading sessions…");
       const summary = await getStatusSummary();
+      const gatewayWatchers = extractWatcherSummary(gatewayProbe?.status);
+      const summaryWithWatchers = gatewayWatchers
+        ? { ...summary, watchers: gatewayWatchers }
+        : summary;
       progress.tick();
 
       progress.setLabel("Rendering…");
@@ -194,7 +215,7 @@ export async function scanStatus(
         channelIssues,
         agentStatus,
         channels,
-        summary,
+        summary: summaryWithWatchers,
         memory,
         memoryPlugin,
       };

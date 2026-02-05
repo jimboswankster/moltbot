@@ -224,6 +224,16 @@ export async function statusCommand(
     return `${gatewayMode} · ${target} · ${reach}${auth}${suffix}`;
   })();
 
+  const watcherValue = (() => {
+    const watcherSummary = summary.watchers;
+    if (!watcherSummary || watcherSummary.disabledCount === 0) {
+      return muted("ok");
+    }
+    const ids = watcherSummary.disabled.map((entry) => entry.id).join(", ");
+    const detail = ids ? ` · ${shortenText(ids, 48)}` : "";
+    return warn(`${watcherSummary.disabledCount} disabled${detail}`);
+  })();
+
   const agentsValue = (() => {
     const pending =
       agentStatus.bootstrapPendingCount > 0
@@ -364,6 +374,7 @@ export async function statusCommand(
       Value: updateAvailability.available ? warn(`available · ${updateLine}`) : updateLine,
     },
     { Item: "Gateway", Value: gatewayValue },
+    { Item: "Watchers", Value: watcherValue },
     { Item: "Gateway service", Value: daemonValue },
     { Item: "Node service", Value: nodeDaemonValue },
     { Item: "Agents", Value: agentsValue },

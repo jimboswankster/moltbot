@@ -14,6 +14,7 @@ import { buildChannelSummary } from "../infra/channel-summary.js";
 import { resolveHeartbeatSummaryForAgent } from "../infra/heartbeat-runner.js";
 import { peekSystemEvents } from "../infra/system-events.js";
 import { collectUsageSnapshot } from "../infra/usage-snapshot.js";
+import { getWatcherTelemetry } from "../infra/watchers-telemetry.js";
 import { parseAgentSessionKey } from "../routing/session-key.js";
 import { resolveLinkChannelContext } from "./status.link-channel.js";
 
@@ -179,6 +180,7 @@ export async function getStatusSummary(): Promise<StatusSummary> {
   const usageSnapshot = await collectUsageSnapshot({ config: cfg }).catch(() => undefined);
 
   return {
+    watchers: getWatcherTelemetry(),
     linkChannel: linkContext
       ? {
           id: linkContext.plugin.id,

@@ -18,6 +18,7 @@ import { resolveAgentDir, resolveAgentWorkspaceDir } from "../agents/agent-scope
 import { resolveMemorySearchConfig } from "../agents/memory-search.js";
 import { resolveSessionTranscriptsDirForAgent } from "../config/sessions/paths.js";
 import { formatErrorMessage, isFileWatchLimitError } from "../infra/errors.js";
+import { recordWatcherDisabled } from "../infra/watchers-telemetry.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { onSessionTranscriptUpdate } from "../sessions/transcript-events.js";
 import { resolveUserPath } from "../utils.js";
@@ -845,7 +846,9 @@ export class MemoryIndexManager implements MemorySearchManager {
       const hint = isFileWatchLimitError(err)
         ? " (watch limit reached; disable agents.defaults.memorySearch.sync.watch or raise file limits)"
         : "";
-      log.warn(`memory watcher failed to start: ${formatErrorMessage(err)}${hint}`);
+      const message = formatErrorMessage(err);
+      log.warn(`memory watcher failed to start: ${message}${hint}`);
+      recordWatcherDisabled("memory", message);
       return;
     }
     this.watcher = watcher;
@@ -861,7 +864,9 @@ export class MemoryIndexManager implements MemorySearchManager {
       const hint = isFileWatchLimitError(err)
         ? " (watch limit reached; disabling memory watch)"
         : "";
-      log.warn(`memory watcher error: ${formatErrorMessage(err)}${hint}`);
+      const message = formatErrorMessage(err);
+      log.warn(`memory watcher error: ${message}${hint}`);
+      recordWatcherDisabled("memory", message);
       void watcher.close().catch(() => {});
       if (this.watcher === watcher) {
         this.watcher = null;

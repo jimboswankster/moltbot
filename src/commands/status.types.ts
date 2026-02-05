@@ -32,6 +32,16 @@ export type HeartbeatStatus = {
 };
 
 export type StatusSummary = {
+  watchers: {
+    disabledCount: number;
+    disabled: Array<{
+      id: string;
+      reason: string;
+      firstAt: number;
+      lastAt: number;
+      occurrences: number;
+    }>;
+  };
   linkChannel?: {
     id: ChannelId;
     label: string;
