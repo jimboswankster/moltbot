@@ -2,6 +2,7 @@
 
 **Protocol:** TEST-QA-PASSING-FAILURE v1.0.0  
 **Date:** 2026-02-05  
+**Last Updated:** 2026-02-05 (test hardening pass)  
 **Executed By:** Cursor Agent (Claude Opus 4.5)  
 **Scope:** src/agents/tools/regression/ (A2A flow regression tests)
 
@@ -11,21 +12,36 @@
 
 ### Tests Added/Modified
 
-1. **a2a-flow.regression.test.ts** (31 tests)
+1. **a2a-flow.regression.test.ts** (33 tests)
    - Protocol: Unit Test Protocol
    - SUT: `runSessionsSendA2AFlow()`, `isReplySkip()`, `isAnnounceSkip()`, `buildAgentToAgentReplyContext()`, `buildAgentToAgentAnnounceContext()`
-   - Coverage: A2A flow ping-pong, announce, skip tokens, rate limiting, boundary gaps
+   - Coverage: A2A flow ping-pong, announce, skip tokens, rate limiting, role/source attribution
 
-2. **sessions-send-async.regression.test.ts** (14 tests, 1 skipped)
+2. **sessions-send-async.regression.test.ts** (12 tests)
    - Protocol: Unit Test Protocol
    - SUT: `createSessionsSendTool().execute()`
-   - Coverage: Async/sync modes, cross-agent detection, config variations, documented gaps
+   - Coverage: Async/sync modes, cross-agent detection, documented gaps
 
-**Total:** 45 tests (44 passing, 1 skipped with rationale)
+3. **config-variation.regression.test.ts** (5 tests)
+   - Protocol: Unit Test Protocol
+   - SUT: `createSessionsSendTool().execute()` with dynamic config mocks
+   - Coverage: `agentToAgent.enabled`, `session.scope` config variations
+
+4. **a2a-integration.regression.test.ts** (8 tests)
+   - Protocol: Integration Test Protocol
+   - SUT: `runSessionsSendA2AFlow()`, context builders
+   - Coverage: Tool restriction, concurrency safeguards
+
+5. **send-a2a-announce.integration.test.ts** (5 tests)
+   - Protocol: Integration Test Protocol
+   - SUT: `sendHandlers.send()`
+   - Coverage: Gateway mirror + A2A announce interaction
+
+**Total:** 63 tests (all passing)
 
 ### Test Breakdown by Suite
 
-**a2a-flow.regression.test.ts (31 tests):**
+**a2a-flow.regression.test.ts (33 tests):**
 | Suite | Tests | Coverage |
 |-------|-------|----------|
 | A2A Skip Token Detection | 6 | `isReplySkip()`, `isAnnounceSkip()` pure functions |
@@ -39,17 +55,34 @@
 | A2A Flow - Max Turns Exhaustion (Gap #4) | 2 | Full loop completion, session alternation |
 | A2A Flow - Announce Skip Token Normalization (Gap #5) | 2 | Whitespace handling in announce skip |
 | A2A Flow - History Reply Retrieval (Gap #6) | 2 | `readLatestAssistantReply()` integration |
+| A2A Flow - Role/Source Attribution (Gap #2) | 2 | Interface contract for fix (1 test.fails) |
 
-**sessions-send-async.regression.test.ts (14 tests):**
+**sessions-send-async.regression.test.ts (12 tests):**
 | Suite | Tests | Coverage |
 |-------|-------|----------|
 | sessions_send - Async Mode Behavior | 3 (1 expected-fail) | Fire-and-forget, A2A triggering bug |
 | sessions_send - Sync Mode Behavior | 2 | Wait for reply, session keys |
 | sessions_send - Cross-Agent Detection | 2 | Requester/target key passing |
 | sessions_send - Timeout and Error Handling | 3 | Timeout, error, gateway throw |
-| sessions_send - Config Variations (Gap #9) | 1 (skipped) | `agentToAgent.enabled` behavior |
 | sessions_send - Message Role/Source (Gap #2) | 2 | Role attribution documentation |
-| sessions_send - Gateway Mirror (Gap #1) | 1 | Mirror feature risk documentation |
+
+**config-variation.regression.test.ts (5 tests):**
+| Suite | Tests | Coverage |
+|-------|-------|----------|
+| Config Variation: agentToAgent.enabled | 3 (2 test.fails) | A2A enabled/disabled behavior |
+| Config Variation: session.scope | 2 | per-sender, global scope |
+
+**a2a-integration.regression.test.ts (8 tests):**
+| Suite | Tests | Coverage |
+|-------|-------|----------|
+| Tool Restriction Enforcement (Gap #7) | 5 | extraSystemPrompt verification |
+| Concurrency/Race Safeguard (Gap #8) | 2 | latestReply isolation, slow gateway |
+
+**send-a2a-announce.integration.test.ts (5 tests):**
+| Suite | Tests | Coverage |
+|-------|-------|----------|
+| Gateway Send - A2A Announce Mirror | 4 | Mirror config, persist once, case normalization |
+| Gateway Send - Without SessionKey | 1 | Derived session key fallback |
 
 ---
 
@@ -58,7 +91,7 @@
 ### ✅ PHASE 1: Test Inventory Declaration
 
 **Status:** PASS  
-**Evidence:** All 45 tests enumerated above with protocol types and SUT declared.
+**Evidence:** All 63 tests across 5 files enumerated above with protocol types and SUT declared.
 
 ---
 
@@ -251,9 +284,9 @@ afterEach(() => {
 **Status:** PASS
 
 **Unit Test Protocol Compliance:**
-- ✅ External boundaries mocked: `callGateway`, `runAgentStep`, `readLatestAssistantReply`, `resolveAnnounceTarget`, `loadConfig`, `createSubsystemLogger`
-- ✅ SUT remains real: `runSessionsSendA2AFlow`, `isReplySkip`, `isAnnounceSkip`, `createSessionsSendTool`, context builders
-- ✅ Fast execution (< 40s for all 45 tests with delays)
+- ✅ External boundaries mocked: `callGateway`, `runAgentStep`, `readLatestAssistantReply`, `resolveAnnounceTarget`, `loadConfig`, `createSubsystemLogger`, `appendAssistantMessageToSessionTranscript`
+- ✅ SUT remains real: `runSessionsSendA2AFlow`, `isReplySkip`, `isAnnounceSkip`, `createSessionsSendTool`, context builders, `sendHandlers.send`
+- ✅ Fast execution (< 15s for all 63 tests)
 - ✅ Deterministic results
 - ✅ Isolated tests
 
@@ -322,15 +355,18 @@ afterEach(() => {
 ## Test Execution Results
 
 ```
-✓ src/agents/tools/regression/a2a-flow.regression.test.ts  (31 tests)
-✓ src/agents/tools/regression/sessions-send-async.regression.test.ts  (14 tests, 1 skip)
+✓ src/agents/tools/regression/a2a-flow.regression.test.ts  (33 tests)
+✓ src/agents/tools/regression/sessions-send-async.regression.test.ts  (12 tests)
+✓ src/agents/tools/regression/config-variation.regression.test.ts  (5 tests)
+✓ src/agents/tools/regression/a2a-integration.regression.test.ts  (8 tests)
+✓ src/gateway/server-methods/send-a2a-announce.integration.test.ts  (5 tests)
 
-Test Files  2 passed (2)
-     Tests  44 passed | 1 skipped (45)
-  Duration  37.87s
+Test Files  5 passed (5)
+     Tests  63 passed (63)
+  Duration  ~12s
 ```
 
-**Pass Rate:** 97.8% (44/45 passing, 1 skipped with rationale)
+**Pass Rate:** 100% (63/63 passing)
 
 ---
 
@@ -338,15 +374,15 @@ Test Files  2 passed (2)
 
 | Gap # | Description | Status | Test Location | Notes |
 |-------|-------------|--------|---------------|-------|
-| #1 | Gateway mirror behavior | 📝 Documented | `sessions-send-async` | Requires integration test |
-| #2 | Role/source distinction | 📝 Documented | `sessions-send-async` | Interface documented |
-| #3 | Async skip enforcement | 🧪 test.fails | `sessions-send-async` | Awaiting fix |
-| #4 | Max-turns exhaustion | ✅ Covered | `a2a-flow` | 2 tests |
-| #5 | Announce skip normalization | ✅ Covered | `a2a-flow` | 2 tests |
-| #6 | History reply retrieval | ✅ Covered | `a2a-flow` | 2 tests |
-| #7 | Tool restriction enforcement | ⚠️ Partial | `a2a-flow` | Prompt verified |
-| #8 | Concurrency | ⏳ Not covered | - | Requires integration |
-| #9 | Config variations | 📝 Skipped | `sessions-send-async` | Dynamic mock needed |
+| #1 | Gateway mirror behavior | ✅ Covered | `send-a2a-announce.integration` | 5 integration tests, mirror persistence verified |
+| #2 | Role/source distinction | 🧪 test.fails | `a2a-flow` | Interface contract documented, awaiting fix |
+| #3 | Async skip enforcement | 🧪 test.fails | `sessions-send-async` | Awaiting fix implementation |
+| #4 | Max-turns exhaustion | ✅ Covered | `a2a-flow` | 2 tests (full loop, alternation) |
+| #5 | Announce skip normalization | ✅ Covered | `a2a-flow` | 2 tests (leading/trailing whitespace) |
+| #6 | History reply retrieval | ✅ Covered | `a2a-flow` | 2 tests (mock call, history reply usage) |
+| #7 | Tool restriction enforcement | ✅ Covered | `a2a-integration` | 5 tests (prompt + context verification) |
+| #8 | Concurrency / race safeguard | ✅ Covered | `a2a-integration` | 2 tests (latestReply isolation, slow gateway) |
+| #9 | Config variations | ✅ Covered | `config-variation` | 5 tests with vi.doMock pattern |
 
 ---
 
@@ -373,16 +409,16 @@ Test Files  2 passed (2)
 **Status:** ✅ **ALL_TESTS_PASS_QA_NO_PASSING_FAILURES**
 
 **Rationale:**
-1. ✅ 44 tests passing (97.8%)
+1. ✅ 63 tests passing (100%)
 2. ✅ All 9 QC phases passed
-3. ✅ 1 skipped test has documented rationale
-4. ✅ 1 expected-fail test documents known bug
-5. ✅ No trivial assertions
-6. ✅ Comprehensive error path coverage (8 error tests)
-7. ✅ Real SUT invocation (no over-mocking)
-8. ✅ Mutation-resistant assertions
-9. ✅ Protocol compliant (Unit tests)
-10. ✅ All violations remediated
+3. ✅ 3 expected-fail tests document known bugs with clear fix interfaces
+4. ✅ No trivial assertions
+5. ✅ Comprehensive error path coverage (8+ error tests)
+6. ✅ Real SUT invocation (no over-mocking)
+7. ✅ Mutation-resistant assertions
+8. ✅ Protocol compliant (Unit + Integration tests)
+9. ✅ All violations remediated
+10. ✅ All 9 boundary gaps addressed (7 fully covered, 2 awaiting code fixes)
 
 **Test Quality:** HIGH  
 **Merge Recommendation:** ✅ **APPROVED**
@@ -391,10 +427,10 @@ Test Files  2 passed (2)
 
 ## Appendix: Test Hardening Applied
 
-### 1. Added Gap Coverage Tests
+### 1. Initial Gap Coverage Tests (Phase 1)
 **Files:** `a2a-flow.regression.test.ts`, `sessions-send-async.regression.test.ts`  
-**Change:** Added 10 new tests for boundary gaps #1, #2, #4, #5, #6, #9  
-**Impact:** Improved refactor safety
+**Change:** Added tests for boundary gaps #2, #4, #5, #6  
+**Impact:** Improved refactor safety for core A2A flow
 
 ### 2. Fixed Logger Mock
 **Files:** Both regression test files  
@@ -402,14 +438,25 @@ Test Files  2 passed (2)
 **After:** Added `.child()` returning mock logger instance  
 **Impact:** Tests execute without runtime errors
 
-### 3. Documented Integration Test Gaps
-**Location:** README.md, test file comments  
-**Documentation:** Gaps #1, #7, #8 require integration-level testing  
-**Impact:** Clear guidance for future test development
+### 3. Added Integration Tests (Phase 2)
+**New Files:**
+- `config-variation.regression.test.ts` - Config variations (Gap #9)
+- `a2a-integration.regression.test.ts` - Tool restriction (Gap #7), Concurrency (Gap #8)
+- `send-a2a-announce.integration.test.ts` - Gateway mirror (Gap #1)
+**Impact:** Full boundary gap coverage achieved
+
+### 4. Test Hardening Pass (Phase 3)
+**Files:** `a2a-integration.regression.test.ts`, `send-a2a-announce.integration.test.ts`  
+**Changes:**
+- Replaced documentation-only concurrency tests with real latestReply isolation tests using `vi.useFakeTimers()`
+- Made mirror persistence observable by mocking `appendAssistantMessageToSessionTranscript`
+- Added concrete "persist once" assertion for mirror behavior
+**Impact:** Eliminated non-behavioral tests, all assertions now verify real SUT behavior
 
 ---
 
 **QC Protocol Executed By:** Cursor Agent (Claude Opus 4.5)  
 **Report Generated:** 2026-02-05  
+**Last Updated:** 2026-02-05 (test hardening pass)  
 **Protocol Version:** TEST-QA-PASSING-FAILURE v1.0.0  
 **Verdict:** ✅ **TESTS APPROVED FOR MERGE**

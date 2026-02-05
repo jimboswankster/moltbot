@@ -14,10 +14,10 @@ These tests were created based on the analysis in:
 
 | File | Protocol | Tests | Purpose |
 |------|----------|-------|---------|
-| `a2a-flow.regression.test.ts` | unit | 33 | Core A2A flow: ping-pong, announce, skip tokens, rate limiting, role/source |
+| `a2a-flow.regression.test.ts` | unit | 32 | Core A2A flow: ping-pong, announce, skip tokens, rate limiting, role/source |
 | `sessions-send-async.regression.test.ts` | unit | 12 | sessions_send tool: async vs sync modes, cross-agent detection |
 | `config-variation.regression.test.ts` | unit | 5 | Config variations: agentToAgent.enabled, session.scope |
-| `a2a-integration.regression.test.ts` | integration | 10 | Tool restriction, concurrency, race safeguards |
+| `a2a-integration.regression.test.ts` | integration | 8 | Tool restriction, concurrency safeguards |
 | `../../../gateway/server-methods/send-a2a-announce.integration.test.ts` | integration | 5 | Gateway mirror + A2A announce interaction |
 
 ## QC Protocol Compliance
@@ -78,7 +78,6 @@ Each test documents its observable source:
 | `returns ok status with reply in sync mode` | Status, reply | Sync return value |
 | `returns timeout status on timeout` | Status field | Timeout handling |
 | `returns error status on error` | Status, error | Error handling |
-| `skips A2A flow when agentToAgent.enabled is false` | test.skip | Gap #9: Config variations |
 | `passes sub-agent reply to A2A flow` | Call args | Gap #2: Role tracking |
 | `documents expected message attribution interface` | Interface doc | Gap #2: Future fix interface |
 | `documents mirror feature risk in announce path` | Risk doc | Gap #1: Gateway mirror |
@@ -95,8 +94,8 @@ The following gaps were identified as refactor risks and addressed with addition
 | #4 Max-turns exhaustion | ✅ Covered | `a2a-flow` | Full loop completion tested |
 | #5 Announce skip normalization | ✅ Covered | `a2a-flow` | Whitespace handling tested |
 | #6 History reply retrieval | ✅ Covered | `a2a-flow` | readLatestAssistantReply verified |
-| #7 Tool restriction enforcement | ✅ Covered | `a2a-integration` | 5 tests (advisory instruction verified) |
-| #8 Concurrency / race safeguard | ✅ Covered | `a2a-integration` | 5 tests + strategy documentation |
+| #7 Tool restriction enforcement | ✅ Covered | `a2a-integration` | Prompt + context checks (advisory) |
+| #8 Concurrency / race safeguard | ✅ Covered | `a2a-integration` | 2 tests (latestReply isolation, slow gateway) |
 | #9 Config variations | ✅ Covered | `config-variation` | 5 tests with vi.doMock pattern |
 
 ## Documented Bugs

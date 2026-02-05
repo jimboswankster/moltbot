@@ -6,8 +6,8 @@
  *
  * These tests validate higher-level A2A behaviors that require integration
  * between multiple components:
- * - Tool restriction enforcement (Gap #5)
- * - Concurrency/race safeguard (Gap #6)
+ * - Tool restriction enforcement (Gap #7)
+ * - Concurrency/race safeguard (Gap #8)
  *
  * Derived from: workspace/docs/development/debug/a2a-bug/code-inspection.md
  */
@@ -94,7 +94,7 @@ function createDefaultParams(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Test Suite: Tool Restriction Enforcement (Gap #5)
+// Test Suite: Tool Restriction Enforcement (Gap #7)
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("A2A Integration - Tool Restriction Enforcement", () => {
@@ -107,7 +107,7 @@ describe("A2A Integration - Tool Restriction Enforcement", () => {
   });
 
   /**
-   * GAP #5: Tool restriction enforcement in runtime
+   * GAP #7: Tool restriction enforcement in runtime
    *
    * The tests assert the prompt contains "Do NOT use tools", but there's no
    * behavioral test that tools are actually suppressed or blocked during A2A.
@@ -216,7 +216,7 @@ describe("A2A Integration - Tool Restriction Enforcement", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Test Suite: Concurrency/Race Safeguard (Gap #6)
+// Test Suite: Concurrency/Race Safeguard (Gap #8)
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("A2A Integration - Concurrency/Race Safeguard", () => {
@@ -229,7 +229,7 @@ describe("A2A Integration - Concurrency/Race Safeguard", () => {
   });
 
   /**
-   * GAP #6: Concurrency / overlapping user prompts
+   * GAP #8: Concurrency / overlapping user prompts
    *
    * The doc mentions race conditions, but there are no tests that simulate
    * concurrent user input during A2A flow.
@@ -241,74 +241,74 @@ describe("A2A Integration - Concurrency/Race Safeguard", () => {
    * These tests document the expected behavior and risks.
    */
 
-  it("documents concurrent message injection risk during ping-pong", () => {
-    // This test documents the risk, not actual behavior
-    const concurrencyRisk = {
-      scenario: "User sends message while A2A ping-pong in progress",
-      risks: [
-        "User message could be interleaved with A2A messages",
-        "Session history could become corrupted",
-        "Agent could respond to user instead of continuing A2A",
-        "Announce delivery could send wrong content to user",
-      ],
-      currentMitigation: "None - race condition exists",
-      recommendedFix: "Lock session during A2A flow or queue user messages",
-    };
-
-    expect(concurrencyRisk.currentMitigation).toBe("None - race condition exists");
-    expect(concurrencyRisk.risks.length).toBe(4);
-  });
-
-  /**
-   * SIMULATION: Multiple A2A flows on same session
-   *
-   * This test simulates what happens if two A2A flows are started
-   * on the same target session concurrently.
-   */
-  it("handles concurrent A2A flows gracefully (current behavior)", async () => {
-    // Observable: Both flows complete without throwing
+  it("keeps latestReply isolated per concurrent flow", async () => {
+    // Observable: announce prompts contain the correct latest reply per flow
     resolveAnnounceTargetMock.mockResolvedValue({
       channel: "telegram",
       to: "user:123",
     });
 
-    let callCount = 0;
-    runAgentStepMock.mockImplementation(async () => {
-      callCount++;
-      // Simulate some async work
-      await new Promise((r) => setTimeout(r, 10));
-      return callCount <= 2 ? "REPLY_SKIP" : "Announcement";
-    });
+    const announcePrompts: string[] = [];
+    const replyCounts = { one: 0, two: 0 };
+
+    runAgentStepMock.mockImplementation(
+      async (opts: { message?: string; extraSystemPrompt?: string }) => {
+        if (opts.message === "Agent-to-agent announce step.") {
+          announcePrompts.push(opts.extraSystemPrompt ?? "");
+          return "Announcement";
+        }
+
+        const message = String(opts.message ?? "");
+        const flowId = message.includes("flow=one")
+          ? "one"
+          : message.includes("flow=two")
+            ? "two"
+            : "unknown";
+        if (flowId === "one") {
+          replyCounts.one += 1;
+          return `flow=one reply ${replyCounts.one}`;
+        }
+        if (flowId === "two") {
+          replyCounts.two += 1;
+          return `flow=two reply ${replyCounts.two}`;
+        }
+        return "REPLY_SKIP";
+      },
+    );
 
     callGatewayMock.mockResolvedValue({ status: "ok" });
 
-    const params1 = createDefaultParams({ maxPingPongTurns: 1 });
+    const params1 = createDefaultParams({
+      maxPingPongTurns: 2,
+      roundOneReply: "flow=one initial",
+    });
     const params2 = createDefaultParams({
-      maxPingPongTurns: 1,
+      maxPingPongTurns: 2,
+      roundOneReply: "flow=two initial",
       targetSessionKey: "agent:main:subagent:sub-002",
+      displayKey: "subagent:sub-002",
     });
 
-    // Run two flows concurrently
-    const [result1, result2] = await Promise.all([
+    vi.useFakeTimers();
+    const flowPromise = Promise.all([
       runSessionsSendA2AFlow(params1),
       runSessionsSendA2AFlow(params2),
     ]);
+    await vi.runAllTimersAsync();
+    await flowPromise;
+    vi.useRealTimers();
 
-    // Both should complete without throwing
-    expect(result1).toBeUndefined();
-    expect(result2).toBeUndefined();
-
-    // Both should have made agent step calls
-    expect(runAgentStepMock.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(announcePrompts.length).toBe(2);
+    expect(announcePrompts.some((prompt) => prompt.includes("Latest reply: flow=one reply"))).toBe(
+      true,
+    );
+    expect(announcePrompts.some((prompt) => prompt.includes("Latest reply: flow=two reply"))).toBe(
+      true,
+    );
   });
 
-  /**
-   * SIMULATION: Delayed gateway response during A2A
-   *
-   * This test verifies behavior when gateway is slow during ping-pong.
-   */
-  it("handles slow gateway responses during ping-pong", async () => {
-    // Observable: Flow completes despite slow gateway
+  it("resolves when gateway send is slow", async () => {
+    // Observable: flow completes even when callGateway is delayed
     resolveAnnounceTargetMock.mockResolvedValue({
       channel: "telegram",
       to: "user:123",
@@ -316,39 +316,18 @@ describe("A2A Integration - Concurrency/Race Safeguard", () => {
 
     runAgentStepMock.mockResolvedValueOnce("REPLY_SKIP").mockResolvedValueOnce("Announcement");
 
-    // Simulate slow gateway
     callGatewayMock.mockImplementation(async () => {
-      await new Promise((r) => setTimeout(r, 50));
+      await new Promise((resolve) => setTimeout(resolve, 50));
       return { status: "ok" };
     });
 
-    const params = createDefaultParams({ maxPingPongTurns: 5 });
+    const params = createDefaultParams({ maxPingPongTurns: 1 });
 
-    // Should complete despite slow gateway
-    await expect(runSessionsSendA2AFlow(params)).resolves.toBeUndefined();
-  });
-
-  /**
-   * DOCUMENTATION: Session locking recommendation
-   */
-  it("documents recommended session locking strategy", () => {
-    const lockingStrategy = {
-      problem: "Race condition between user messages and A2A flow",
-      recommendation: {
-        approach: "Optimistic locking with session version",
-        implementation: [
-          "Add version field to session metadata",
-          "Check version before each runAgentStep call",
-          "Abort A2A if version changed (user message arrived)",
-          "Queue user messages during active A2A flows",
-        ],
-        alternative: "Pessimistic lock with session lock table",
-      },
-      priority: "Medium - affects multi-user scenarios",
-    };
-
-    expect(lockingStrategy.recommendation.approach).toBe("Optimistic locking with session version");
-    expect(lockingStrategy.recommendation.implementation.length).toBe(4);
+    vi.useFakeTimers();
+    const flowPromise = runSessionsSendA2AFlow(params);
+    await vi.runAllTimersAsync();
+    await expect(flowPromise).resolves.toBeUndefined();
+    vi.useRealTimers();
   });
 });
 

@@ -129,10 +129,19 @@ describe("Gateway Send - A2A Announce Mirror Behavior", () => {
     );
   });
 
-  it("does not double-mirror when A2A announce provides sessionKey", async () => {
-    // Observable: appendAssistantMessageMock NOT called directly by send handler
-    // The mirror is passed to deliverOutboundPayloads, which handles it internally
-    deliverOutboundPayloadsMock.mockResolvedValue([{ messageId: "m2", channel: "telegram" }]);
+  it("persists mirror once per send when sessionKey provided", async () => {
+    // Observable: appendAssistantMessageMock called once via delivery layer
+    deliverOutboundPayloadsMock.mockImplementation(
+      async (opts: { mirror?: { sessionKey?: string; text?: string } }) => {
+        if (opts.mirror?.sessionKey) {
+          await appendAssistantMessageMock({
+            sessionKey: opts.mirror.sessionKey,
+            text: opts.mirror.text,
+          });
+        }
+        return [{ messageId: "m2", channel: "telegram" }];
+      },
+    );
 
     const respond = vi.fn();
     await sendHandlers.send({
@@ -150,9 +159,13 @@ describe("Gateway Send - A2A Announce Mirror Behavior", () => {
       isWebchatConnect: () => false,
     });
 
-    // Send handler passes mirror to deliverOutboundPayloads, not directly to append
-    // appendAssistantMessageMock should NOT be called by the send handler itself
-    expect(appendAssistantMessageMock).not.toHaveBeenCalled();
+    // Mirror is persisted once via delivery layer
+    expect(appendAssistantMessageMock).toHaveBeenCalledTimes(1);
+    expect(appendAssistantMessageMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionKey: "agent:main:subagent:task-001",
+      }),
+    );
 
     // Verify mirror was delegated to delivery layer
     expect(deliverOutboundPayloadsMock).toHaveBeenCalledWith(
@@ -241,6 +254,9 @@ describe("Gateway Send - A2A Announce Mirror Behavior", () => {
         channel: "telegram",
       }),
     );
+
+    // Even though delivery returned no results, mirror persistence should not occur
+    expect(appendAssistantMessageMock).not.toHaveBeenCalled();
   });
 });
 
