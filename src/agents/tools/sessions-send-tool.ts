@@ -313,7 +313,6 @@ export function createSessionsSendTool(opts?: {
               runId,
               hadRunIdResponse: !!response?.runId,
             });
-            startA2AFlow(undefined, runId);
             return jsonResult({
               runId,
               status: "accepted",
@@ -443,6 +442,7 @@ export function createSessionsSendTool(opts?: {
         );
         const last = filtered.length > 0 ? filtered[filtered.length - 1] : undefined;
         const reply = last ? extractAssistantText(last) : undefined;
+
         startA2AFlow(reply ?? undefined);
 
         log.debug("sessions_send completed successfully", {

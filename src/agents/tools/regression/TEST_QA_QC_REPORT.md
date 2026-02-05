@@ -17,7 +17,7 @@
    - SUT: `runSessionsSendA2AFlow()`, `isReplySkip()`, `isAnnounceSkip()`, `buildAgentToAgentReplyContext()`, `buildAgentToAgentAnnounceContext()`
    - Coverage: A2A flow ping-pong, announce, skip tokens, rate limiting, role/source attribution
 
-2. **sessions-send-async.regression.test.ts** (13 tests)
+2. **sessions-send-async.regression.test.ts** (12 tests)
    - Protocol: Unit Test Protocol
    - SUT: `createSessionsSendTool().execute()`
    - Coverage: Async/sync modes, cross-agent detection, documented gaps
@@ -37,7 +37,7 @@
    - SUT: `sendHandlers.send()`
    - Coverage: Gateway mirror + A2A announce interaction
 
-**Total:** 63 tests (all passing)
+**Total:** 62 tests (all passing)
 
 ### Test Breakdown by Suite
 
@@ -57,7 +57,7 @@
 | A2A Flow - History Reply Retrieval (Gap #6) | 2 | `readLatestAssistantReply()` integration |
 | A2A Flow - Role/Source Attribution (Gap #2) | 2 | Interface contract for fix (1 test.fails) |
 
-**sessions-send-async.regression.test.ts (13 tests):**
+**sessions-send-async.regression.test.ts (12 tests):**
 | Suite | Tests | Coverage |
 |-------|-------|----------|
 | sessions_send - Async Mode Behavior | 3 (1 expected-fail) | Fire-and-forget, A2A triggering bug |
@@ -357,13 +357,13 @@ afterEach(() => {
 
 ```
 ✓ src/agents/tools/regression/a2a-flow.regression.test.ts  (33 tests)
-✓ src/agents/tools/regression/sessions-send-async.regression.test.ts  (13 tests)
+✓ src/agents/tools/regression/sessions-send-async.regression.test.ts  (12 tests)
 ✓ src/agents/tools/regression/config-variation.regression.test.ts  (5 tests)
 ✓ src/agents/tools/regression/a2a-integration.regression.test.ts  (7 tests)
 ✓ src/gateway/server-methods/send-a2a-announce.integration.test.ts  (5 tests)
 
 Test Files  5 passed (5)
-     Tests  63 passed (63)
+Tests  62 passed (62)
   Duration  ~12s
 ```
 

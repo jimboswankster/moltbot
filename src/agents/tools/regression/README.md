@@ -15,7 +15,7 @@ These tests were created based on the analysis in:
 | File | Protocol | Tests | Purpose |
 |------|----------|-------|---------|
 | `a2a-flow.regression.test.ts` | unit | 33 | Core A2A flow: ping-pong, announce, skip tokens, rate limiting, role/source |
-| `sessions-send-async.regression.test.ts` | unit | 13 | sessions_send tool: async vs sync modes, cross-agent detection |
+| `sessions-send-async.regression.test.ts` | unit | 12 | sessions_send tool: async vs sync modes, cross-agent detection |
 | `config-variation.regression.test.ts` | unit | 5 | Config variations: agentToAgent.enabled, session.scope |
 | `a2a-integration.regression.test.ts` | integration | 7 | Tool restriction, concurrency safeguards |
 | `../../../gateway/server-methods/send-a2a-announce.integration.test.ts` | integration | 5 | Gateway mirror + A2A announce interaction |

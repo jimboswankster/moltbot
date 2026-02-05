@@ -126,9 +126,8 @@ describe("sessions_send - Async Mode Behavior", () => {
     });
   });
 
-  it("calls A2A flow in async mode (CURRENT BUG - should not happen)", async () => {
-    // Observable: runSessionsSendA2AFlowMock called
-    // NOTE: This test documents buggy behavior. When fixed, update assertion.
+  it("does NOT call A2A flow in async mode", async () => {
+    // Observable: runSessionsSendA2AFlowMock NOT called
     const tool = createSessionsSendTool({
       agentSessionKey: "agent:main:main",
       agentChannel: "telegram",
@@ -140,31 +139,6 @@ describe("sessions_send - Async Mode Behavior", () => {
       timeoutSeconds: 0,
     });
 
-    // BUG: A2A flow IS being called even in fire-and-forget mode
-    // When fixed, change to: expect(runSessionsSendA2AFlowMock).not.toHaveBeenCalled();
-    expect(runSessionsSendA2AFlowMock).toHaveBeenCalledTimes(1);
-  });
-
-  /**
-   * Test for FIXED behavior - skip this until fix is applied.
-   * Rationale: Test documents expected behavior post-fix. Currently skipped
-   * because fix has not been applied yet. See code-inspection.md.
-   */
-  it.fails("should NOT call A2A flow in async mode (EXPECTED BEHAVIOR)", async () => {
-    // Observable: runSessionsSendA2AFlowMock NOT called
-    // This test will pass once the fix is applied.
-    const tool = createSessionsSendTool({
-      agentSessionKey: "agent:main:main",
-      agentChannel: "telegram",
-    });
-
-    await tool.execute("call-async-fix-test", {
-      sessionKey: "agent:main:subagent:sub-001",
-      message: "Fire and forget task",
-      timeoutSeconds: 0,
-    });
-
-    // EXPECTED after fix: A2A should NOT be called for fire-and-forget
     expect(runSessionsSendA2AFlowMock).not.toHaveBeenCalled();
   });
 });
