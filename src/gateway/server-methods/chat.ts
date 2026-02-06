@@ -14,6 +14,9 @@ import {
   extractShortModelName,
   type ResponsePrefixContext,
 } from "../../auto-reply/reply/response-prefix-template.js";
+import { isVerbose } from "../../globals.js";
+import { registerAgentRunContext } from "../../infra/agent-events.js";
+import { clearAgentRunContext } from "../../infra/agent-events.js";
 import { resolveSendPolicy } from "../../sessions/send-policy.js";
 import { INTERNAL_MESSAGE_CHANNEL } from "../../utils/message-channel.js";
 import {
@@ -368,6 +371,11 @@ export const chatHandlers: GatewayRequestHandlers = {
         return;
       }
     }
+    if (isVerbose()) {
+      context.logGateway.info(
+        `webchat send: session=${p.sessionKey} idem=${p.idempotencyKey} stop=${stopCommand ? "yes" : "no"}`,
+      );
+    }
     const { cfg, entry } = loadSessionEntry(p.sessionKey);
     const timeoutMs = resolveAgentTimeoutMs({
       cfg,
@@ -412,6 +420,9 @@ export const chatHandlers: GatewayRequestHandlers = {
 
     const cached = context.dedupe.get(`chat:${clientRunId}`);
     if (cached) {
+      if (isVerbose()) {
+        context.logGateway.info(`webchat send cached: session=${p.sessionKey} idem=${clientRunId}`);
+      }
       respond(cached.ok, cached.payload, cached.error, {
         cached: true,
       });
@@ -420,6 +431,11 @@ export const chatHandlers: GatewayRequestHandlers = {
 
     const activeExisting = context.chatAbortControllers.get(clientRunId);
     if (activeExisting) {
+      if (isVerbose()) {
+        context.logGateway.info(
+          `webchat send in-flight: session=${p.sessionKey} idem=${clientRunId}`,
+        );
+      }
       respond(true, { runId: clientRunId, status: "in_flight" as const }, undefined, {
         cached: true,
         runId: clientRunId,
@@ -429,9 +445,21 @@ export const chatHandlers: GatewayRequestHandlers = {
 
     try {
       const abortController = new AbortController();
+      const sessionId = entry?.sessionId ?? clientRunId;
+      // Agent events are keyed by runId (clientRunId), so map chat runs by runId.
+      context.addChatRun(clientRunId, { sessionKey: p.sessionKey, clientRunId });
+      registerAgentRunContext(clientRunId, {
+        sessionKey: p.sessionKey,
+        verboseLevel: entry?.verboseLevel,
+      });
+      if (isVerbose()) {
+        context.logGateway.info(
+          `webchat run registered: run=${clientRunId} session=${p.sessionKey} sessionId=${sessionId}`,
+        );
+      }
       context.chatAbortControllers.set(clientRunId, {
         controller: abortController,
-        sessionId: entry?.sessionId ?? clientRunId,
+        sessionId,
         sessionKey: p.sessionKey,
         startedAtMs: now,
         expiresAtMs: resolveChatRunExpiresAtMs({ now, timeoutMs }),
@@ -441,6 +469,9 @@ export const chatHandlers: GatewayRequestHandlers = {
         runId: clientRunId,
         status: "started" as const,
       };
+      if (isVerbose()) {
+        context.logGateway.info(`webchat send ack: session=${p.sessionKey} idem=${clientRunId}`);
+      }
       respond(true, ackPayload, undefined, { runId: clientRunId });
 
       const trimmedMessage = parsedMessage.trim();
@@ -475,6 +506,10 @@ export const chatHandlers: GatewayRequestHandlers = {
       const agentId = resolveSessionAgentId({
         sessionKey: p.sessionKey,
         config: cfg,
+      });
+      registerAgentRunContext(clientRunId, {
+        sessionKey: p.sessionKey,
+        verboseLevel: entry?.verboseLevel,
       });
       let prefixContext: ResponsePrefixContext = {
         identityName: resolveIdentityName(cfg, agentId),
@@ -520,6 +555,21 @@ export const chatHandlers: GatewayRequestHandlers = {
         },
       })
         .then(() => {
+          const text = context.chatRunBuffers.get(clientRunId)?.trim() ?? "";
+          context.chatRunBuffers.delete(clientRunId);
+          context.chatDeltaSentAt.delete(clientRunId);
+          broadcastChatFinal({
+            context,
+            runId: clientRunId,
+            sessionKey: p.sessionKey,
+            message: text
+              ? {
+                  role: "assistant",
+                  content: [{ type: "text", text }],
+                  timestamp: Date.now(),
+                }
+              : undefined,
+          });
           if (!agentRunStarted) {
             const combinedReply = finalReplyParts
               .map((part) => part.trim())
@@ -588,6 +638,8 @@ export const chatHandlers: GatewayRequestHandlers = {
           });
         })
         .finally(() => {
+          context.removeChatRun(clientRunId, clientRunId, p.sessionKey);
+          clearAgentRunContext(clientRunId);
           context.chatAbortControllers.delete(clientRunId);
         });
     } catch (err) {

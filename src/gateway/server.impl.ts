@@ -402,8 +402,10 @@ export async function startGatewayServer(
       nodeSendToSession,
       agentRunSeq,
       chatRunState,
+      chatAbortControllers,
       resolveSessionKeyForRun,
       clearAgentRunContext,
+      logGateway: log,
     }),
   );
 

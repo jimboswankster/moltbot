@@ -1,5 +1,6 @@
 import { normalizeVerboseLevel } from "../auto-reply/thinking.js";
 import { loadConfig } from "../config/config.js";
+import { isVerbose } from "../globals.js";
 import { type AgentEventPayload, getAgentRunContext } from "../infra/agent-events.js";
 import { resolveHeartbeatVisibility } from "../infra/heartbeat-visibility.js";
 import { loadSessionEntry } from "./session-utils.js";
@@ -133,8 +134,10 @@ export type AgentEventHandlerOptions = {
   nodeSendToSession: NodeSendToSession;
   agentRunSeq: Map<string, number>;
   chatRunState: ChatRunState;
+  chatAbortControllers?: Map<string, unknown>;
   resolveSessionKeyForRun: (runId: string) => string | undefined;
   clearAgentRunContext: (runId: string) => void;
+  logGateway?: { info?: (message: string) => void };
 };
 
 export function createAgentEventHandler({
@@ -142,9 +145,12 @@ export function createAgentEventHandler({
   nodeSendToSession,
   agentRunSeq,
   chatRunState,
+  chatAbortControllers,
   resolveSessionKeyForRun,
   clearAgentRunContext,
+  logGateway,
 }: AgentEventHandlerOptions) {
+  const verbose = isVerbose();
   const emitChatDelta = (sessionKey: string, clientRunId: string, seq: number, text: string) => {
     chatRunState.buffers.set(clientRunId, text);
     const now = Date.now();
@@ -239,6 +245,21 @@ export function createAgentEventHandler({
     const chatLink = chatRunState.registry.peek(evt.runId);
     const sessionKey = chatLink?.sessionKey ?? resolveSessionKeyForRun(evt.runId);
     const clientRunId = chatLink?.clientRunId ?? evt.runId;
+    const isActiveChatRun =
+      Boolean(chatAbortControllers?.has(clientRunId)) ||
+      Boolean(chatAbortControllers?.has(evt.runId));
+    if (
+      verbose &&
+      logGateway?.info &&
+      (!sessionKey ||
+        !chatLink ||
+        evt.stream === "lifecycle" ||
+        (evt.stream === "assistant" && evt.seq <= 3))
+    ) {
+      logGateway.info(
+        `agent event: run=${evt.runId} stream=${evt.stream} seq=${evt.seq} session=${sessionKey ?? "(none)"} clientRun=${clientRunId} chatLink=${chatLink ? "yes" : "no"}`,
+      );
+    }
     const isAborted =
       chatRunState.abortedRuns.has(clientRunId) || chatRunState.abortedRuns.has(evt.runId);
     // Include sessionKey so Control UI can filter tool streams per session.
@@ -272,6 +293,14 @@ export function createAgentEventHandler({
       if (!isAborted && evt.stream === "assistant" && typeof evt.data?.text === "string") {
         emitChatDelta(sessionKey, clientRunId, evt.seq, evt.data.text);
       } else if (!isAborted && (lifecyclePhase === "end" || lifecyclePhase === "error")) {
+        if (isActiveChatRun) {
+          if (verbose && logGateway?.info) {
+            logGateway.info(
+              `agent event deferred final: run=${evt.runId} session=${sessionKey} clientRun=${clientRunId}`,
+            );
+          }
+          return;
+        }
         if (chatLink) {
           const finished = chatRunState.registry.shift(evt.runId);
           if (!finished) {
@@ -305,7 +334,7 @@ export function createAgentEventHandler({
       }
     }
 
-    if (lifecyclePhase === "end" || lifecyclePhase === "error") {
+    if ((lifecyclePhase === "end" || lifecyclePhase === "error") && !isActiveChatRun) {
       clearAgentRunContext(evt.runId);
     }
   };
