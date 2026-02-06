@@ -61,5 +61,5 @@ and related integration tests. Each entry includes the commit hash and tests run
   Tests: `npx vitest run src/agents/tools/regression/a2a-integration.regression.test.ts`
 - Add A2A inbox delivery-mode snapshot (commit: b072cc314)
   Tests: `npx vitest run src/agents/tools/regression/a2a-integration.regression.test.ts`
-- Add A2A chaos coverage (write storm, restart recovery, session isolation) (commit: pending)
+- Add A2A chaos coverage (write storm, restart recovery, session isolation) (commit: 344c30a96)
   Tests: `npx vitest run src/agents/tools/regression/a2a-chaos.regression.test.ts`
