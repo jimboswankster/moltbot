@@ -684,6 +684,8 @@ const FIELD_HELP: Record<string, string> = {
     'Override native skill commands for Slack (bool or "auto").',
   "session.agentToAgent.maxPingPongTurns":
     "Max reply-back turns between requester and target (0–5).",
+  "tools.agentToAgent.deliveryMode":
+    'A2A delivery mode: "inject" (current ping-pong + announce) or "inbox" (record inbox only).',
   "channels.telegram.customCommands":
     "Additional Telegram bot menu commands (merged with native; conflicts ignored).",
   "messages.ackReaction": "Emoji reaction used to acknowledge inbound messages (empty disables).",

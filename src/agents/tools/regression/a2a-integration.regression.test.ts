@@ -41,6 +41,7 @@ vi.mock("../sessions-announce-target.js", () => ({
 }));
 
 let sessionStorePath = "";
+let deliveryMode: "inject" | "inbox" = "inject";
 vi.mock("../../../config/config.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../../config/config.js")>();
   return {
@@ -48,7 +49,7 @@ vi.mock("../../../config/config.js", async (importOriginal) => {
     loadConfig: () =>
       ({
         session: { scope: "per-sender", mainKey: "main", store: sessionStorePath },
-        tools: { agentToAgent: { enabled: true } },
+        tools: { agentToAgent: { enabled: true, deliveryMode } },
       }) as never,
   };
 });
@@ -96,6 +97,7 @@ afterEach(async () => {
   }
   tempDir = "";
   sessionStorePath = "";
+  deliveryMode = "inject";
 });
 
 function createDefaultParams(
@@ -260,6 +262,73 @@ describe("A2A Integration - Tool Restriction Enforcement", () => {
 
       expect(injected?.prependContext).toContain("TRANSITIONAL_A2A_INBOX");
       expect(injected?.prependContext).toContain("Announcement to user");
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Test Suite: A2A Integration - Delivery Mode Flag
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  describe("A2A Integration - Delivery Mode Flag", () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+    });
+
+    afterEach(() => {
+      vi.clearAllMocks();
+    });
+
+    it("records inbox-only reply without running announce when deliveryMode=inbox", async () => {
+      deliveryMode = "inbox";
+
+      resolveAnnounceTargetMock.mockResolvedValue({
+        channel: "telegram",
+        to: "user:123",
+      });
+
+      callGatewayMock.mockResolvedValue({ status: "ok" });
+
+      const params = createDefaultParams({
+        roundOneReply: "Sub completed the task.",
+        requesterSessionKey: "agent:main:main",
+        waitRunId: "run-123",
+      });
+      await runSessionsSendA2AFlow(params);
+
+      expect(runAgentStepMock).not.toHaveBeenCalled();
+      expect(callGatewayMock).not.toHaveBeenCalled();
+
+      const store = loadSessionStore(sessionStorePath, { skipCache: true });
+      const events = store["agent:main:main"]?.a2aInbox?.events ?? [];
+      expect(events.length).toBe(1);
+      expect(events[0]?.replyText).toBe("Sub completed the task.");
+    });
+
+    it("injects inbox reply when deliveryMode=inbox is used", async () => {
+      deliveryMode = "inbox";
+
+      const params = createDefaultParams({
+        roundOneReply: "Inbox-only reply.",
+        requesterSessionKey: "agent:main:main",
+        waitRunId: "run-123",
+      });
+      await runSessionsSendA2AFlow(params);
+
+      const cfg = {
+        session: { scope: "per-sender", mainKey: "main", store: sessionStorePath },
+        tools: { agentToAgent: { enabled: true, deliveryMode } },
+      } as OpenClawConfig;
+
+      const injected = await runA2AInboxBeforeAgentStart({
+        cfg,
+        ctx: {
+          sessionKey: "agent:main:main",
+          runId: "master-run-1",
+        },
+      });
+
+      expect(injected?.prependContext).toContain("TRANSITIONAL_A2A_INBOX");
+      expect(injected?.prependContext).toContain("Inbox-only reply.");
     });
   });
 

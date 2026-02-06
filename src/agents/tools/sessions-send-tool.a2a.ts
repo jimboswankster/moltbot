@@ -32,6 +32,8 @@ export async function runSessionsSendA2AFlow(params: {
 }) {
   const runContextId = params.waitRunId ?? "unknown";
   try {
+    const cfg = loadConfig();
+    const deliveryMode = cfg.tools?.agentToAgent?.deliveryMode ?? "inject";
     let primaryReply = params.roundOneReply;
     let latestReply = params.roundOneReply;
     if (!primaryReply && params.waitRunId) {
@@ -52,6 +54,24 @@ export async function runSessionsSendA2AFlow(params: {
       }
     }
     if (!latestReply) {
+      return;
+    }
+
+    if (deliveryMode === "inbox") {
+      if (params.requesterSessionKey) {
+        const replyText = latestReply.trim();
+        if (replyText) {
+          await recordA2AInboxEvent({
+            cfg,
+            sessionKey: params.requesterSessionKey,
+            sourceSessionKey: params.targetSessionKey,
+            sourceDisplayKey: params.displayKey,
+            runId: params.waitRunId ?? crypto.randomUUID(),
+            replyText,
+            now: Date.now(),
+          });
+        }
+      }
       return;
     }
 
@@ -110,7 +130,6 @@ export async function runSessionsSendA2AFlow(params: {
     }
 
     if (params.requesterSessionKey) {
-      const cfg = loadConfig();
       const replyText =
         announceText && !isAnnounceSkip(announceText) ? announceText : latestReply?.trim();
       if (replyText) {

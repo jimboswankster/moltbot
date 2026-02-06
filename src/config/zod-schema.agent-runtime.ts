@@ -498,6 +498,7 @@ export const ToolsSchema = z
       .object({
         enabled: z.boolean().optional(),
         allow: z.array(z.string()).optional(),
+        deliveryMode: z.enum(["inject", "inbox"]).optional(),
       })
       .strict()
       .optional(),

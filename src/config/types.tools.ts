@@ -421,6 +421,8 @@ export type ToolsConfig = {
     enabled?: boolean;
     /** Allowlist of agent ids or patterns (implementation-defined). */
     allow?: string[];
+    /** Delivery mode for A2A results (default: "inject"). */
+    deliveryMode?: "inject" | "inbox";
   };
   /** Elevated exec permissions for the host machine. */
   elevated?: {
