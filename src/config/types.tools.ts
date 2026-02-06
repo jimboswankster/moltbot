@@ -423,6 +423,8 @@ export type ToolsConfig = {
     allow?: string[];
     /** Delivery mode for A2A results (default: "inject"). */
     deliveryMode?: "inject" | "inbox";
+    /** Naming contract mode for A2A display keys (default: "contract"). */
+    namingMode?: "contract" | "legacy";
   };
   /** Elevated exec permissions for the host machine. */
   elevated?: {

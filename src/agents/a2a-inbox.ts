@@ -37,9 +37,17 @@ type A2AInboxStoreTarget = {
   canonicalKey: string;
 };
 
-function resolveDisplayKeyFromEntry(
-  entry: { displayName?: string; label?: string; origin?: { label?: string } } | undefined,
-): string | undefined {
+type A2ANamingMode = "contract" | "legacy";
+
+function resolveA2ANamingMode(cfg: OpenClawConfig): A2ANamingMode {
+  return cfg.tools?.agentToAgent?.namingMode ?? "contract";
+}
+
+function resolveDisplayKeyFromEntry(entry: {
+  displayName?: string;
+  label?: string;
+  origin?: { label?: string };
+}): string | undefined {
   const displayName = entry?.displayName?.trim();
   if (displayName) {
     return displayName;
@@ -120,16 +128,26 @@ function resolveA2ASourceDisplayKey(params: {
   sourceSessionKey: string;
   sourceDisplayKey?: string;
 }): { key: string; fallbackToSessionKey: boolean } {
+  const namingMode = resolveA2ANamingMode(params.cfg);
   const { storePath, canonicalKey } = resolveInboxStoreTarget(params.cfg, params.sourceSessionKey);
   const store = loadSessionStore(storePath, { skipCache: true });
   const entry = store[canonicalKey];
   const fromEntry = resolveDisplayKeyFromEntry(entry);
-  if (fromEntry) {
-    return { key: fromEntry, fallbackToSessionKey: false };
-  }
   const provided = params.sourceDisplayKey?.trim();
-  if (provided) {
-    return { key: provided, fallbackToSessionKey: false };
+  if (namingMode === "legacy") {
+    if (provided) {
+      return { key: provided, fallbackToSessionKey: false };
+    }
+    if (fromEntry) {
+      return { key: fromEntry, fallbackToSessionKey: false };
+    }
+  } else {
+    if (fromEntry) {
+      return { key: fromEntry, fallbackToSessionKey: false };
+    }
+    if (provided) {
+      return { key: provided, fallbackToSessionKey: false };
+    }
   }
   return { key: params.sourceSessionKey, fallbackToSessionKey: true };
 }

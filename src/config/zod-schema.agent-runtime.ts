@@ -499,6 +499,7 @@ export const ToolsSchema = z
         enabled: z.boolean().optional(),
         allow: z.array(z.string()).optional(),
         deliveryMode: z.enum(["inject", "inbox"]).optional(),
+        namingMode: z.enum(["contract", "legacy"]).optional(),
       })
       .strict()
       .optional(),

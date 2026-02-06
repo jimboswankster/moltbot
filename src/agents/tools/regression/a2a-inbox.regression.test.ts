@@ -10,12 +10,15 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../../config/config.js";
+import type { SubagentRunRecord } from "../../subagent-registry.js";
+import { resolveSubagentLabel } from "../../../auto-reply/reply/subagents-utils.js";
 import * as sessions from "../../../config/sessions.js";
 import {
   loadSessionStore,
   saveSessionStore,
   updateSessionStore,
 } from "../../../config/sessions.js";
+import { deriveSessionTitle } from "../../../gateway/session-utils.js";
 import { getA2ATelemetry, resetA2ATelemetry } from "../../../infra/a2a-telemetry.js";
 import { peekSystemEvents, resetSystemEventsForTest } from "../../../infra/system-events.js";
 import {
@@ -179,6 +182,43 @@ describe("A2A Inbox - Golden Master Prompt Snapshot", () => {
 
     expect(result.text).toMatchInlineSnapshot(
       `"TRANSITIONAL_A2A_INBOX\n- source: Payments QA (agent:main:subagent:sub-001)\n  runId: run-123\n  text: Sub agent completed the task."`,
+    );
+  });
+
+  it("records a composite naming snapshot across inbox, session list, and announce formatting", () => {
+    const events: A2AInboxEvent[] = [
+      {
+        schemaVersion: 1,
+        createdAt: 1738737600000,
+        runId: "run-123",
+        sourceSessionKey: "agent:main:subagent:sub-001",
+        sourceDisplayKey: "Docs Writer",
+        replyText: "Draft complete.",
+      },
+    ];
+
+    const result = buildA2AInboxPromptBlock({
+      events,
+      maxEvents: 3,
+      maxChars: 500,
+    });
+    const sessionTitle = deriveSessionTitle(
+      { displayName: "Docs Writer", label: "docs", sessionId: "sess-1" },
+      null,
+    );
+    const announceLabel = resolveSubagentLabel({
+      label: "Docs Writer",
+      task: "Fallback task",
+    } as SubagentRunRecord);
+
+    const composite = [
+      result.text,
+      `Session Title: ${sessionTitle ?? "(none)"}`,
+      `Announce Label: ${announceLabel}`,
+    ].join("\n\n");
+
+    expect(composite).toMatchInlineSnapshot(
+      `"TRANSITIONAL_A2A_INBOX\n- source: Docs Writer (agent:main:subagent:sub-001)\n  runId: run-123\n  text: Draft complete.\n\nSession Title: Docs Writer\n\nAnnounce Label: Docs Writer"`,
     );
   });
 
@@ -413,6 +453,52 @@ describe("A2A Inbox - Audit Logging", () => {
       const events = store[sessionKey]?.a2aInbox?.events ?? [];
       expect(events[0]?.sourceDisplayKey).toBe("Docs Writer");
     } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("prefers provided displayKey when namingMode=legacy", async () => {
+    const { dir, sessionKey, storePath } = await setupSessionStore();
+    const previousConfig = configOverride;
+    configOverride = {
+      ...previousConfig,
+      tools: {
+        ...previousConfig.tools,
+        agentToAgent: {
+          ...previousConfig.tools?.agentToAgent,
+          enabled: true,
+          namingMode: "legacy",
+        },
+      },
+    };
+    try {
+      await saveSessionStore(storePath, {
+        [sessionKey]: {
+          sessionId: "session-1",
+          updatedAt: Date.now(),
+        },
+        "agent:main:subagent:sub-001": {
+          sessionId: "sub-1",
+          updatedAt: Date.now(),
+          displayName: "Docs Writer",
+        },
+      });
+
+      await recordA2AInboxEvent({
+        cfg: configOverride,
+        sessionKey,
+        sourceSessionKey: "agent:main:subagent:sub-001",
+        sourceDisplayKey: "Provided Label",
+        runId: "run-legacy",
+        replyText: "Draft complete.",
+        now: 1738737600000,
+      });
+
+      const store = loadSessionStore(storePath, { skipCache: true });
+      const events = store[sessionKey]?.a2aInbox?.events ?? [];
+      expect(events[0]?.sourceDisplayKey).toBe("Provided Label");
+    } finally {
+      configOverride = previousConfig;
       await fs.rm(dir, { recursive: true, force: true });
     }
   });
