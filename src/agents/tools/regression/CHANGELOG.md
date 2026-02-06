@@ -73,5 +73,5 @@ and related integration tests. Each entry includes the commit hash and tests run
 - Add A2A inbox fallback telemetry + tests for missing labels (commit: 5df132922)
 - Block inbox writes for unlabeled subagents without display key (commit: 36d10fa09)
 - Add deterministic ordering check for concurrent inbox events (commit: 49e365f62)
-- Add fallback-order coverage for displayName/label/origin (commit: TBD)
+- Add fallback-order coverage for displayName/label/origin (commit: a4395c405)
   Tests: `npx vitest run src/agents/openclaw-tools.subagents.sessions-spawn-normalizes-allowlisted-agent-ids.test.ts`
