@@ -451,6 +451,94 @@ describe("A2A Inbox - Audit Logging", () => {
       await fs.rm(dir, { recursive: true, force: true });
     }
   });
+
+  it("disambiguates duplicate spawn labels by session key", async () => {
+    const { dir, cfg, sessionKey, storePath } = await setupSessionStore();
+    const childA = "agent:main:subagent:sub-001";
+    const childB = "agent:main:subagent:sub-002";
+    try {
+      await saveSessionStore(storePath, {
+        [sessionKey]: {
+          sessionId: "session-1",
+          updatedAt: Date.now(),
+        },
+        [childA]: {
+          sessionId: "sub-1",
+          updatedAt: Date.now(),
+        },
+        [childB]: {
+          sessionId: "sub-2",
+          updatedAt: Date.now(),
+        },
+      });
+
+      configOverride = {
+        session: { store: storePath, scope: "per-sender", mainKey: "main" },
+        tools: { agentToAgent: { enabled: true } },
+      } as OpenClawConfig;
+      sessionStorePathForMock = storePath;
+
+      const { runSubagentAnnounceFlow } = await import("../../subagent-announce.js");
+      await runSubagentAnnounceFlow({
+        childSessionKey: childA,
+        childRunId: "run-a",
+        requesterSessionKey: sessionKey,
+        requesterDisplayKey: "main",
+        task: "do A",
+        timeoutMs: 1000,
+        cleanup: "keep",
+        waitForCompletion: false,
+        startedAt: 10,
+        endedAt: 20,
+        outcome: { status: "ok" },
+        label: "Codegen",
+      });
+      await runSubagentAnnounceFlow({
+        childSessionKey: childB,
+        childRunId: "run-b",
+        requesterSessionKey: sessionKey,
+        requesterDisplayKey: "main",
+        task: "do B",
+        timeoutMs: 1000,
+        cleanup: "keep",
+        waitForCompletion: false,
+        startedAt: 10,
+        endedAt: 20,
+        outcome: { status: "ok" },
+        label: "Codegen",
+      });
+
+      await recordA2AInboxEvent({
+        cfg,
+        sessionKey,
+        sourceSessionKey: childA,
+        runId: "run-inbox-a",
+        replyText: "Done A.",
+        now: 1738737600000,
+      });
+      await recordA2AInboxEvent({
+        cfg,
+        sessionKey,
+        sourceSessionKey: childB,
+        runId: "run-inbox-b",
+        replyText: "Done B.",
+        now: 1738737601000,
+      });
+
+      const store = loadSessionStore(storePath, { skipCache: true });
+      const events = store[sessionKey]?.a2aInbox?.events ?? [];
+      const block = buildA2AInboxPromptBlock({
+        events,
+        maxEvents: 5,
+        maxChars: 500,
+      });
+
+      expect(block.text).toContain("Codegen (agent:main:subagent:sub-001)");
+      expect(block.text).toContain("Codegen (agent:main:subagent:sub-002)");
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("A2A Inbox - Policy Enforcement", () => {
