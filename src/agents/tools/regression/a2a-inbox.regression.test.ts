@@ -415,6 +415,73 @@ describe("A2A Inbox - Audit Logging", () => {
     }
   });
 
+  it("prefers session label over origin.label and provided display key", async () => {
+    const { dir, cfg, sessionKey, storePath } = await setupSessionStore();
+    try {
+      await saveSessionStore(storePath, {
+        [sessionKey]: {
+          sessionId: "session-1",
+          updatedAt: Date.now(),
+        },
+        "agent:main:subagent:sub-020": {
+          sessionId: "sub-20",
+          updatedAt: Date.now(),
+          label: "Labelled Worker",
+          origin: { label: "Origin Label" },
+        },
+      });
+
+      await recordA2AInboxEvent({
+        cfg,
+        sessionKey,
+        sourceSessionKey: "agent:main:subagent:sub-020",
+        sourceDisplayKey: "Provided Label",
+        runId: "run-880",
+        replyText: "Done.",
+        now: 1738737600000,
+      });
+
+      const store = loadSessionStore(storePath, { skipCache: true });
+      const events = store[sessionKey]?.a2aInbox?.events ?? [];
+      expect(events[0]?.sourceDisplayKey).toBe("Labelled Worker");
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to origin.label when label is missing", async () => {
+    const { dir, cfg, sessionKey, storePath } = await setupSessionStore();
+    try {
+      await saveSessionStore(storePath, {
+        [sessionKey]: {
+          sessionId: "session-1",
+          updatedAt: Date.now(),
+        },
+        "agent:main:subagent:sub-021": {
+          sessionId: "sub-21",
+          updatedAt: Date.now(),
+          origin: { label: "Origin Only" },
+        },
+      });
+
+      await recordA2AInboxEvent({
+        cfg,
+        sessionKey,
+        sourceSessionKey: "agent:main:subagent:sub-021",
+        sourceDisplayKey: "Provided Label",
+        runId: "run-881",
+        replyText: "Done.",
+        now: 1738737600000,
+      });
+
+      const store = loadSessionStore(storePath, { skipCache: true });
+      const events = store[sessionKey]?.a2aInbox?.events ?? [];
+      expect(events[0]?.sourceDisplayKey).toBe("Origin Only");
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("falls back to source session key for non-subagent sessions", async () => {
     const { dir, cfg, sessionKey, storePath } = await setupSessionStore();
     try {
