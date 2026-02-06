@@ -63,5 +63,5 @@ and related integration tests. Each entry includes the commit hash and tests run
   Tests: `npx vitest run src/agents/tools/regression/a2a-integration.regression.test.ts`
 - Add A2A chaos coverage (write storm, restart recovery, session isolation) (commit: 344c30a96)
   Tests: `npx vitest run src/agents/tools/regression/a2a-chaos.regression.test.ts`
-- Enforce A2A naming contract (displayName + label fallbacks, disambiguation, snapshot) (commit: pending)
+- Enforce A2A naming contract (displayName + label fallbacks, disambiguation, snapshot) (commit: 41e59b466)
   Tests: `npx vitest run src/agents/tools/regression/a2a-inbox.regression.test.ts`
