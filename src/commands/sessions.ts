@@ -1,5 +1,5 @@
 import type { RuntimeEnv } from "../runtime.js";
-import { listAgents } from "../agents/agent-scope.js";
+import { resolveDefaultAgentId } from "../agents/agent-scope.js";
 import { lookupContextTokens } from "../agents/context.js";
 import { DEFAULT_CONTEXT_TOKENS, DEFAULT_MODEL, DEFAULT_PROVIDER } from "../agents/defaults.js";
 import { resolveConfiguredModelRef } from "../agents/model-selection.js";
@@ -12,6 +12,7 @@ import {
   type SessionEntry,
 } from "../config/sessions.js";
 import { info, warn } from "../globals.js";
+import { normalizeAgentId } from "../routing/session-key.js";
 import { parseSessionLabel } from "../sessions/session-label.js";
 import { isRich, theme } from "../terminal/theme.js";
 
@@ -275,10 +276,15 @@ function toRows(store: Record<string, SessionEntry>): SessionRow[] {
 
 function resolveAgentIdsForMigration(cfg: ReturnType<typeof loadConfig>, onlyAgent?: string) {
   if (onlyAgent?.trim()) {
-    return [onlyAgent.trim()];
+    return [normalizeAgentId(onlyAgent.trim())];
   }
-  const agents = listAgents(cfg);
-  return agents.length > 0 ? agents.map((entry) => entry.id) : ["main"];
+  const entries = Array.isArray(cfg.agents?.list) ? cfg.agents.list : [];
+  const ids = entries.map((entry) => normalizeAgentId(entry?.id)).filter((id) => Boolean(id));
+  const unique = [...new Set(ids)];
+  if (unique.length > 0) {
+    return unique;
+  }
+  return [resolveDefaultAgentId(cfg)];
 }
 
 async function migrateNamingStore(params: {
