@@ -159,6 +159,9 @@ export function createAgentEventHandler({
     deltaText?: string,
   ) => {
     const previous = chatRunState.buffers.get(clientRunId) ?? "";
+    if ((!deltaText || deltaText.length === 0) && text === previous) {
+      return;
+    }
     const nextText = deltaText ? `${previous}${deltaText}` : text;
     chatRunState.buffers.set(clientRunId, nextText);
     const now = Date.now();

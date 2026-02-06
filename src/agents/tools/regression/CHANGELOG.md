@@ -65,6 +65,8 @@ and related integration tests. Each entry includes the commit hash and tests run
 - Fix webchat streaming across provider retries by deferring chat finalization until dispatch completes (commit: f71ec0de2)
   Tests: none
   Notes: Agent lifecycle `end` could fire before fallback retries finished, clearing chat run linkage and dropping streaming in Control UI. Now gateway keeps chat run active until the chat dispatch completes, emits final once, and cleans up run context at the end. Verbose logging added to correlate run/session mapping during investigation.
+- Add chat streaming delta + dedupe coverage (commit: n/a)
+  Tests: `pnpm vitest run src/gateway/server-chat.agent-events.test.ts` `pnpm vitest run --config vitest.e2e.config.ts src/gateway/server.chat.gateway-server-chat.e2e.test.ts --hookTimeout 60000 --testTimeout 20000`
 - Record A2A input-source metadata on agent steps (commit: ffc576f4f)
   Tests: `npx vitest run src/agents/tools/regression/agent-step.regression.test.ts`
 - Log inputSource metadata when recorded in embedded run (commit: 956c74ef4)
