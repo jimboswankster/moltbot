@@ -65,3 +65,5 @@ and related integration tests. Each entry includes the commit hash and tests run
   Tests: `npx vitest run src/agents/tools/regression/a2a-chaos.regression.test.ts`
 - Enforce A2A naming contract (displayName + label fallbacks, disambiguation, snapshot) (commit: 41e59b466)
   Tests: `npx vitest run src/agents/tools/regression/a2a-inbox.regression.test.ts`
+- Add sessions_spawn → inbox naming propagation coverage (commit: pending)
+  Tests: `npx vitest run src/agents/tools/regression/a2a-inbox.regression.test.ts`

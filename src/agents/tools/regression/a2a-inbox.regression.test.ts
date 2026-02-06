@@ -11,7 +11,11 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../../config/config.js";
 import * as sessions from "../../../config/sessions.js";
-import { loadSessionStore, saveSessionStore } from "../../../config/sessions.js";
+import {
+  loadSessionStore,
+  saveSessionStore,
+  updateSessionStore,
+} from "../../../config/sessions.js";
 import {
   buildA2AInboxPromptBlock,
   injectA2AInboxPrependContext,
@@ -20,6 +24,64 @@ import {
   TRANSITIONAL_A2A_INBOX_TAG,
   type A2AInboxEvent,
 } from "../../a2a-inbox.js";
+
+let configOverride: OpenClawConfig = {
+  session: {
+    mainKey: "main",
+    scope: "per-sender",
+  },
+};
+let sessionStorePathForMock = "";
+
+vi.mock("../../../config/config.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../../config/config.js")>();
+  return {
+    ...actual,
+    loadConfig: () => configOverride,
+  };
+});
+
+const callGatewayMock = vi.fn(async (req: unknown) => {
+  const typed = req as { method?: string; params?: Record<string, unknown> };
+  if (typed.method === "sessions.patch") {
+    const key = typeof typed.params?.key === "string" ? typed.params.key : "";
+    const label = typeof typed.params?.label === "string" ? typed.params.label : "";
+    if (sessionStorePathForMock && key) {
+      await updateSessionStore(sessionStorePathForMock, (store) => {
+        const existing = store[key];
+        store[key] = sessions.mergeSessionEntry(existing, {
+          sessionId: existing?.sessionId ?? "patched-session",
+          updatedAt: Date.now(),
+          label: label || undefined,
+        });
+      });
+    }
+    return {};
+  }
+  if (typed.method === "agent") {
+    return { runId: "run-main", status: "ok" };
+  }
+  if (typed.method === "agent.wait") {
+    return { status: "ok" };
+  }
+  if (typed.method === "sessions.delete") {
+    return {};
+  }
+  return {};
+});
+
+vi.mock("../../../gateway/call.js", () => ({
+  callGateway: (req: unknown) => callGatewayMock(req),
+}));
+
+vi.mock("../../pi-embedded.js", () => ({
+  isEmbeddedPiRunActive: vi.fn(() => false),
+  queueEmbeddedPiMessage: vi.fn(() => false),
+}));
+
+vi.mock("../../tools/agent-step.js", () => ({
+  readLatestAssistantReply: vi.fn(async () => "Subagent output"),
+}));
 
 const { logInfo, logWarn, logError, logDebug } = vi.hoisted(() => ({
   logInfo: vi.fn(),
@@ -75,6 +137,13 @@ afterEach(async () => {
   logWarn.mockReset();
   logError.mockReset();
   logDebug.mockReset();
+  configOverride = {
+    session: {
+      mainKey: "main",
+      scope: "per-sender",
+    },
+  };
+  sessionStorePathForMock = "";
 });
 
 describe("A2A Inbox - Golden Master Prompt Snapshot", () => {
@@ -324,6 +393,60 @@ describe("A2A Inbox - Audit Logging", () => {
       const store = loadSessionStore(storePath, { skipCache: true });
       const events = store[sessionKey]?.a2aInbox?.events ?? [];
       expect(events[0]?.sourceDisplayKey).toBe("agent:main:subagent:sub-009");
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("propagates sessions_spawn label into inbox via sessions.patch", async () => {
+    const { dir, cfg, sessionKey, storePath } = await setupSessionStore();
+    const childSessionKey = "agent:main:subagent:sub-001";
+    try {
+      await saveSessionStore(storePath, {
+        [sessionKey]: {
+          sessionId: "session-1",
+          updatedAt: Date.now(),
+        },
+        [childSessionKey]: {
+          sessionId: "sub-1",
+          updatedAt: Date.now(),
+        },
+      });
+
+      configOverride = {
+        session: { store: storePath, scope: "per-sender", mainKey: "main" },
+        tools: { agentToAgent: { enabled: true } },
+      } as OpenClawConfig;
+      sessionStorePathForMock = storePath;
+
+      const { runSubagentAnnounceFlow } = await import("../../subagent-announce.js");
+      await runSubagentAnnounceFlow({
+        childSessionKey,
+        childRunId: "run-child",
+        requesterSessionKey: sessionKey,
+        requesterDisplayKey: "main",
+        task: "do it",
+        timeoutMs: 1000,
+        cleanup: "keep",
+        waitForCompletion: false,
+        startedAt: 10,
+        endedAt: 20,
+        outcome: { status: "ok" },
+        label: "Docs Writer",
+      });
+
+      await recordA2AInboxEvent({
+        cfg,
+        sessionKey,
+        sourceSessionKey: childSessionKey,
+        runId: "run-inbox-1",
+        replyText: "Draft complete.",
+        now: 1738737600000,
+      });
+
+      const store = loadSessionStore(storePath, { skipCache: true });
+      const events = store[sessionKey]?.a2aInbox?.events ?? [];
+      expect(events[0]?.sourceDisplayKey).toBe("Docs Writer");
     } finally {
       await fs.rm(dir, { recursive: true, force: true });
     }
