@@ -71,4 +71,5 @@ and related integration tests. Each entry includes the commit hash and tests run
   Tests: `npx vitest run src/agents/tools/regression/a2a-inbox.regression.test.ts`
 - Require sessions_spawn label (commit: 4edff32ec)
 - Add A2A inbox fallback telemetry + tests for missing labels (commit: 5df132922)
+- Block inbox writes for unlabeled subagents without display key (commit: TBD)
   Tests: `npx vitest run src/agents/openclaw-tools.subagents.sessions-spawn-normalizes-allowlisted-agent-ids.test.ts`

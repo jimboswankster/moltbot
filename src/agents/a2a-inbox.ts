@@ -11,7 +11,7 @@ import { resolveSessionStoreKey } from "../gateway/session-utils.js";
 import { recordA2AInboxDisplayFallback } from "../infra/a2a-telemetry.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
-import { resolveAgentIdFromSessionKey } from "../routing/session-key.js";
+import { isSubagentSessionKey, resolveAgentIdFromSessionKey } from "../routing/session-key.js";
 import { resolveDefaultAgentId } from "./agent-scope.js";
 import { createAgentToAgentPolicy } from "./tools/sessions-helpers.js";
 
@@ -201,30 +201,39 @@ export async function recordA2AInboxEvent(params: {
   }
 
   const { storePath, canonicalKey } = resolveInboxStoreTarget(params.cfg, params.sessionKey);
+  const providedDisplayKey = params.sourceDisplayKey?.trim();
   const eventId = crypto.randomUUID();
   let written = false;
 
   try {
+    const resolvedDisplay = resolveA2ASourceDisplayKey({
+      cfg: params.cfg,
+      sourceSessionKey: params.sourceSessionKey,
+      sourceDisplayKey: params.sourceDisplayKey,
+    });
+    if (resolvedDisplay.fallbackToSessionKey && isSubagentSessionKey(params.sourceSessionKey)) {
+      recordA2AInboxDisplayFallback(params.sourceSessionKey, "missing_label");
+      log.warn("a2a_inbox_display_fallback", {
+        runId: params.runId,
+        sessionKey: canonicalKey,
+        sourceSessionKey: params.sourceSessionKey,
+        reason: "missing_label",
+      });
+      if (!providedDisplayKey) {
+        log.warn("a2a_inbox_missing_label_blocked", {
+          runId: params.runId,
+          sessionKey: canonicalKey,
+          sourceSessionKey: params.sourceSessionKey,
+        });
+        return { written: false, eventId: null };
+      }
+    }
     await updateSessionStore(storePath, (store) => {
       const existing = store[canonicalKey];
       const inbox = existing?.a2aInbox;
       const events = Array.isArray(inbox?.events) ? inbox?.events : [];
       if (events.some((event) => event.runId === params.runId)) {
         return;
-      }
-      const resolvedDisplay = resolveA2ASourceDisplayKey({
-        cfg: params.cfg,
-        sourceSessionKey: params.sourceSessionKey,
-        sourceDisplayKey: params.sourceDisplayKey,
-      });
-      if (resolvedDisplay.fallbackToSessionKey) {
-        recordA2AInboxDisplayFallback(params.sourceSessionKey, "missing_label");
-        log.warn("a2a_inbox_display_fallback", {
-          runId: params.runId,
-          sessionKey: canonicalKey,
-          sourceSessionKey: params.sourceSessionKey,
-          reason: "missing_label",
-        });
       }
       const nextEvent: A2AInboxEvent = {
         schemaVersion: A2A_INBOX_SCHEMA_VERSION,

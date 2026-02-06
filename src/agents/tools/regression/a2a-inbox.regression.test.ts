@@ -382,13 +382,13 @@ describe("A2A Inbox - Audit Logging", () => {
     }
   });
 
-  it("falls back to source session key when no label is available", async () => {
+  it("falls back to source session key for non-subagent sessions", async () => {
     const { dir, cfg, sessionKey, storePath } = await setupSessionStore();
     try {
       await recordA2AInboxEvent({
         cfg,
         sessionKey,
-        sourceSessionKey: "agent:main:subagent:sub-009",
+        sourceSessionKey: "agent:main:main",
         sourceDisplayKey: " ",
         runId: "run-900",
         replyText: "No label.",
@@ -397,24 +397,15 @@ describe("A2A Inbox - Audit Logging", () => {
 
       const store = loadSessionStore(storePath, { skipCache: true });
       const events = store[sessionKey]?.a2aInbox?.events ?? [];
-      expect(events[0]?.sourceDisplayKey).toBe("agent:main:subagent:sub-009");
-      expect(logWarn).toHaveBeenCalledWith(
-        "a2a_inbox_display_fallback",
-        expect.objectContaining({
-          runId: "run-900",
-          sessionKey,
-          sourceSessionKey: "agent:main:subagent:sub-009",
-          reason: "missing_label",
-        }),
-      );
+      expect(events[0]?.sourceDisplayKey).toBe("agent:main:main");
       const telemetry = getA2ATelemetry();
-      expect(telemetry.inboxDisplayFallbackCount).toBe(1);
+      expect(telemetry.inboxDisplayFallbackCount).toBe(0);
     } finally {
       await fs.rm(dir, { recursive: true, force: true });
     }
   });
 
-  it("records fallback when sessions.patch does not apply label", async () => {
+  it("blocks unlabeled subagent when sessions.patch does not apply label", async () => {
     const { dir, cfg, sessionKey, storePath } = await setupSessionStore();
     const childSessionKey = "agent:main:subagent:sub-101";
     try {
@@ -478,7 +469,7 @@ describe("A2A Inbox - Audit Logging", () => {
 
       const store = loadSessionStore(storePath, { skipCache: true });
       const events = store[sessionKey]?.a2aInbox?.events ?? [];
-      expect(events[0]?.sourceDisplayKey).toBe(childSessionKey);
+      expect(events.length).toBe(0);
       expect(logWarn).toHaveBeenCalledWith(
         "a2a_inbox_display_fallback",
         expect.objectContaining({
@@ -486,6 +477,54 @@ describe("A2A Inbox - Audit Logging", () => {
           sessionKey,
           sourceSessionKey: childSessionKey,
           reason: "missing_label",
+        }),
+      );
+      expect(logWarn).toHaveBeenCalledWith(
+        "a2a_inbox_missing_label_blocked",
+        expect.objectContaining({
+          runId: "run-inbox-2",
+          sessionKey,
+          sourceSessionKey: childSessionKey,
+        }),
+      );
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks inbox writes for unlabeled subagent when no display key provided", async () => {
+    const { dir, cfg, sessionKey, storePath } = await setupSessionStore();
+    const childSessionKey = "agent:main:subagent:sub-404";
+    try {
+      await saveSessionStore(storePath, {
+        [sessionKey]: {
+          sessionId: "session-1",
+          updatedAt: Date.now(),
+        },
+        [childSessionKey]: {
+          sessionId: "sub-1",
+          updatedAt: Date.now(),
+        },
+      });
+
+      const result = await recordA2AInboxEvent({
+        cfg,
+        sessionKey,
+        sourceSessionKey: childSessionKey,
+        runId: "run-blocked",
+        replyText: "No label.",
+        now: 1738737600000,
+      });
+
+      expect(result.written).toBe(false);
+      const store = loadSessionStore(storePath, { skipCache: true });
+      expect(store[sessionKey]?.a2aInbox).toBeUndefined();
+      expect(logWarn).toHaveBeenCalledWith(
+        "a2a_inbox_missing_label_blocked",
+        expect.objectContaining({
+          runId: "run-blocked",
+          sessionKey,
+          sourceSessionKey: childSessionKey,
         }),
       );
     } finally {
