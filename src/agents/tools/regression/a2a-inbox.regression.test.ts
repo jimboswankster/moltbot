@@ -85,7 +85,7 @@ describe("A2A Inbox - Golden Master Prompt Snapshot", () => {
         createdAt: 1738737600000,
         runId: "run-123",
         sourceSessionKey: "agent:main:subagent:sub-001",
-        sourceDisplayKey: "subagent:sub-001",
+        sourceDisplayKey: "Payments QA",
         replyText: "Sub agent completed the task.",
       },
     ];
@@ -102,8 +102,38 @@ describe("A2A Inbox - Golden Master Prompt Snapshot", () => {
     expect(result.text).not.toContain("role=user");
 
     expect(result.text).toMatchInlineSnapshot(
-      `"TRANSITIONAL_A2A_INBOX\n- source: subagent:sub-001 (agent:main:subagent:sub-001)\n  runId: run-123\n  text: Sub agent completed the task."`,
+      `"TRANSITIONAL_A2A_INBOX\n- source: Payments QA (agent:main:subagent:sub-001)\n  runId: run-123\n  text: Sub agent completed the task."`,
     );
+  });
+
+  it("disambiguates identical labels with session keys", () => {
+    const events: A2AInboxEvent[] = [
+      {
+        schemaVersion: 1,
+        createdAt: 1,
+        runId: "run-a",
+        sourceSessionKey: "agent:main:subagent:sub-001",
+        sourceDisplayKey: "Codegen",
+        replyText: "Done A.",
+      },
+      {
+        schemaVersion: 1,
+        createdAt: 2,
+        runId: "run-b",
+        sourceSessionKey: "agent:main:subagent:sub-002",
+        sourceDisplayKey: "Codegen",
+        replyText: "Done B.",
+      },
+    ];
+
+    const result = buildA2AInboxPromptBlock({
+      events,
+      maxEvents: 3,
+      maxChars: 500,
+    });
+
+    expect(result.text).toContain("Codegen (agent:main:subagent:sub-001)");
+    expect(result.text).toContain("Codegen (agent:main:subagent:sub-002)");
   });
 });
 
@@ -240,6 +270,60 @@ describe("A2A Inbox - Audit Logging", () => {
           eventCount: 1,
         }),
       );
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("prefers session displayName over provided sourceDisplayKey", async () => {
+    const { dir, cfg, sessionKey, storePath } = await setupSessionStore();
+    try {
+      await saveSessionStore(storePath, {
+        [sessionKey]: {
+          sessionId: "session-1",
+          updatedAt: Date.now(),
+        },
+        "agent:main:subagent:sub-001": {
+          sessionId: "sub-1",
+          updatedAt: Date.now(),
+          displayName: "Docs Writer",
+        },
+      });
+
+      await recordA2AInboxEvent({
+        cfg,
+        sessionKey,
+        sourceSessionKey: "agent:main:subagent:sub-001",
+        sourceDisplayKey: "subagent:sub-001",
+        runId: "run-777",
+        replyText: "Draft complete.",
+        now: 1738737600000,
+      });
+
+      const store = loadSessionStore(storePath, { skipCache: true });
+      const events = store[sessionKey]?.a2aInbox?.events ?? [];
+      expect(events[0]?.sourceDisplayKey).toBe("Docs Writer");
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to source session key when no label is available", async () => {
+    const { dir, cfg, sessionKey, storePath } = await setupSessionStore();
+    try {
+      await recordA2AInboxEvent({
+        cfg,
+        sessionKey,
+        sourceSessionKey: "agent:main:subagent:sub-009",
+        sourceDisplayKey: " ",
+        runId: "run-900",
+        replyText: "No label.",
+        now: 1738737600000,
+      });
+
+      const store = loadSessionStore(storePath, { skipCache: true });
+      const events = store[sessionKey]?.a2aInbox?.events ?? [];
+      expect(events[0]?.sourceDisplayKey).toBe("agent:main:subagent:sub-009");
     } finally {
       await fs.rm(dir, { recursive: true, force: true });
     }

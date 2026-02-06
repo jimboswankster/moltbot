@@ -35,6 +35,24 @@ type A2AInboxStoreTarget = {
   canonicalKey: string;
 };
 
+function resolveDisplayKeyFromEntry(
+  entry: { displayName?: string; label?: string; origin?: { label?: string } } | undefined,
+): string | undefined {
+  const displayName = entry?.displayName?.trim();
+  if (displayName) {
+    return displayName;
+  }
+  const label = entry?.label?.trim();
+  if (label) {
+    return label;
+  }
+  const originLabel = entry?.origin?.label?.trim();
+  if (originLabel) {
+    return originLabel;
+  }
+  return undefined;
+}
+
 type A2AInboxValidationResult =
   | { ok: true; events: A2AInboxEvent[] }
   | { ok: false; error: string };
@@ -93,6 +111,25 @@ function resolveInboxStoreTarget(cfg: OpenClawConfig, sessionKey: string): A2AIn
       : resolveAgentIdFromSessionKey(canonicalKey);
   const storePath = resolveStorePath(cfg.session?.store, { agentId });
   return { storePath, canonicalKey };
+}
+
+function resolveA2ASourceDisplayKey(params: {
+  cfg: OpenClawConfig;
+  sourceSessionKey: string;
+  sourceDisplayKey?: string;
+}): string {
+  const { storePath, canonicalKey } = resolveInboxStoreTarget(params.cfg, params.sourceSessionKey);
+  const store = loadSessionStore(storePath, { skipCache: true });
+  const entry = store[canonicalKey];
+  const fromEntry = resolveDisplayKeyFromEntry(entry);
+  if (fromEntry) {
+    return fromEntry;
+  }
+  const provided = params.sourceDisplayKey?.trim();
+  if (provided) {
+    return provided;
+  }
+  return params.sourceSessionKey;
 }
 
 export function buildA2AInboxPromptBlock(params: {
@@ -174,12 +211,17 @@ export async function recordA2AInboxEvent(params: {
       if (events.some((event) => event.runId === params.runId)) {
         return;
       }
+      const sourceDisplayKey = resolveA2ASourceDisplayKey({
+        cfg: params.cfg,
+        sourceSessionKey: params.sourceSessionKey,
+        sourceDisplayKey: params.sourceDisplayKey,
+      });
       const nextEvent: A2AInboxEvent = {
         schemaVersion: A2A_INBOX_SCHEMA_VERSION,
         createdAt: now,
         runId: params.runId,
         sourceSessionKey: params.sourceSessionKey,
-        sourceDisplayKey: params.sourceDisplayKey,
+        sourceDisplayKey,
         replyText: params.replyText,
       };
       const next = mergeSessionEntry(existing, {
