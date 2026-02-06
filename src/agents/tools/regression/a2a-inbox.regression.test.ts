@@ -1055,6 +1055,92 @@ describe("A2A Inbox - Versioning + Staleness", () => {
   });
 });
 
+describe("A2A Inbox - Retention", () => {
+  it("prunes delivered events older than retention days in mark mode", async () => {
+    const { dir, cfg, sessionKey, storePath } = await setupSessionStore();
+    const now = 1738737600000;
+    const dayMs = 24 * 60 * 60 * 1000;
+    const cfgWithRetention = {
+      ...cfg,
+      tools: {
+        agentToAgent: {
+          inboxAckMode: "mark",
+          inboxRetentionDays: 7,
+        },
+      },
+    } as OpenClawConfig;
+    try {
+      await saveSessionStore(storePath, {
+        [sessionKey]: {
+          sessionId: "session-1",
+          updatedAt: Date.now(),
+          a2aInbox: {
+            events: [
+              {
+                schemaVersion: 1,
+                createdAt: now - 10 * dayMs,
+                runId: "run-old",
+                sourceSessionKey: "agent:main:subagent:sub-old",
+                sourceDisplayKey: "Old Worker",
+                replyText: "Old delivered.",
+                deliveredAt: now - 8 * dayMs,
+                deliveredRunId: "run-master-old",
+              },
+              {
+                schemaVersion: 1,
+                createdAt: now - 2 * dayMs,
+                runId: "run-recent",
+                sourceSessionKey: "agent:main:subagent:sub-recent",
+                sourceDisplayKey: "Recent Worker",
+                replyText: "Recent delivered.",
+                deliveredAt: now - 1 * dayMs,
+                deliveredRunId: "run-master-recent",
+              },
+              {
+                schemaVersion: 1,
+                createdAt: now,
+                runId: "run-pending",
+                sourceSessionKey: "agent:main:subagent:sub-pending",
+                sourceDisplayKey: "Pending Worker",
+                replyText: "Pending reply.",
+              },
+            ],
+          },
+        },
+      });
+
+      const injected = await injectA2AInboxPrependContext({
+        cfg: cfgWithRetention,
+        sessionKey,
+        runId: "run-master-retention",
+        now,
+      });
+
+      expect(injected?.prependContext).toContain(TRANSITIONAL_A2A_INBOX_TAG);
+
+      const store = loadSessionStore(storePath, { skipCache: true });
+      const events = store[sessionKey]?.a2aInbox?.events ?? [];
+      const ids = events.map((event) => event.runId);
+      expect(ids).toContain("run-recent");
+      expect(ids).toContain("run-pending");
+      expect(ids).not.toContain("run-old");
+      const pending = events.find((event) => event.runId === "run-pending");
+      expect(pending?.deliveredAt).toBe(now);
+      expect(logInfo).toHaveBeenCalledWith(
+        "a2a_inbox_retention_pruned",
+        expect.objectContaining({
+          runId: "run-master-retention",
+          sessionKey,
+          eventCount: 1,
+          retentionDays: 7,
+        }),
+      );
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("A2A Inbox - Schema Validation", () => {
   it("blocks injection when inbox schema is invalid", async () => {
     const { dir, cfg, sessionKey, storePath } = await setupSessionStore();

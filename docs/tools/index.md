@@ -448,6 +448,7 @@ Notes:
 - After the ping‑pong, the target agent runs an **announce step**; reply `ANNOUNCE_SKIP` to suppress the announcement.
 - A2A inbox display naming follows `tools.agentToAgent.namingMode` (`contract` default, `legacy` prefers provided displayKey).
 - A2A inbox ack mode follows `tools.agentToAgent.inboxAckMode` (`mark` default keeps delivered events, `clear` removes them after injection).
+- Delivered inbox retention (days) uses `tools.agentToAgent.inboxRetentionDays` when in `mark` mode.
 
 ### `agents_list`
 

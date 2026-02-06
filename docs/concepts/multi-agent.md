@@ -190,6 +190,8 @@ multiple phone numbers without mixing sessions.
       // Optional: inbox ack mode for delivered events.
       // "mark" (default) keeps delivered events; "clear" removes them after injection.
       inboxAckMode: "mark",
+      // Optional: retention in days for delivered events when using mark mode.
+      inboxRetentionDays: 7,
     },
   },
 

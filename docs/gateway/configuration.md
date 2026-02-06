@@ -928,6 +928,8 @@ Agent-to-agent messaging is opt-in:
       // Optional: inbox ack mode for delivered events.
       // "mark" (default) keeps delivered events; "clear" removes them after injection.
       inboxAckMode: "mark",
+      // Optional: retention in days for delivered events when using mark mode.
+      inboxRetentionDays: 7,
     },
   },
 }
@@ -2782,6 +2784,7 @@ Fields:
 - `agentToAgent.maxPingPongTurns`: max reply-back turns between requester/target (0–5, default 5).
 - `tools.agentToAgent.namingMode`: naming contract for A2A display keys (`contract` default, `legacy` prefers provided displayKey).
 - `tools.agentToAgent.inboxAckMode`: inbox delivery ack mode (`mark` default keeps delivered events, `clear` removes them after injection).
+- `tools.agentToAgent.inboxRetentionDays`: retention (days) for delivered inbox events when using mark mode.
 - `sendPolicy.default`: `allow` or `deny` fallback when no rule matches.
 - `sendPolicy.rules[]`: match by `channel`, `chatType` (`direct|group|room`), or `keyPrefix` (e.g. `cron:`). First deny wins; otherwise allow.
 

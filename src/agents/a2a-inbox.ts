@@ -48,6 +48,14 @@ function resolveA2AInboxAckMode(cfg: OpenClawConfig): A2AInboxAckMode {
   return cfg.tools?.agentToAgent?.inboxAckMode ?? "mark";
 }
 
+function resolveA2AInboxRetentionDays(cfg: OpenClawConfig): number | null {
+  const value = cfg.tools?.agentToAgent?.inboxRetentionDays;
+  if (typeof value !== "number" || Number.isNaN(value) || value <= 0) {
+    return null;
+  }
+  return value;
+}
+
 function resolveDisplayKeyFromEntry(entry: {
   displayName?: string;
   label?: string;
@@ -390,6 +398,10 @@ export async function injectA2AInboxPrependContext(params: {
     }
 
     const ackMode = resolveA2AInboxAckMode(params.cfg);
+    const retentionDays = resolveA2AInboxRetentionDays(params.cfg);
+    const retentionCutoff =
+      retentionDays != null ? now - retentionDays * 24 * 60 * 60 * 1000 : null;
+    let prunedCount = 0;
     await updateSessionStore(storePath, (mutable) => {
       const current = mutable[canonicalKey];
       if (!current?.a2aInbox?.events) {
@@ -403,6 +415,13 @@ export async function injectA2AInboxPrependContext(params: {
       });
       if (ackMode === "clear") {
         nextEvents = nextEvents.filter((event) => !block.includedRunIds.includes(event.runId));
+      }
+      if (ackMode === "mark" && retentionCutoff != null) {
+        const before = nextEvents.length;
+        nextEvents = nextEvents.filter(
+          (event) => !(event.deliveredAt && event.deliveredAt < retentionCutoff),
+        );
+        prunedCount = before - nextEvents.length;
       }
       mutable[canonicalKey] = mergeSessionEntry(current, {
         updatedAt: now,
@@ -433,6 +452,15 @@ export async function injectA2AInboxPrependContext(params: {
         sessionKey: canonicalKey,
         sourceSessionKey,
         eventCount,
+      });
+    }
+    if (prunedCount > 0) {
+      log.info("a2a_inbox_retention_pruned", {
+        runId: params.runId,
+        sessionKey: canonicalKey,
+        sourceSessionKey,
+        eventCount: prunedCount,
+        retentionDays,
       });
     }
 

@@ -60,6 +60,8 @@ and related integration tests. Each entry includes the commit hash and tests run
   Tests: `npx vitest run src/agents/tools/regression/a2a-inbox.regression.test.ts`
 - Live validation: inboxAckMode=clear (commit: n/a)
   Tests: `npx tsx -e "(...)"` (manual script); verified a2a_inbox_event_written → a2a_inbox_acked → a2a_inbox_injected → a2a_inbox_cleared; events_after=0
+- Add inbox retention pruning coverage (commit: n/a)
+  Tests: `npx vitest run src/agents/tools/regression/a2a-inbox.regression.test.ts`
 - Fix webchat streaming across provider retries by deferring chat finalization until dispatch completes (commit: f71ec0de2)
   Tests: none
   Notes: Agent lifecycle `end` could fire before fallback retries finished, clearing chat run linkage and dropping streaming in Control UI. Now gateway keeps chat run active until the chat dispatch completes, emits final once, and cleans up run context at the end. Verbose logging added to correlate run/session mapping during investigation.

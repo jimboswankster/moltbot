@@ -425,6 +425,8 @@ export type ToolsConfig = {
     deliveryMode?: "inject" | "inbox";
     /** Inbox ack mode: "mark" keeps delivered events; "clear" removes them after injection. */
     inboxAckMode?: "mark" | "clear";
+    /** Inbox retention in days for delivered events when using mark mode. */
+    inboxRetentionDays?: number;
     /** Naming contract mode for A2A display keys (default: "contract"). */
     namingMode?: "contract" | "legacy";
   };
