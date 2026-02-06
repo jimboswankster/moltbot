@@ -779,6 +779,14 @@ export async function runEmbeddedAttempt(
             runId: params.inputSource.runId,
             promptHash,
           });
+          log.debug("embedded run inputSource recorded", {
+            runId: params.runId,
+            sessionId: params.sessionId,
+            type: params.inputSource.type,
+            sourceSessionKey: params.inputSource.sessionKey,
+            sourceRunId: params.inputSource.runId,
+            promptHash,
+          });
         }
 
         try {
