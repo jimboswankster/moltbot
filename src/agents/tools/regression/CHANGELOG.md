@@ -57,3 +57,5 @@ and related integration tests. Each entry includes the commit hash and tests run
   Tests: `npx vitest run src/agents/tools/regression/agent-step.regression.test.ts`
 - Log inputSource metadata when recorded in embedded run (commit: 956c74ef4)
   Tests: none
+- Add A2A delivery-mode inbox flow coverage (commit: b67a963f8)
+  Tests: `npx vitest run src/agents/tools/regression/a2a-integration.regression.test.ts`
