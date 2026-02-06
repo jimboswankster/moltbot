@@ -17,6 +17,7 @@ import {
   updateSessionStore,
 } from "../../../config/sessions.js";
 import { getA2ATelemetry, resetA2ATelemetry } from "../../../infra/a2a-telemetry.js";
+import { peekSystemEvents, resetSystemEventsForTest } from "../../../infra/system-events.js";
 import {
   buildA2AInboxPromptBlock,
   injectA2AInboxPrependContext,
@@ -140,6 +141,7 @@ afterEach(async () => {
   logError.mockReset();
   logDebug.mockReset();
   resetA2ATelemetry();
+  resetSystemEventsForTest();
   callGatewayMock.mockReset();
   callGatewayMock.mockImplementation(defaultGatewayImpl);
   configOverride = {
@@ -587,6 +589,8 @@ describe("A2A Inbox - Audit Logging", () => {
           sourceSessionKey: childSessionKey,
         }),
       );
+      const systemEvents = peekSystemEvents(sessionKey);
+      expect(systemEvents.some((event) => event.includes("A2A inbox blocked"))).toBe(true);
     } finally {
       await fs.rm(dir, { recursive: true, force: true });
     }
@@ -627,6 +631,8 @@ describe("A2A Inbox - Audit Logging", () => {
           sourceSessionKey: childSessionKey,
         }),
       );
+      const systemEvents = peekSystemEvents(sessionKey);
+      expect(systemEvents.some((event) => event.includes("A2A inbox blocked"))).toBe(true);
     } finally {
       await fs.rm(dir, { recursive: true, force: true });
     }

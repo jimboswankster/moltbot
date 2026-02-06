@@ -10,6 +10,7 @@ import { resolveStorePath } from "../config/sessions/paths.js";
 import { resolveSessionStoreKey } from "../gateway/session-utils.js";
 import { recordA2AInboxDisplayFallback } from "../infra/a2a-telemetry.js";
 import { formatErrorMessage } from "../infra/errors.js";
+import { enqueueSystemEvent } from "../infra/system-events.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { isSubagentSessionKey, resolveAgentIdFromSessionKey } from "../routing/session-key.js";
 import { resolveDefaultAgentId } from "./agent-scope.js";
@@ -225,6 +226,10 @@ export async function recordA2AInboxEvent(params: {
           sessionKey: canonicalKey,
           sourceSessionKey: params.sourceSessionKey,
         });
+        enqueueSystemEvent(
+          `A2A inbox blocked: missing subagent label (${params.sourceSessionKey}). Ensure sessions_spawn label is set.`,
+          { sessionKey: canonicalKey, contextKey: `a2a-missing-label:${params.sourceSessionKey}` },
+        );
         return { written: false, eventId: null };
       }
     }
