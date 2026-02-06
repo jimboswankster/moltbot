@@ -33,6 +33,7 @@ export type CronServiceDeps = {
     /** Last non-empty agent text output (not truncated). */
     outputText?: string;
     error?: string;
+    errorKind?: "invalid-model";
   }>;
   onEvent?: (evt: CronEvent) => void;
 };

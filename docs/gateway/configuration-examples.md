@@ -344,6 +344,7 @@ Save to `~/.openclaw/openclaw.json` and you can DM the bot from that number.
     enabled: true,
     store: "~/.openclaw/cron/cron.json",
     maxConcurrentRuns: 2,
+    agentTurnModel: "ollama/llama3.1:8b",
   },
 
   // Webhooks

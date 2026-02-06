@@ -288,6 +288,7 @@ export const OpenClawSchema = z
         enabled: z.boolean().optional(),
         store: z.string().optional(),
         maxConcurrentRuns: z.number().int().positive().optional(),
+        agentTurnModel: z.string().optional(),
       })
       .strict()
       .optional(),

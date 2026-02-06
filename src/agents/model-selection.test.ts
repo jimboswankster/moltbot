@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
+import type { ModelCatalogEntry } from "./model-catalog.js";
 import {
   parseModelRef,
   resolveModelRefFromString,
@@ -7,6 +8,7 @@ import {
   buildModelAliasIndex,
   normalizeProviderId,
   modelKey,
+  resolveAllowedModelRef,
 } from "./model-selection.js";
 
 describe("model-selection", () => {
@@ -135,6 +137,102 @@ describe("model-selection", () => {
         defaultModel: "gpt-4",
       });
       expect(result).toEqual({ provider: "openai", model: "gpt-4" });
+    });
+  });
+
+  describe("resolveAllowedModelRef", () => {
+    it('resolves literal "default" to configured primary (cron/subagent fix)', () => {
+      const cfg: OpenClawConfig = {
+        agents: {
+          defaults: {
+            model: { primary: "openai-codex/gpt-5.1" },
+            models: {
+              "openai-codex/gpt-5.1": {},
+              "openai/gpt-4o-mini": {},
+            },
+          },
+        },
+      } as OpenClawConfig;
+
+      const catalog: ModelCatalogEntry[] = [
+        { id: "gpt-5.1", name: "GPT 5.1", provider: "openai-codex" },
+        { id: "gpt-4o-mini", name: "GPT-4o Mini", provider: "openai" },
+      ];
+
+      const result = resolveAllowedModelRef({
+        cfg,
+        catalog,
+        raw: "default",
+        defaultProvider: "anthropic",
+        defaultModel: "claude-opus-4-5",
+      });
+
+      expect("error" in result).toBe(false);
+      expect(result).toEqual({
+        ref: { provider: "openai-codex", model: "gpt-5.1" },
+        key: "openai-codex/gpt-5.1",
+      });
+    });
+
+    it('resolves "Default" (case-insensitive) to configured primary', () => {
+      const cfg: OpenClawConfig = {
+        agents: {
+          defaults: {
+            model: { primary: "openai/gpt-4o-mini" },
+            models: {
+              "openai-codex/gpt-5.1": {},
+              "openai/gpt-4o-mini": {},
+            },
+          },
+        },
+      } as OpenClawConfig;
+
+      const catalog: ModelCatalogEntry[] = [
+        { id: "gpt-5.1", name: "GPT 5.1", provider: "openai-codex" },
+        { id: "gpt-4o-mini", name: "GPT-4o Mini", provider: "openai" },
+      ];
+
+      const result = resolveAllowedModelRef({
+        cfg,
+        catalog,
+        raw: "Default",
+        defaultProvider: "anthropic",
+        defaultModel: "claude-opus-4-5",
+      });
+
+      expect("error" in result).toBe(false);
+      expect(result).toEqual({
+        ref: { provider: "openai", model: "gpt-4o-mini" },
+        key: "openai/gpt-4o-mini",
+      });
+    });
+
+    it("returns error when primary is not in allowlist and raw is default", () => {
+      const cfg: OpenClawConfig = {
+        agents: {
+          defaults: {
+            model: { primary: "openai-codex/gpt-5.1" },
+            models: {
+              "openai/gpt-4o-mini": {},
+            },
+          },
+        },
+      } as OpenClawConfig;
+
+      const catalog: ModelCatalogEntry[] = [
+        { id: "gpt-4o-mini", name: "GPT-4o Mini", provider: "openai" },
+      ];
+
+      const result = resolveAllowedModelRef({
+        cfg,
+        catalog,
+        raw: "default",
+        defaultProvider: "anthropic",
+        defaultModel: "claude-opus-4-5",
+      });
+
+      expect("error" in result).toBe(true);
+      expect((result as { error: string }).error).toBe("model not allowed: openai-codex/gpt-5.1");
     });
   });
 });

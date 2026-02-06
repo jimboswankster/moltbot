@@ -307,9 +307,13 @@ Notes:
     enabled: true, // default true
     store: "~/.openclaw/cron/jobs.json",
     maxConcurrentRuns: 1, // default 1
+    agentTurnModel: "ollama/llama3.1:8b", // default model for isolated agentTurn jobs
   },
 }
 ```
+
+When an isolated cron job omits `payload.model` or sets it to `"default"`, the Gateway uses
+`cron.agentTurnModel` instead of the main-session default.
 
 Disable cron entirely:
 

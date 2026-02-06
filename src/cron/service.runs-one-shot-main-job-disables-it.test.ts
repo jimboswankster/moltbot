@@ -398,6 +398,52 @@ describe("CronService", () => {
     await store.cleanup();
   });
 
+  it("disables one-shot jobs when the model is invalid to avoid tight retries", async () => {
+    const store = await makeStorePath();
+    const enqueueSystemEvent = vi.fn();
+    const requestHeartbeatNow = vi.fn();
+    const runIsolatedAgentJob = vi.fn(async () => ({
+      status: "error" as const,
+      error: "model not allowed: openai-codex/default",
+      errorKind: "invalid-model" as const,
+    }));
+
+    const cron = new CronService({
+      storePath: store.storePath,
+      cronEnabled: true,
+      log: noopLogger,
+      enqueueSystemEvent,
+      requestHeartbeatNow,
+      runIsolatedAgentJob,
+    });
+
+    await cron.start();
+    const atMs = Date.parse("2025-12-13T00:00:01.000Z");
+    const job = await cron.add({
+      name: "invalid model once",
+      enabled: true,
+      schedule: { kind: "at", atMs },
+      sessionTarget: "isolated",
+      wakeMode: "now",
+      payload: { kind: "agentTurn", message: "do it", model: "default", deliver: false },
+    });
+
+    vi.setSystemTime(new Date("2025-12-13T00:00:01.000Z"));
+    await vi.runOnlyPendingTimersAsync();
+
+    const updated = await waitForJob(cron, job.id, (entry) => entry?.state.lastStatus === "error");
+    expect(updated?.enabled).toBe(false);
+    expect(updated?.state.nextRunAtMs).toBeUndefined();
+    expect(runIsolatedAgentJob).toHaveBeenCalledTimes(1);
+
+    vi.setSystemTime(new Date("2025-12-13T00:00:05.000Z"));
+    await vi.runOnlyPendingTimersAsync();
+    expect(runIsolatedAgentJob).toHaveBeenCalledTimes(1);
+
+    cron.stop();
+    await store.cleanup();
+  });
+
   it("rejects unsupported session/payload combinations", async () => {
     const store = await makeStorePath();
 

@@ -346,12 +346,25 @@ export function resolveAllowedModelRef(params: {
     return { error: "invalid model: empty" };
   }
 
+  // Treat literal "default" as configured primary (single-point fix for cron/subagent).
+  const effectiveRaw =
+    normalizeAliasKey(trimmed) === "default"
+      ? (() => {
+          const ref = resolveConfiguredModelRef({
+            cfg: params.cfg,
+            defaultProvider: params.defaultProvider,
+            defaultModel: params.defaultModel ?? DEFAULT_MODEL,
+          });
+          return modelKey(ref.provider, ref.model);
+        })()
+      : trimmed;
+
   const aliasIndex = buildModelAliasIndex({
     cfg: params.cfg,
     defaultProvider: params.defaultProvider,
   });
   const resolved = resolveModelRefFromString({
-    raw: trimmed,
+    raw: effectiveRaw,
     defaultProvider: params.defaultProvider,
     aliasIndex,
   });

@@ -87,6 +87,7 @@ export type RunCronAgentTurnResult = {
   /** Last non-empty agent text output (not truncated). */
   outputText?: string;
   error?: string;
+  errorKind?: "invalid-model";
 };
 
 export async function runCronIsolatedAgentTurn(params: {
@@ -177,22 +178,38 @@ export async function runCronIsolatedAgentTurn(params: {
   }
   const modelOverrideRaw =
     params.job.payload.kind === "agentTurn" ? params.job.payload.model : undefined;
-  if (modelOverrideRaw !== undefined) {
-    if (typeof modelOverrideRaw !== "string") {
-      return { status: "error", error: "invalid model: expected string" };
+  if (modelOverrideRaw !== undefined && typeof modelOverrideRaw !== "string") {
+    return { status: "error", error: "invalid model: expected string", errorKind: "invalid-model" };
+  }
+  const cronModelRaw =
+    typeof params.cfg.cron?.agentTurnModel === "string"
+      ? params.cfg.cron.agentTurnModel.trim()
+      : "";
+  const cronModel = cronModelRaw ? cronModelRaw : undefined;
+  const trimmedOverride = typeof modelOverrideRaw === "string" ? modelOverrideRaw.trim() : "";
+  const shouldUseCronDefault =
+    modelOverrideRaw === undefined || trimmedOverride === "" || trimmedOverride === "default";
+  const modelOverride = shouldUseCronDefault ? cronModel : trimmedOverride;
+  if (modelOverride) {
+    const isLiteralDefault = modelOverride.trim().toLowerCase() === "default";
+    if (isLiteralDefault) {
+      // Use configured primary so cron works even when gateway has no "default"→primary mapping.
+      provider = resolvedDefault.provider;
+      model = resolvedDefault.model;
+    } else {
+      const resolvedOverride = resolveAllowedModelRef({
+        cfg: cfgWithAgentDefaults,
+        catalog: await loadCatalog(),
+        raw: modelOverride,
+        defaultProvider: resolvedDefault.provider,
+        defaultModel: resolvedDefault.model,
+      });
+      if ("error" in resolvedOverride) {
+        return { status: "error", error: resolvedOverride.error, errorKind: "invalid-model" };
+      }
+      provider = resolvedOverride.ref.provider;
+      model = resolvedOverride.ref.model;
     }
-    const resolvedOverride = resolveAllowedModelRef({
-      cfg: cfgWithAgentDefaults,
-      catalog: await loadCatalog(),
-      raw: modelOverrideRaw,
-      defaultProvider: resolvedDefault.provider,
-      defaultModel: resolvedDefault.model,
-    });
-    if ("error" in resolvedOverride) {
-      return { status: "error", error: resolvedOverride.error };
-    }
-    provider = resolvedOverride.ref.provider;
-    model = resolvedOverride.ref.model;
   }
   const now = Date.now();
   const cronSession = resolveCronSession({

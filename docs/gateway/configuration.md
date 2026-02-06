@@ -3379,9 +3379,13 @@ Cron is a Gateway-owned scheduler for wakeups and scheduled jobs. See [Cron jobs
   cron: {
     enabled: true,
     maxConcurrentRuns: 2,
+    agentTurnModel: "ollama/llama3.1:8b",
   },
 }
 ```
+
+Use `cron.agentTurnModel` to set the default model for isolated cron `agentTurn` jobs when
+`payload.model` is omitted or set to `"default"`. Choose a cheap model for background work.
 
 ---
 

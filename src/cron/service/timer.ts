@@ -107,6 +107,7 @@ export async function executeJob(
   let outcome: {
     status: "ok" | "error" | "skipped";
     err?: string;
+    errKind?: "invalid-model";
     summary?: string;
     outputText?: string;
   } | null = null;
@@ -131,9 +132,20 @@ export async function executeJob(
 
     const shouldDelete =
       job.schedule.kind === "at" && outcome.status === "ok" && job.deleteAfterRun === true;
+    const invalidModel = outcome.status === "error" && outcome.errKind === "invalid-model";
 
     if (!shouldDelete) {
-      if (job.schedule.kind === "at" && outcome.status === "ok") {
+      if (invalidModel) {
+        job.enabled = false;
+        job.state.nextRunAtMs = undefined;
+        state.deps.log.warn(
+          {
+            jobId: job.id,
+            model: job.payload.kind === "agentTurn" ? job.payload.model : undefined,
+          },
+          "cron: invalid model; disabling job until fixed",
+        );
+      } else if (job.schedule.kind === "at" && outcome.status === "ok") {
         // One-shot job completed successfully; disable it.
         job.enabled = false;
         job.state.nextRunAtMs = undefined;
@@ -178,6 +190,7 @@ async function runJobCore(
 ): Promise<{
   status: "ok" | "error" | "skipped";
   err?: string;
+  errKind?: "invalid-model";
   summary?: string;
   outputText?: string;
 }> {
@@ -248,6 +261,7 @@ async function runJobCore(
         : {
             status: "error" as const,
             err: res.error ?? "cron job failed",
+            errKind: res.errorKind,
             summary: res.summary,
             outputText: res.outputText,
           };
