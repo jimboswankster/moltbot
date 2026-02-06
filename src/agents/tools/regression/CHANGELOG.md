@@ -72,4 +72,5 @@ and related integration tests. Each entry includes the commit hash and tests run
 - Require sessions_spawn label (commit: 4edff32ec)
 - Add A2A inbox fallback telemetry + tests for missing labels (commit: 5df132922)
 - Block inbox writes for unlabeled subagents without display key (commit: 36d10fa09)
+- Add deterministic ordering check for concurrent inbox events (commit: TBD)
   Tests: `npx vitest run src/agents/openclaw-tools.subagents.sessions-spawn-normalizes-allowlisted-agent-ids.test.ts`

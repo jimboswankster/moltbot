@@ -209,6 +209,39 @@ describe("A2A Inbox - Golden Master Prompt Snapshot", () => {
     expect(result.text).toContain("Codegen (agent:main:subagent:sub-001)");
     expect(result.text).toContain("Codegen (agent:main:subagent:sub-002)");
   });
+
+  it("orders concurrent events deterministically by runId when timestamps tie", () => {
+    const events: A2AInboxEvent[] = [
+      {
+        schemaVersion: 1,
+        createdAt: 10,
+        runId: "run-b",
+        sourceSessionKey: "agent:main:subagent:sub-002",
+        sourceDisplayKey: "Codegen",
+        replyText: "Second.",
+      },
+      {
+        schemaVersion: 1,
+        createdAt: 10,
+        runId: "run-a",
+        sourceSessionKey: "agent:main:subagent:sub-001",
+        sourceDisplayKey: "Codegen",
+        replyText: "First.",
+      },
+    ];
+
+    const result = buildA2AInboxPromptBlock({
+      events,
+      maxEvents: 3,
+      maxChars: 500,
+    });
+
+    const firstIndex = result.text.indexOf("runId: run-a");
+    const secondIndex = result.text.indexOf("runId: run-b");
+    expect(firstIndex).toBeGreaterThan(-1);
+    expect(secondIndex).toBeGreaterThan(-1);
+    expect(firstIndex).toBeLessThan(secondIndex);
+  });
 });
 
 describe("A2A Inbox - Bounds", () => {
