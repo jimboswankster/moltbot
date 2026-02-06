@@ -1,5 +1,6 @@
 import type { OpenClawConfig } from "../config/config.js";
 import type { FailoverReason } from "./pi-embedded-helpers.js";
+import { logWarn } from "../logger.js";
 import {
   ensureAuthProfileStore,
   isProfileInCooldown,
@@ -305,6 +306,13 @@ export async function runWithModelFallback<T>(params: {
         status: described.status,
         code: described.code,
       });
+      if (!params.onError) {
+        logWarn(
+          `model fallback attempt ${i + 1}/${candidates.length} failed for ` +
+            `${candidate.provider}/${candidate.model}: ${described.message}` +
+            (described.reason ? ` (${described.reason})` : ""),
+        );
+      }
       await params.onError?.({
         provider: candidate.provider,
         model: candidate.model,

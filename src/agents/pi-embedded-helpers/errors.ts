@@ -451,6 +451,8 @@ const ERROR_PATTERNS = {
     /invalid[_ ]?api[_ ]?key/,
     "incorrect api key",
     "invalid token",
+    "failed to extract accountid from token",
+    "accountid from token",
     "authentication",
     "re-authenticate",
     "oauth token refresh failed",
