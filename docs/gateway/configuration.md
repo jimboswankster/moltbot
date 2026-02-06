@@ -921,6 +921,10 @@ Agent-to-agent messaging is opt-in:
     agentToAgent: {
       enabled: false,
       allow: ["home", "work"],
+      // Optional: naming fallback behavior for A2A inbox display keys.
+      // "contract" (default) prefers session displayName/label/origin over provided displayKey.
+      // "legacy" prefers provided displayKey first.
+      namingMode: "contract",
     },
   },
 }
@@ -2773,6 +2777,7 @@ Fields:
   - If you only set legacy `session.idleMinutes` without any `reset`/`resetByType`, OpenClaw stays in idle-only mode for backward compatibility.
 - `heartbeatIdleMinutes`: optional idle override for heartbeat checks (daily reset still applies when enabled).
 - `agentToAgent.maxPingPongTurns`: max reply-back turns between requester/target (0–5, default 5).
+- `tools.agentToAgent.namingMode`: naming contract for A2A display keys (`contract` default, `legacy` prefers provided displayKey).
 - `sendPolicy.default`: `allow` or `deny` fallback when no rule matches.
 - `sendPolicy.rules[]`: match by `channel`, `chatType` (`direct|group|room`), or `keyPrefix` (e.g. `cron:`). First deny wins; otherwise allow.
 

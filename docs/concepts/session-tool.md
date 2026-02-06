@@ -97,7 +97,8 @@ Behavior:
 - After the primary run completes, OpenClaw runs a **reply-back loop**:
   - Round 2+ alternates between requester and target agents.
   - Reply exactly `REPLY_SKIP` to stop the ping‑pong.
-  - Max turns is `session.agentToAgent.maxPingPongTurns` (0–5, default 5).
+- Max turns is `session.agentToAgent.maxPingPongTurns` (0–5, default 5).
+- A2A inbox display naming follows `tools.agentToAgent.namingMode` (`contract` default, `legacy` prefers provided displayKey).
 - Once the loop ends, OpenClaw runs the **agent‑to‑agent announce step** (target agent only):
   - Reply exactly `ANNOUNCE_SKIP` to stay silent.
   - Any other reply is sent to the target channel.

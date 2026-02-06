@@ -183,6 +183,10 @@ multiple phone numbers without mixing sessions.
     agentToAgent: {
       enabled: false,
       allow: ["home", "work"],
+      // Optional: naming fallback behavior for A2A inbox display keys.
+      // "contract" (default) prefers session displayName/label/origin over provided displayKey.
+      // "legacy" prefers provided displayKey first.
+      namingMode: "contract",
     },
   },
 
