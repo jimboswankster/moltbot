@@ -151,8 +151,16 @@ export function createAgentEventHandler({
   logGateway,
 }: AgentEventHandlerOptions) {
   const verbose = isVerbose();
-  const emitChatDelta = (sessionKey: string, clientRunId: string, seq: number, text: string) => {
-    chatRunState.buffers.set(clientRunId, text);
+  const emitChatDelta = (
+    sessionKey: string,
+    clientRunId: string,
+    seq: number,
+    text: string,
+    deltaText?: string,
+  ) => {
+    const previous = chatRunState.buffers.get(clientRunId) ?? "";
+    const nextText = deltaText ? `${previous}${deltaText}` : text;
+    chatRunState.buffers.set(clientRunId, nextText);
     const now = Date.now();
     const last = chatRunState.deltaSentAt.get(clientRunId) ?? 0;
     if (now - last < 150) {
@@ -164,9 +172,10 @@ export function createAgentEventHandler({
       sessionKey,
       seq,
       state: "delta" as const,
+      deltaText,
       message: {
         role: "assistant",
-        content: [{ type: "text", text }],
+        content: [{ type: "text", text: nextText }],
         timestamp: now,
       },
     };
@@ -291,7 +300,7 @@ export function createAgentEventHandler({
     if (sessionKey) {
       nodeSendToSession(sessionKey, "agent", agentPayload);
       if (!isAborted && evt.stream === "assistant" && typeof evt.data?.text === "string") {
-        emitChatDelta(sessionKey, clientRunId, evt.seq, evt.data.text);
+        emitChatDelta(sessionKey, clientRunId, evt.seq, evt.data.text, evt.data?.delta);
       } else if (!isAborted && (lifecyclePhase === "end" || lifecyclePhase === "error")) {
         if (isActiveChatRun) {
           if (verbose && logGateway?.info) {

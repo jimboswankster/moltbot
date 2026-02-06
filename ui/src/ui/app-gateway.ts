@@ -63,6 +63,10 @@ type SessionDefaultsSnapshot = {
   scope?: string;
 };
 
+const CHAT_DEBUG_FLAG = "openclaw:chat:debug";
+const shouldDebugChat = () =>
+  typeof localStorage !== "undefined" && localStorage.getItem(CHAT_DEBUG_FLAG) === "1";
+
 function normalizeSessionKeyForDefaults(
   value: string | undefined,
   defaults: SessionDefaultsSnapshot,
@@ -229,6 +233,20 @@ function handleGatewayEventUnsafe(host: GatewayHost, evt: GatewayEventFrame) {
       const recentSend = typeof lastSendAt === "number" && Date.now() - lastSendAt < 120_000;
       const matchesRecentRun = recentSend && currentRun && lastSendRunId === currentRun;
       if ((matchesSession && runMatches) || matchesRunOnly || matchesRecentRun) {
+        if (shouldDebugChat()) {
+          console.debug("[chat][agent] event", {
+            stream: payload.stream,
+            runId: payload.runId,
+            sessionKey,
+            activeSession,
+            matchesSession,
+            runMatches,
+            matchesRunOnly,
+            matchesRecentRun,
+            hasText: typeof payload.data?.text === "string",
+            hasDelta: typeof payload.data?.delta === "string",
+          });
+        }
         if (!host.chatRunId) {
           host.chatRunId = payload.runId;
         }
@@ -272,6 +290,16 @@ function handleGatewayEventUnsafe(host: GatewayHost, evt: GatewayEventFrame) {
 
   if (evt.event === "chat") {
     const payload = evt.payload as ChatEventPayload | undefined;
+    if (shouldDebugChat()) {
+      console.debug("[chat][event]", {
+        hasPayload: Boolean(payload),
+        runId: payload?.runId,
+        sessionKey: payload?.sessionKey,
+        activeSession: host.sessionKey,
+        state: payload?.state,
+        hasDeltaText: typeof payload?.deltaText === "string",
+      });
+    }
     noteChatActivity(host as unknown as Parameters<typeof noteChatActivity>[0], payload);
     if (payload?.sessionKey) {
       setLastActiveSessionKey(

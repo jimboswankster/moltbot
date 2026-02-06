@@ -25,6 +25,7 @@ export type ChatEventPayload = {
   runId: string;
   sessionKey: string;
   state: "delta" | "final" | "aborted" | "error";
+  deltaText?: string;
   message?: unknown;
   errorMessage?: string;
 };
@@ -187,6 +188,12 @@ export function handleChatEvent(state: ChatState, payload?: ChatEventPayload) {
   }
 
   if (payload.state === "delta") {
+    const deltaText = payload.deltaText;
+    if (typeof deltaText === "string" && deltaText.length > 0) {
+      const current = state.chatStream ?? "";
+      state.chatStream = `${current}${deltaText}`;
+      return payload.state;
+    }
     const next = extractText(payload.message);
     if (typeof next === "string") {
       const current = state.chatStream ?? "";
