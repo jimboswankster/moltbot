@@ -52,6 +52,8 @@ and related integration tests. Each entry includes the commit hash and tests run
 ## 2026-02-06
 - Regression harness + gateway announce integration green run (commit: n/a)
   Tests: `npx vitest run src/agents/tools/regression/` `npx vitest run src/gateway/server-methods/send-a2a-announce.integration.test.ts`
+- Regression harness + gateway announce integration green run (post-ackMode) (commit: n/a)
+  Tests: `npx vitest run src/agents/tools/regression/` `npx vitest run src/gateway/server-methods/send-a2a-announce.integration.test.ts`
 - Add inbox ackMode clear coverage (commit: n/a)
   Tests: `npx vitest run src/agents/tools/regression/a2a-inbox.regression.test.ts`
 - Fix webchat streaming across provider retries by deferring chat finalization until dispatch completes (commit: f71ec0de2)
