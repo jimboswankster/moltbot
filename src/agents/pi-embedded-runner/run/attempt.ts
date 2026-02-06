@@ -2,6 +2,7 @@ import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { ImageContent } from "@mariozechner/pi-ai";
 import { streamSimple } from "@mariozechner/pi-ai";
 import { createAgentSession, SessionManager, SettingsManager } from "@mariozechner/pi-coding-agent";
+import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import type { EmbeddedRunAttemptParams, EmbeddedRunAttemptResult } from "./types.js";
@@ -769,6 +770,15 @@ export async function runEmbeddedAttempt(
             `Removed orphaned user message to prevent consecutive user turns. ` +
               `runId=${params.runId} sessionId=${params.sessionId}`,
           );
+        }
+        if (params.inputSource?.type) {
+          const promptHash = crypto.createHash("sha256").update(effectivePrompt).digest("hex");
+          sessionManager.appendCustomEntry("input-source", {
+            type: params.inputSource.type,
+            sessionKey: params.inputSource.sessionKey,
+            runId: params.inputSource.runId,
+            promptHash,
+          });
         }
 
         try {

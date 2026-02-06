@@ -14,6 +14,12 @@ export type AgentStreamParams = {
   maxTokens?: number;
 };
 
+export type AgentInputSource = {
+  type: string;
+  sessionKey?: string;
+  runId?: string;
+};
+
 export type AgentRunContext = {
   messageChannel?: string;
   accountId?: string;
@@ -74,4 +80,6 @@ export type AgentCommandOpts = {
   extraSystemPrompt?: string;
   /** Per-call stream param overrides (best-effort). */
   streamParams?: AgentStreamParams;
+  /** Optional metadata for tracing injected input sources (e.g. A2A). */
+  inputSource?: AgentInputSource;
 };

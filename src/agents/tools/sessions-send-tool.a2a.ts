@@ -79,6 +79,11 @@ export async function runSessionsSendA2AFlow(params: {
       extraSystemPrompt: announcePrompt,
       timeoutMs: params.announceTimeoutMs,
       lane: AGENT_LANE_NESTED,
+      inputSource: {
+        type: "a2a-announce",
+        sessionKey: params.requesterSessionKey,
+        runId: params.waitRunId,
+      },
     });
     const announceText = announceReply?.trim();
     if (announceTarget && announceText && !isAnnounceSkip(announceText)) {

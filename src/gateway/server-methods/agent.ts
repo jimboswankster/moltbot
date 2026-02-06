@@ -81,6 +81,11 @@ export const agentHandlers: GatewayRequestHandlers = {
       groupSpace?: string;
       lane?: string;
       extraSystemPrompt?: string;
+      inputSource?: {
+        type: string;
+        sessionKey?: string;
+        runId?: string;
+      };
       idempotencyKey: string;
       timeout?: number;
       label?: string;
@@ -96,6 +101,7 @@ export const agentHandlers: GatewayRequestHandlers = {
       channel: request.channel ?? "(not set)",
       deliver: request.deliver ?? false,
       hasExtraSystemPrompt: !!request.extraSystemPrompt,
+      inputSourceType: request.inputSource?.type ?? "(none)",
       messageLength: request.message?.length ?? 0,
     });
     const groupIdRaw = typeof request.groupId === "string" ? request.groupId.trim() : "";
@@ -407,6 +413,7 @@ export const agentHandlers: GatewayRequestHandlers = {
         runId,
         lane: request.lane,
         extraSystemPrompt: request.extraSystemPrompt,
+        inputSource: request.inputSource,
       },
       defaultRuntime,
       context.deps,

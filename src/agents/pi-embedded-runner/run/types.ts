@@ -1,7 +1,7 @@
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { Api, AssistantMessage, ImageContent, Model } from "@mariozechner/pi-ai";
 import type { ReasoningLevel, ThinkLevel, VerboseLevel } from "../../../auto-reply/thinking.js";
-import type { AgentStreamParams } from "../../../commands/agent/types.js";
+import type { AgentInputSource, AgentStreamParams } from "../../../commands/agent/types.js";
 import type { OpenClawConfig } from "../../../config/config.js";
 import type { SessionSystemPromptReport } from "../../../config/sessions/types.js";
 import type { ExecElevatedDefaults, ExecToolDefaults } from "../../bash-tools.js";
@@ -80,6 +80,7 @@ export type EmbeddedRunAttemptParams = {
   onAgentEvent?: (evt: { stream: string; data: Record<string, unknown> }) => void;
   extraSystemPrompt?: string;
   streamParams?: AgentStreamParams;
+  inputSource?: AgentInputSource;
   ownerNumbers?: string[];
   enforceFinalTag?: boolean;
 };

@@ -119,7 +119,16 @@ export async function runEmbeddedPiAgent(
         params.config,
       );
       if (!model) {
-        throw new Error(error ?? `Unknown model: ${provider}/${modelId}`);
+        const message = error ?? `Unknown model: ${provider}/${modelId}`;
+        if (fallbackConfigured) {
+          throw new FailoverError(message, {
+            reason: "unknown",
+            provider,
+            model: modelId,
+            status: resolveFailoverStatus("unknown"),
+          });
+        }
+        throw new Error(message);
       }
 
       const ctxInfo = resolveContextWindowInfo({
@@ -375,6 +384,7 @@ export async function runEmbeddedPiAgent(
             onAgentEvent: params.onAgentEvent,
             extraSystemPrompt: params.extraSystemPrompt,
             streamParams: params.streamParams,
+            inputSource: params.inputSource,
             ownerNumbers: params.ownerNumbers,
             enforceFinalTag: params.enforceFinalTag,
           });
