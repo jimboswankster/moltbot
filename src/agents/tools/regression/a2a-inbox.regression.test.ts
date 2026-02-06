@@ -867,6 +867,55 @@ describe("A2A Inbox - Audit Logging", () => {
   });
 });
 
+describe("A2A Inbox - Ack + Clear (feature flag)", () => {
+  it("clears delivered events when inboxAckMode=clear", async () => {
+    configOverride = {
+      session: {
+        mainKey: "main",
+        scope: "per-sender",
+      },
+      tools: {
+        agentToAgent: {
+          inboxAckMode: "clear",
+        },
+      },
+    } as OpenClawConfig;
+
+    const { storePath, sessionKey, cfg } = await setupSessionStore();
+    const cfgWithAck = {
+      ...cfg,
+      tools: {
+        agentToAgent: {
+          inboxAckMode: "clear",
+        },
+      },
+    } as OpenClawConfig;
+
+    await recordA2AInboxEvent({
+      cfg: cfgWithAck,
+      sessionKey,
+      sourceSessionKey: "agent:main:subagent:sub-001",
+      sourceDisplayKey: "Docs Writer",
+      runId: "run-ack-1",
+      replyText: "Deliverable complete.",
+      now: 1738737600000,
+    });
+
+    const injected = await injectA2AInboxPrependContext({
+      cfg: cfgWithAck,
+      sessionKey,
+      runId: "run-main-ack",
+      now: 1738737601000,
+    });
+
+    expect(injected?.prependContext).toContain(TRANSITIONAL_A2A_INBOX_TAG);
+
+    const store = loadSessionStore(storePath, { skipCache: true });
+    const events = store[sessionKey]?.a2aInbox?.events ?? [];
+    expect(events).toHaveLength(0);
+  });
+});
+
 describe("A2A Inbox - Policy Enforcement", () => {
   it("blocks inbox writes when agentToAgent allowlist denies", async () => {
     const { dir, cfg, sessionKey, storePath } = await setupSessionStore();

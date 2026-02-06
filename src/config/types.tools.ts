@@ -423,6 +423,8 @@ export type ToolsConfig = {
     allow?: string[];
     /** Delivery mode for A2A results (default: "inject"). */
     deliveryMode?: "inject" | "inbox";
+    /** Inbox ack mode: "mark" keeps delivered events; "clear" removes them after injection. */
+    inboxAckMode?: "mark" | "clear";
     /** Naming contract mode for A2A display keys (default: "contract"). */
     namingMode?: "contract" | "legacy";
   };

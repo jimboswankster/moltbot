@@ -38,9 +38,14 @@ type A2AInboxStoreTarget = {
 };
 
 type A2ANamingMode = "contract" | "legacy";
+type A2AInboxAckMode = "mark" | "clear";
 
 function resolveA2ANamingMode(cfg: OpenClawConfig): A2ANamingMode {
   return cfg.tools?.agentToAgent?.namingMode ?? "contract";
+}
+
+function resolveA2AInboxAckMode(cfg: OpenClawConfig): A2AInboxAckMode {
+  return cfg.tools?.agentToAgent?.inboxAckMode ?? "mark";
 }
 
 function resolveDisplayKeyFromEntry(entry: {
@@ -384,17 +389,21 @@ export async function injectA2AInboxPrependContext(params: {
       return undefined;
     }
 
+    const ackMode = resolveA2AInboxAckMode(params.cfg);
     await updateSessionStore(storePath, (mutable) => {
       const current = mutable[canonicalKey];
       if (!current?.a2aInbox?.events) {
         return;
       }
-      const nextEvents = current.a2aInbox.events.map((event) => {
+      let nextEvents = current.a2aInbox.events.map((event) => {
         if (!block.includedRunIds.includes(event.runId)) {
           return event;
         }
         return { ...event, deliveredAt: now, deliveredRunId: params.runId };
       });
+      if (ackMode === "clear") {
+        nextEvents = nextEvents.filter((event) => !block.includedRunIds.includes(event.runId));
+      }
       mutable[canonicalKey] = mergeSessionEntry(current, {
         updatedAt: now,
         a2aInbox: {
@@ -406,6 +415,13 @@ export async function injectA2AInboxPrependContext(params: {
     const sourceSessionKey = pending[0]?.sourceSessionKey;
     const eventCount = block.includedRunIds.length;
     if (eventCount > 0) {
+      log.info("a2a_inbox_acked", {
+        runId: params.runId,
+        sessionKey: canonicalKey,
+        sourceSessionKey,
+        eventCount,
+        ackMode,
+      });
       log.info("a2a_inbox_injected", {
         runId: params.runId,
         sessionKey: canonicalKey,

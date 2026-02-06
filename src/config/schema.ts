@@ -686,6 +686,8 @@ const FIELD_HELP: Record<string, string> = {
     "Max reply-back turns between requester and target (0–5).",
   "tools.agentToAgent.deliveryMode":
     'A2A delivery mode: "inject" (current ping-pong + announce) or "inbox" (record inbox only).',
+  "tools.agentToAgent.inboxAckMode":
+    'A2A inbox ack mode: "mark" keeps delivered events; "clear" removes them after injection.',
   "tools.agentToAgent.namingMode":
     'A2A naming contract: "contract" (current) or "legacy" (prior fallback order).',
   "channels.telegram.customCommands":
