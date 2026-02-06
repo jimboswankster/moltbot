@@ -237,11 +237,13 @@ export async function statusCommand(
   const a2aValue = (() => {
     const a2aSummary = summary.a2a;
     if (!a2aSummary || a2aSummary.inboxDisplayFallbackCount === 0) {
-      return muted("ok");
+      return muted(`ok · ack ${a2aSummary?.inboxAckMode ?? "mark"}`);
     }
     const ids = a2aSummary.inboxDisplayFallback.map((entry) => entry.id).join(", ");
     const detail = ids ? ` · ${shortenText(ids, 48)}` : "";
-    return warn(`${a2aSummary.inboxDisplayFallbackCount} fallback${detail}`);
+    return warn(
+      `${a2aSummary.inboxDisplayFallbackCount} fallback${detail} · ack ${a2aSummary.inboxAckMode}`,
+    );
   })();
 
   const agentsValue = (() => {

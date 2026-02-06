@@ -187,6 +187,9 @@ multiple phone numbers without mixing sessions.
       // "contract" (default) prefers session displayName/label/origin over provided displayKey.
       // "legacy" prefers provided displayKey first.
       namingMode: "contract",
+      // Optional: inbox ack mode for delivered events.
+      // "mark" (default) keeps delivered events; "clear" removes them after injection.
+      inboxAckMode: "mark",
     },
   },
 

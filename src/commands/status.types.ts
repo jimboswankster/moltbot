@@ -51,6 +51,7 @@ export type StatusSummary = {
       lastAt: number;
       occurrences: number;
     }>;
+    inboxAckMode: "mark" | "clear";
   };
   linkChannel?: {
     id: ChannelId;

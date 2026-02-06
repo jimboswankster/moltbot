@@ -925,6 +925,9 @@ Agent-to-agent messaging is opt-in:
       // "contract" (default) prefers session displayName/label/origin over provided displayKey.
       // "legacy" prefers provided displayKey first.
       namingMode: "contract",
+      // Optional: inbox ack mode for delivered events.
+      // "mark" (default) keeps delivered events; "clear" removes them after injection.
+      inboxAckMode: "mark",
     },
   },
 }
@@ -2778,6 +2781,7 @@ Fields:
 - `heartbeatIdleMinutes`: optional idle override for heartbeat checks (daily reset still applies when enabled).
 - `agentToAgent.maxPingPongTurns`: max reply-back turns between requester/target (0–5, default 5).
 - `tools.agentToAgent.namingMode`: naming contract for A2A display keys (`contract` default, `legacy` prefers provided displayKey).
+- `tools.agentToAgent.inboxAckMode`: inbox delivery ack mode (`mark` default keeps delivered events, `clear` removes them after injection).
 - `sendPolicy.default`: `allow` or `deny` fallback when no rule matches.
 - `sendPolicy.rules[]`: match by `channel`, `chatType` (`direct|group|room`), or `keyPrefix` (e.g. `cron:`). First deny wins; otherwise allow.
 
