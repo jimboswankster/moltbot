@@ -22,7 +22,7 @@ vi.mock("../config/config.js", async (importOriginal) => {
   };
 });
 
-import { sessionsCommand } from "./sessions.js";
+import { planNamingMigration, sessionsCommand } from "./sessions.js";
 
 const makeRuntime = () => {
   const logs: string[] = [];
@@ -102,5 +102,54 @@ describe("sessionsCommand", () => {
     expect(row).toContain("-".padEnd(20));
     expect(row).toContain("think:high");
     expect(row).toContain("5m ago");
+  });
+});
+
+describe("planNamingMigration", () => {
+  it("selects displayName/origin.label and skips collisions", () => {
+    const longLabel = "x".repeat(70);
+    const store = {
+      "agent:main:subagent:one": {
+        sessionId: "one",
+        displayName: "Worker A",
+      },
+      "agent:main:subagent:two": {
+        sessionId: "two",
+        origin: { label: "Worker B" },
+      },
+      "agent:main:subagent:three": {
+        sessionId: "three",
+        label: "Worker C",
+      },
+      "agent:main:subagent:four": {
+        sessionId: "four",
+        displayName: "Worker A",
+      },
+      "agent:main:subagent:five": {
+        sessionId: "five",
+        displayName: " ",
+      },
+      "agent:main:subagent:six": {
+        sessionId: "six",
+        displayName: longLabel,
+      },
+    };
+
+    const plan = planNamingMigration(store);
+
+    expect(plan.updates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ key: "agent:main:subagent:one", label: "Worker A" }),
+        expect.objectContaining({ key: "agent:main:subagent:two", label: "Worker B" }),
+      ]),
+    );
+    expect(plan.skipped).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ key: "agent:main:subagent:three", reason: "already-labeled" }),
+        expect.objectContaining({ key: "agent:main:subagent:four", reason: "collision" }),
+        expect.objectContaining({ key: "agent:main:subagent:five", reason: "missing-source" }),
+        expect.objectContaining({ key: "agent:main:subagent:six", reason: "invalid-label" }),
+      ]),
+    );
   });
 });
