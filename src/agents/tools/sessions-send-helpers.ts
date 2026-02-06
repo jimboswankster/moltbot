@@ -111,6 +111,8 @@ export function buildAgentToAgentReplyContext(params: {
       : undefined,
     `Agent 2 (target) session: ${params.targetSessionKey}.`,
     params.targetChannel ? `Agent 2 (target) channel: ${params.targetChannel}.` : undefined,
+    "",
+    "CRITICAL: This is an A2A reply step. Do NOT use tools (no sessions_send, sessions_spawn, file operations, etc). Reply with text only.",
     `If you want to stop the ping-pong, reply exactly "${REPLY_SKIP_TOKEN}".`,
   ].filter(Boolean);
   return lines.join("\n");
@@ -140,6 +142,8 @@ export function buildAgentToAgentAnnounceContext(params: {
       ? `Round 1 reply: ${params.roundOneReply}`
       : "Round 1 reply: (not available).",
     params.latestReply ? `Latest reply: ${params.latestReply}` : "Latest reply: (not available).",
+    "",
+    "CRITICAL: This is an A2A announce step. Do NOT use tools (no sessions_send, sessions_spawn, file operations, etc). Reply with text only.",
     `If you want to remain silent, reply exactly "${ANNOUNCE_SKIP_TOKEN}".`,
     "Any other reply will be posted to the target channel.",
     "After this reply, the agent-to-agent conversation is over.",
