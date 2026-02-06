@@ -50,6 +50,8 @@ and related integration tests. Each entry includes the commit hash and tests run
   Tests: `npx vitest run src/agents/tools/regression/ src/gateway/server-methods/send-a2a-announce.integration.test.ts`
 
 ## 2026-02-06
+- Regression harness + gateway announce integration green run (commit: n/a)
+  Tests: `npx vitest run src/agents/tools/regression/` `npx vitest run src/gateway/server-methods/send-a2a-announce.integration.test.ts`
 - Fix webchat streaming across provider retries by deferring chat finalization until dispatch completes (commit: f71ec0de2)
   Tests: none
   Notes: Agent lifecycle `end` could fire before fallback retries finished, clearing chat run linkage and dropping streaming in Control UI. Now gateway keeps chat run active until the chat dispatch completes, emits final once, and cleans up run context at the end. Verbose logging added to correlate run/session mapping during investigation.
