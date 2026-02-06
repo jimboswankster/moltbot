@@ -67,5 +67,5 @@ and related integration tests. Each entry includes the commit hash and tests run
   Tests: `npx vitest run src/agents/tools/regression/a2a-inbox.regression.test.ts`
 - Add sessions_spawn → inbox naming propagation coverage (commit: b0f4cea95)
   Tests: `npx vitest run src/agents/tools/regression/a2a-inbox.regression.test.ts`
-- Add duplicate spawn label disambiguation coverage (commit: pending)
+- Add duplicate spawn label disambiguation coverage (commit: 8f763d6db)
   Tests: `npx vitest run src/agents/tools/regression/a2a-inbox.regression.test.ts`
