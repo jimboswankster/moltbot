@@ -458,14 +458,14 @@ describe("A2A Inbox - Audit Logging", () => {
   });
 
   it("prefers provided displayKey when namingMode=legacy", async () => {
-    const { dir, sessionKey, storePath } = await setupSessionStore();
+    const { dir, cfg, sessionKey, storePath } = await setupSessionStore();
     const previousConfig = configOverride;
     configOverride = {
-      ...previousConfig,
+      ...cfg,
       tools: {
-        ...previousConfig.tools,
+        ...cfg.tools,
         agentToAgent: {
-          ...previousConfig.tools?.agentToAgent,
+          ...cfg.tools?.agentToAgent,
           enabled: true,
           namingMode: "legacy",
         },
