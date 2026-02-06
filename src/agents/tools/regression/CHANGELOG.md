@@ -69,5 +69,5 @@ and related integration tests. Each entry includes the commit hash and tests run
   Tests: `npx vitest run src/agents/tools/regression/a2a-inbox.regression.test.ts`
 - Add duplicate spawn label disambiguation coverage (commit: 8f763d6db)
   Tests: `npx vitest run src/agents/tools/regression/a2a-inbox.regression.test.ts`
-- Require sessions_spawn label (commit: pending)
+- Require sessions_spawn label (commit: 4edff32ec)
   Tests: `npx vitest run src/agents/openclaw-tools.subagents.sessions-spawn-normalizes-allowlisted-agent-ids.test.ts`
