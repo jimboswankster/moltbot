@@ -1235,6 +1235,45 @@ describe("A2A Inbox - Fail Closed Clear Strategy", () => {
   });
 });
 
+describe("A2A Inbox - Atomic Ack/Clear", () => {
+  it("does not mutate inbox when ack update fails", async () => {
+    const { dir, cfg, sessionKey, storePath } = await setupSessionStore();
+    const updateSpy = vi.spyOn(sessions, "updateSessionStore");
+    try {
+      await recordA2AInboxEvent({
+        cfg,
+        sessionKey,
+        sourceSessionKey: "agent:main:subagent:sub-001",
+        sourceDisplayKey: "Docs Writer",
+        runId: "run-atomic-1",
+        replyText: "Atomic delivery",
+        now: 1738737600000,
+      });
+
+      updateSpy.mockImplementationOnce(async () => {
+        throw new Error("simulated update failure");
+      });
+
+      const injected = await injectA2AInboxPrependContext({
+        cfg,
+        sessionKey,
+        runId: "run-main-atomic",
+        now: 1738737601000,
+      });
+
+      expect(injected).toBeUndefined();
+
+      const store = loadSessionStore(storePath, { skipCache: true });
+      const events = store[sessionKey]?.a2aInbox?.events ?? [];
+      expect(events).toHaveLength(1);
+      expect(events[0]?.deliveredAt).toBeUndefined();
+    } finally {
+      updateSpy.mockRestore();
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("A2A Inbox - Failure Visibility", () => {
   it("logs a2a_inbox_error on write failures", async () => {
     const { dir, cfg, sessionKey, storePath } = await setupSessionStore();
