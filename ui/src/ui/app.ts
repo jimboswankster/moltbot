@@ -140,6 +140,8 @@ export class OpenClawApp extends LitElement {
   @state() chatStream: string | null = null;
   @state() chatStreamStartedAt: number | null = null;
   @state() chatRunId: string | null = null;
+  @state() lastChatSendAt: number | null = null;
+  @state() lastChatSendRunId: string | null = null;
   pendingChatResync = false;
   chatResyncTimer: number | null = null;
   @state() compactionStatus: import("./app-tool-stream").CompactionStatus | null = null;

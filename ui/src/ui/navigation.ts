@@ -6,12 +6,13 @@ export const TAB_GROUPS = [
     label: "Control",
     tabs: ["overview", "channels", "instances", "sessions", "cron"],
   },
-  { label: "Agent", tabs: ["agents", "skills", "nodes"] },
+  { label: "Agent", tabs: ["agents", "activity-hud", "skills", "nodes"] },
   { label: "Settings", tabs: ["config", "debug", "logs"] },
 ] as const;
 
 export type Tab =
   | "agents"
+  | "activity-hud"
   | "overview"
   | "channels"
   | "instances"
@@ -26,6 +27,7 @@ export type Tab =
 
 const TAB_PATHS: Record<Tab, string> = {
   agents: "/agents",
+  "activity-hud": "/activity-hud",
   overview: "/overview",
   channels: "/channels",
   instances: "/instances",
@@ -124,6 +126,8 @@ export function iconForTab(tab: Tab): IconName {
   switch (tab) {
     case "agents":
       return "folder";
+    case "activity-hud":
+      return "radio";
     case "chat":
       return "messageSquare";
     case "overview":
@@ -155,6 +159,8 @@ export function titleForTab(tab: Tab) {
   switch (tab) {
     case "agents":
       return "Agents";
+    case "activity-hud":
+      return "Agent Activity HUD";
     case "overview":
       return "Overview";
     case "channels":
@@ -186,6 +192,8 @@ export function subtitleForTab(tab: Tab) {
   switch (tab) {
     case "agents":
       return "Manage agent workspaces, tools, and identities.";
+    case "activity-hud":
+      return "Prototype HUD for agent activity signals.";
     case "overview":
       return "Gateway status, entry points, and a fast health read.";
     case "channels":

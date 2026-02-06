@@ -130,6 +130,7 @@ describe("tabFromPath", () => {
     expect(tabFromPath("/chat")).toBe("chat");
     expect(tabFromPath("/overview")).toBe("overview");
     expect(tabFromPath("/sessions")).toBe("sessions");
+    expect(tabFromPath("/activity-hud")).toBe("activity-hud");
   });
 
   it("returns chat for root path", () => {

@@ -215,10 +215,58 @@ function handleGatewayEventUnsafe(host: GatewayHost, evt: GatewayEventFrame) {
     if (host.onboarding) {
       return;
     }
+    const payload = evt.payload as AgentEventPayload | undefined;
+    if (payload) {
+      const sessionKey = typeof payload.sessionKey === "string" ? payload.sessionKey : "";
+      const activeSession = host.sessionKey;
+      const matchesSession = sessionKey ? sessionKey === activeSession : false;
+      const currentRun = host.chatRunId;
+      const runMatches = !currentRun || currentRun === payload.runId;
+      const matchesRunOnly = !sessionKey && currentRun === payload.runId;
+      const lastSendAt = (host as unknown as { lastChatSendAt?: number | null }).lastChatSendAt;
+      const lastSendRunId = (host as unknown as { lastChatSendRunId?: string | null })
+        .lastChatSendRunId;
+      const recentSend = typeof lastSendAt === "number" && Date.now() - lastSendAt < 120_000;
+      const matchesRecentRun = recentSend && currentRun && lastSendRunId === currentRun;
+      if ((matchesSession && runMatches) || matchesRunOnly || matchesRecentRun) {
+        if (!host.chatRunId) {
+          host.chatRunId = payload.runId;
+        }
+        const startedAt = (host as unknown as { chatStreamStartedAt: number | null })
+          .chatStreamStartedAt;
+        if (!startedAt) {
+          (host as unknown as { chatStreamStartedAt: number | null }).chatStreamStartedAt =
+            typeof payload.ts === "number" ? payload.ts : Date.now();
+        }
+        if (payload.stream === "tool" || payload.stream === "lifecycle") {
+          if ((host as unknown as { chatStream: string | null }).chatStream === null) {
+            (host as unknown as { chatStream: string | null }).chatStream = "";
+          }
+        }
+        if (payload.stream === "assistant" && typeof payload.data?.text === "string") {
+          (host as unknown as { chatStream: string | null }).chatStream = payload.data.text;
+        } else if (payload.stream === "lifecycle" && payload.data?.phase === "end") {
+          if (host.chatRunId === payload.runId) {
+            host.chatRunId = null;
+            (host as unknown as { chatStream: string | null }).chatStream = null;
+            (host as unknown as { chatStreamStartedAt: number | null }).chatStreamStartedAt = null;
+            void loadChatHistory(host as unknown as OpenClawApp);
+          }
+        } else if (payload.stream === "lifecycle" && payload.data?.phase === "error") {
+          if (host.chatRunId === payload.runId) {
+            host.chatRunId = null;
+            (host as unknown as { chatStream: string | null }).chatStream = null;
+            (host as unknown as { chatStreamStartedAt: number | null }).chatStreamStartedAt = null;
+            void loadChatHistory(host as unknown as OpenClawApp);
+          }
+        }
+      }
+    }
     handleAgentEvent(
       host as unknown as Parameters<typeof handleAgentEvent>[0],
-      evt.payload as AgentEventPayload | undefined,
+      payload,
     );
+    (host as unknown as OpenClawApp).requestUpdate();
     return;
   }
 
@@ -248,6 +296,7 @@ function handleGatewayEventUnsafe(host: GatewayHost, evt: GatewayEventFrame) {
     if (state === "final") {
       void loadChatHistory(host as unknown as OpenClawApp);
     }
+    (host as unknown as OpenClawApp).requestUpdate();
     return;
   }
 

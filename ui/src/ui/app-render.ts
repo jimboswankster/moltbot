@@ -54,6 +54,7 @@ import { TAB_GROUPS, subtitleForTab, titleForTab } from "./navigation";
 import { renderAgents } from "./views/agents";
 import { renderChannels } from "./views/channels";
 import { renderChat } from "./views/chat";
+import { renderAgentActivityHud } from "./views/agent-activity-hud";
 import { renderConfig } from "./views/config";
 import { renderCron } from "./views/cron";
 import { renderDebug } from "./views/debug";
@@ -863,6 +864,19 @@ export function renderApp(state: AppViewState) {
                 onSplitRatioChange: (ratio: number) => state.handleSplitRatioChange(ratio),
                 assistantName: state.assistantName,
                 assistantAvatar: state.assistantAvatar,
+              })
+            : nothing
+        }
+
+        ${
+          state.tab === "activity-hud"
+            ? renderAgentActivityHud({
+                entries: state.activityEntries,
+                sessions: state.sessionsResult,
+                hello: state.hello,
+                connected: state.connected,
+                dismissedSessionKeys: state.activityDismissedSessionKeys,
+                onDismissSession: (key) => state.handleDismissActivitySession(key),
               })
             : nothing
         }

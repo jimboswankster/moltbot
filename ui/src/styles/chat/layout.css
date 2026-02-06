@@ -312,6 +312,32 @@
   gap: 8px;
 }
 
+.chat-new-messages {
+  position: absolute;
+  left: 50%;
+  bottom: 88px;
+  transform: translateX(-50%);
+  z-index: 30;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+  cursor: pointer;
+  max-width: calc(100% - 24px);
+  white-space: nowrap;
+}
+
+.chat-new-messages:hover {
+  border-color: var(--accent);
+}
+
 .chat-compose .chat-compose__actions .btn {
   padding: 0 16px;
   font-size: 13px;

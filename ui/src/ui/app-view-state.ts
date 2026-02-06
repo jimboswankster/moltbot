@@ -28,6 +28,7 @@ import type {
 } from "./types";
 import type { ChatAttachment, ChatQueueItem, CronFormState } from "./ui-types";
 import type { NostrProfileFormState } from "./views/channels.nostr-profile-form";
+import type { AgentActivity } from "./activity-hud-state";
 
 export type AppViewState = {
   settings: UiSettings;
@@ -62,6 +63,7 @@ export type AppViewState = {
   nodesLoading: boolean;
   nodes: Array<Record<string, unknown>>;
   chatNewMessagesBelow: boolean;
+  activityEntries: AgentActivity[];
   scrollToBottom: () => void;
   devicesLoading: boolean;
   devicesError: string | null;

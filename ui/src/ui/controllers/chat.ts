@@ -16,6 +16,8 @@ export type ChatState = {
   chatRunId: string | null;
   chatStream: string | null;
   chatStreamStartedAt: number | null;
+  lastChatSendAt?: number | null;
+  lastChatSendRunId?: string | null;
   lastError: string | null;
 };
 
@@ -101,6 +103,8 @@ export async function sendChatMessage(
   state.chatRunId = runId;
   state.chatStream = "";
   state.chatStreamStartedAt = now;
+  state.lastChatSendAt = now;
+  state.lastChatSendRunId = runId;
 
   // Convert attachments to API format
   const apiAttachments = hasAttachments

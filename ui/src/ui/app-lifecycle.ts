@@ -1,4 +1,6 @@
+import type { OpenClawApp } from "./app";
 import type { Tab } from "./navigation";
+import { syncSubagentsFromSessionsList } from "./activity-hud-state";
 import { connectGateway } from "./app-gateway";
 import {
   startLogsPolling,
@@ -7,7 +9,10 @@ import {
   stopNodesPolling,
   startDebugPolling,
   stopDebugPolling,
+  startActivityHudSessionsPolling,
+  stopActivityHudSessionsPolling,
 } from "./app-polling";
+import { loadSessions } from "./controllers/sessions";
 import { observeTopbar, scheduleChatScroll, scheduleLogsScroll } from "./app-scroll";
 import {
   applySettingsFromUrl,
@@ -30,6 +35,8 @@ type LifecycleHost = {
   logsAutoFollow: boolean;
   logsAtBottom: boolean;
   logsEntries: unknown[];
+  startActivityTicker: () => void;
+  stopActivityTicker: () => void;
   popStateHandler: () => void;
   topbarObserver: ResizeObserver | null;
 };
@@ -42,6 +49,7 @@ export function handleConnected(host: LifecycleHost) {
   attachThemeListener(host as unknown as Parameters<typeof attachThemeListener>[0]);
   window.addEventListener("popstate", host.popStateHandler);
   void host.loadSlashCommands();
+  host.startActivityTicker();
   connectGateway(host as unknown as Parameters<typeof connectGateway>[0]);
   startNodesPolling(host as unknown as Parameters<typeof startNodesPolling>[0]);
   if (host.tab === "logs") {
@@ -49,6 +57,9 @@ export function handleConnected(host: LifecycleHost) {
   }
   if (host.tab === "debug") {
     startDebugPolling(host as unknown as Parameters<typeof startDebugPolling>[0]);
+  }
+  if (host.tab === "activity-hud") {
+    startActivityHudSessionsPolling(host as unknown as Parameters<typeof startActivityHudSessionsPolling>[0]);
   }
 }
 
@@ -61,6 +72,8 @@ export function handleDisconnected(host: LifecycleHost) {
   stopNodesPolling(host as unknown as Parameters<typeof stopNodesPolling>[0]);
   stopLogsPolling(host as unknown as Parameters<typeof stopLogsPolling>[0]);
   stopDebugPolling(host as unknown as Parameters<typeof stopDebugPolling>[0]);
+  stopActivityHudSessionsPolling(host as unknown as Parameters<typeof stopActivityHudSessionsPolling>[0]);
+  host.stopActivityTicker();
   detachThemeListener(host as unknown as Parameters<typeof detachThemeListener>[0]);
   host.topbarObserver?.disconnect();
   host.topbarObserver = null;
@@ -92,6 +105,20 @@ export function handleUpdated(host: LifecycleHost, changed: Map<PropertyKey, unk
         host as unknown as Parameters<typeof scheduleLogsScroll>[0],
         changed.has("tab") || changed.has("logsAutoFollow"),
       );
+    }
+  }
+  if (changed.has("tab")) {
+    if (host.tab === "activity-hud") {
+      const app = host as unknown as OpenClawApp;
+      startActivityHudSessionsPolling(app);
+      if (app.connected && app.client) {
+        void loadSessions(app, { limit: 50, activeMinutes: 60 }).then(() => {
+          syncSubagentsFromSessionsList(app as unknown as Parameters<typeof syncSubagentsFromSessionsList>[0]);
+          app.requestUpdate();
+        });
+      }
+    } else {
+      stopActivityHudSessionsPolling(host as unknown as Parameters<typeof stopActivityHudSessionsPolling>[0]);
     }
   }
 }
