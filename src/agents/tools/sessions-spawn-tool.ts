@@ -27,7 +27,7 @@ const MODEL_ROLES = ["orchestrator", "primary", "premium"] as const;
 
 const SessionsSpawnToolSchema = Type.Object({
   task: Type.String(),
-  label: Type.Optional(Type.String()),
+  label: Type.String(),
   agentId: Type.Optional(Type.String()),
   model: Type.Optional(Type.String()),
   modelRole: Type.Optional(optionalStringEnum(MODEL_ROLES)),

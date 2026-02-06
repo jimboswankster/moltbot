@@ -147,7 +147,7 @@ Spawn a sub-agent run in an isolated session and announce the result back to the
 Parameters:
 
 - `task` (required)
-- `label?` (optional; used for logs/UI)
+ - `label` (required; used for logs/UI and sub-agent identity)
 - `agentId?` (optional; spawn under another agent id if allowed)
 - `model?` (optional; overrides the sub-agent model; invalid values error)
 - `runTimeoutSeconds?` (default 0; when set, aborts the sub-agent run after N seconds)

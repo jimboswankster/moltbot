@@ -438,7 +438,7 @@ OpenClaw 提供**一等智能体工具**，涵盖 browser、canvas、nodes 和 c
 - `sessions_list`：`kinds?`、`limit?`、`activeMinutes?`、`messageLimit?`（0 = 无）
 - `sessions_history`：`sessionKey`（或 `sessionId`）、`limit?`、`includeTools?`
 - `sessions_send`：`sessionKey`（或 `sessionId`）、`message`、`timeoutSeconds?`（0 = 即发即忘）
-- `sessions_spawn`：`task`、`label?`、`agentId?`、`model?`、`runTimeoutSeconds?`、`cleanup?`
+- `sessions_spawn`：`task`、`label`、`agentId?`、`model?`、`runTimeoutSeconds?`、`cleanup?`
 - `session_status`：`sessionKey?`（默认当前；接受 `sessionId`）、`model?`（`default` 清除覆盖）
 
 说明：
@@ -447,7 +447,7 @@ OpenClaw 提供**一等智能体工具**，涵盖 browser、canvas、nodes 和 c
 - `messageLimit > 0` 获取每个会话的最后 N 条消息（工具消息被过滤）。
 - 当 `timeoutSeconds > 0` 时，`sessions_send` 会等待最终完成。
 - 投递/通告在完成后发生，且为尽力而为；`status: "ok"` 确认智能体运行已完成，而非通告已送达。
-- `sessions_spawn` 启动子智能体运行并向请求者聊天发送通告回复。
+- `sessions_spawn` 启动子智能体运行并向请求者聊天发送通告回复（必须提供 label）。
 - `sessions_spawn` 是非阻塞的，立即返回 `status: "accepted"`。
 - `sessions_send` 运行回复往返乒乓（回复 `REPLY_SKIP` 停止；最大轮次通过 `session.agentToAgent.maxPingPongTurns` 设置，0–5）。
 - 乒乓结束后，目标智能体运行一个**通告步骤**；回复 `ANNOUNCE_SKIP` 可抑制通告。
