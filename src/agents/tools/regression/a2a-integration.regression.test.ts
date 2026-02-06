@@ -329,6 +329,9 @@ describe("A2A Integration - Tool Restriction Enforcement", () => {
 
       expect(injected?.prependContext).toContain("TRANSITIONAL_A2A_INBOX");
       expect(injected?.prependContext).toContain("Inbox-only reply.");
+      expect(injected?.prependContext).toMatchInlineSnapshot(
+        `"TRANSITIONAL_A2A_INBOX\n- source: subagent:sub-001 (agent:main:subagent:sub-001)\n  runId: run-123\n  text: Inbox-only reply."`,
+      );
     });
   });
 
