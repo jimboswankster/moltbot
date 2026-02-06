@@ -82,4 +82,6 @@ and related integration tests. Each entry includes the commit hash and tests run
 - Enqueue system event when A2A missing-label guard blocks (commit: 0fe34d432)
   Tests: `npx vitest run src/agents/tools/regression/a2a-inbox.regression.test.ts`
 - Add namingMode feature flag + composite naming snapshot (commit: 50ed2e3e3)
-  Tests: not run (snapshot added to `a2a-inbox.regression.test.ts`)
+  Tests: `npx vitest run src/agents/tools/regression/a2a-inbox.regression.test.ts`
+- Fix legacy namingMode test config to use temp session store (commit: 00e971b90)
+  Tests: `npx vitest run src/agents/tools/regression/a2a-inbox.regression.test.ts`
