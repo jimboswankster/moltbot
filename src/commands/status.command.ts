@@ -234,6 +234,16 @@ export async function statusCommand(
     return warn(`${watcherSummary.disabledCount} disabled${detail}`);
   })();
 
+  const a2aValue = (() => {
+    const a2aSummary = summary.a2a;
+    if (!a2aSummary || a2aSummary.inboxDisplayFallbackCount === 0) {
+      return muted("ok");
+    }
+    const ids = a2aSummary.inboxDisplayFallback.map((entry) => entry.id).join(", ");
+    const detail = ids ? ` · ${shortenText(ids, 48)}` : "";
+    return warn(`${a2aSummary.inboxDisplayFallbackCount} fallback${detail}`);
+  })();
+
   const agentsValue = (() => {
     const pending =
       agentStatus.bootstrapPendingCount > 0
@@ -375,6 +385,7 @@ export async function statusCommand(
     },
     { Item: "Gateway", Value: gatewayValue },
     { Item: "Watchers", Value: watcherValue },
+    { Item: "A2A Inbox", Value: a2aValue },
     { Item: "Gateway service", Value: daemonValue },
     { Item: "Node service", Value: nodeDaemonValue },
     { Item: "Agents", Value: agentsValue },

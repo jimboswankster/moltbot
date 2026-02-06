@@ -16,6 +16,7 @@ import {
   saveSessionStore,
   updateSessionStore,
 } from "../../../config/sessions.js";
+import { getA2ATelemetry, resetA2ATelemetry } from "../../../infra/a2a-telemetry.js";
 import {
   buildA2AInboxPromptBlock,
   injectA2AInboxPrependContext,
@@ -41,7 +42,7 @@ vi.mock("../../../config/config.js", async (importOriginal) => {
   };
 });
 
-const callGatewayMock = vi.fn(async (req: unknown) => {
+const defaultGatewayImpl = async (req: unknown) => {
   const typed = req as { method?: string; params?: Record<string, unknown> };
   if (typed.method === "sessions.patch") {
     const key = typeof typed.params?.key === "string" ? typed.params.key : "";
@@ -68,7 +69,8 @@ const callGatewayMock = vi.fn(async (req: unknown) => {
     return {};
   }
   return {};
-});
+};
+const callGatewayMock = vi.fn(defaultGatewayImpl);
 
 vi.mock("../../../gateway/call.js", () => ({
   callGateway: (req: unknown) => callGatewayMock(req),
@@ -137,6 +139,9 @@ afterEach(async () => {
   logWarn.mockReset();
   logError.mockReset();
   logDebug.mockReset();
+  resetA2ATelemetry();
+  callGatewayMock.mockReset();
+  callGatewayMock.mockImplementation(defaultGatewayImpl);
   configOverride = {
     session: {
       mainKey: "main",
@@ -393,6 +398,96 @@ describe("A2A Inbox - Audit Logging", () => {
       const store = loadSessionStore(storePath, { skipCache: true });
       const events = store[sessionKey]?.a2aInbox?.events ?? [];
       expect(events[0]?.sourceDisplayKey).toBe("agent:main:subagent:sub-009");
+      expect(logWarn).toHaveBeenCalledWith(
+        "a2a_inbox_display_fallback",
+        expect.objectContaining({
+          runId: "run-900",
+          sessionKey,
+          sourceSessionKey: "agent:main:subagent:sub-009",
+          reason: "missing_label",
+        }),
+      );
+      const telemetry = getA2ATelemetry();
+      expect(telemetry.inboxDisplayFallbackCount).toBe(1);
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("records fallback when sessions.patch does not apply label", async () => {
+    const { dir, cfg, sessionKey, storePath } = await setupSessionStore();
+    const childSessionKey = "agent:main:subagent:sub-101";
+    try {
+      await saveSessionStore(storePath, {
+        [sessionKey]: {
+          sessionId: "session-1",
+          updatedAt: Date.now(),
+        },
+        [childSessionKey]: {
+          sessionId: "sub-1",
+          updatedAt: Date.now(),
+        },
+      });
+
+      configOverride = {
+        session: { store: storePath, scope: "per-sender", mainKey: "main" },
+        tools: { agentToAgent: { enabled: true } },
+      } as OpenClawConfig;
+      sessionStorePathForMock = storePath;
+      callGatewayMock.mockImplementation(async (req: unknown) => {
+        const typed = req as { method?: string };
+        if (typed.method === "sessions.patch") {
+          return {};
+        }
+        if (typed.method === "agent") {
+          return { runId: "run-main", status: "ok" };
+        }
+        if (typed.method === "agent.wait") {
+          return { status: "ok" };
+        }
+        if (typed.method === "sessions.delete") {
+          return {};
+        }
+        return {};
+      });
+
+      const { runSubagentAnnounceFlow } = await import("../../subagent-announce.js");
+      await runSubagentAnnounceFlow({
+        childSessionKey,
+        childRunId: "run-child",
+        requesterSessionKey: sessionKey,
+        requesterDisplayKey: "main",
+        task: "do it",
+        timeoutMs: 1000,
+        cleanup: "keep",
+        waitForCompletion: false,
+        startedAt: 10,
+        endedAt: 20,
+        outcome: { status: "ok" },
+        label: "Docs Writer",
+      });
+
+      await recordA2AInboxEvent({
+        cfg,
+        sessionKey,
+        sourceSessionKey: childSessionKey,
+        runId: "run-inbox-2",
+        replyText: "Draft complete.",
+        now: 1738737600000,
+      });
+
+      const store = loadSessionStore(storePath, { skipCache: true });
+      const events = store[sessionKey]?.a2aInbox?.events ?? [];
+      expect(events[0]?.sourceDisplayKey).toBe(childSessionKey);
+      expect(logWarn).toHaveBeenCalledWith(
+        "a2a_inbox_display_fallback",
+        expect.objectContaining({
+          runId: "run-inbox-2",
+          sessionKey,
+          sourceSessionKey: childSessionKey,
+          reason: "missing_label",
+        }),
+      );
     } finally {
       await fs.rm(dir, { recursive: true, force: true });
     }

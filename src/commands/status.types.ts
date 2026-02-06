@@ -42,6 +42,16 @@ export type StatusSummary = {
       occurrences: number;
     }>;
   };
+  a2a: {
+    inboxDisplayFallbackCount: number;
+    inboxDisplayFallback: Array<{
+      id: string;
+      reason: string;
+      firstAt: number;
+      lastAt: number;
+      occurrences: number;
+    }>;
+  };
   linkChannel?: {
     id: ChannelId;
     label: string;

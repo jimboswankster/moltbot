@@ -8,6 +8,7 @@ import {
 } from "../config/sessions.js";
 import { resolveStorePath } from "../config/sessions/paths.js";
 import { resolveSessionStoreKey } from "../gateway/session-utils.js";
+import { recordA2AInboxDisplayFallback } from "../infra/a2a-telemetry.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { resolveAgentIdFromSessionKey } from "../routing/session-key.js";
@@ -117,19 +118,19 @@ function resolveA2ASourceDisplayKey(params: {
   cfg: OpenClawConfig;
   sourceSessionKey: string;
   sourceDisplayKey?: string;
-}): string {
+}): { key: string; fallbackToSessionKey: boolean } {
   const { storePath, canonicalKey } = resolveInboxStoreTarget(params.cfg, params.sourceSessionKey);
   const store = loadSessionStore(storePath, { skipCache: true });
   const entry = store[canonicalKey];
   const fromEntry = resolveDisplayKeyFromEntry(entry);
   if (fromEntry) {
-    return fromEntry;
+    return { key: fromEntry, fallbackToSessionKey: false };
   }
   const provided = params.sourceDisplayKey?.trim();
   if (provided) {
-    return provided;
+    return { key: provided, fallbackToSessionKey: false };
   }
-  return params.sourceSessionKey;
+  return { key: params.sourceSessionKey, fallbackToSessionKey: true };
 }
 
 export function buildA2AInboxPromptBlock(params: {
@@ -211,17 +212,26 @@ export async function recordA2AInboxEvent(params: {
       if (events.some((event) => event.runId === params.runId)) {
         return;
       }
-      const sourceDisplayKey = resolveA2ASourceDisplayKey({
+      const resolvedDisplay = resolveA2ASourceDisplayKey({
         cfg: params.cfg,
         sourceSessionKey: params.sourceSessionKey,
         sourceDisplayKey: params.sourceDisplayKey,
       });
+      if (resolvedDisplay.fallbackToSessionKey) {
+        recordA2AInboxDisplayFallback(params.sourceSessionKey, "missing_label");
+        log.warn("a2a_inbox_display_fallback", {
+          runId: params.runId,
+          sessionKey: canonicalKey,
+          sourceSessionKey: params.sourceSessionKey,
+          reason: "missing_label",
+        });
+      }
       const nextEvent: A2AInboxEvent = {
         schemaVersion: A2A_INBOX_SCHEMA_VERSION,
         createdAt: now,
         runId: params.runId,
         sourceSessionKey: params.sourceSessionKey,
-        sourceDisplayKey,
+        sourceDisplayKey: resolvedDisplay.key,
         replyText: params.replyText,
       };
       const next = mergeSessionEntry(existing, {

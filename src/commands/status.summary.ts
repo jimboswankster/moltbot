@@ -10,6 +10,7 @@ import {
   type SessionEntry,
 } from "../config/sessions.js";
 import { listAgentsForGateway } from "../gateway/session-utils.js";
+import { getA2ATelemetry } from "../infra/a2a-telemetry.js";
 import { buildChannelSummary } from "../infra/channel-summary.js";
 import { resolveHeartbeatSummaryForAgent } from "../infra/heartbeat-runner.js";
 import { peekSystemEvents } from "../infra/system-events.js";
@@ -181,6 +182,7 @@ export async function getStatusSummary(): Promise<StatusSummary> {
 
   return {
     watchers: getWatcherTelemetry(),
+    a2a: getA2ATelemetry(),
     linkChannel: linkContext
       ? {
           id: linkContext.plugin.id,
