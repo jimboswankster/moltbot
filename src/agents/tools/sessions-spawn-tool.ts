@@ -91,6 +91,12 @@ export function createSessionsSpawnTool(opts?: {
       const params = args as Record<string, unknown>;
       const task = readStringParam(params, "task", { required: true });
       const label = typeof params.label === "string" ? params.label.trim() : "";
+      if (!label) {
+        return jsonResult({
+          status: "error",
+          error: "label is required for sessions_spawn",
+        });
+      }
       const requestedAgentId = readStringParam(params, "agentId");
       const modelOverride = readStringParam(params, "model");
       const modelRoleParam =

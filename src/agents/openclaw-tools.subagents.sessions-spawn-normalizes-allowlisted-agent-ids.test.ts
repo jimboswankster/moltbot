@@ -37,6 +37,29 @@ describe("openclaw-tools: subagents", () => {
     };
   });
 
+  it("requires label for sessions_spawn", async () => {
+    resetSubagentRegistryForTests();
+    callGatewayMock.mockReset();
+
+    const tool = createOpenClawTools({
+      agentSessionKey: "main",
+      agentChannel: "whatsapp",
+    }).find((candidate) => candidate.name === "sessions_spawn");
+    if (!tool) {
+      throw new Error("missing sessions_spawn tool");
+    }
+
+    const result = await tool.execute("call-label", {
+      task: "do thing",
+    });
+
+    expect(result.details).toMatchObject({
+      status: "error",
+      error: "label is required for sessions_spawn",
+    });
+    expect(callGatewayMock).not.toHaveBeenCalled();
+  });
+
   it("sessions_spawn normalizes allowlisted agent ids", async () => {
     resetSubagentRegistryForTests();
     callGatewayMock.mockReset();
@@ -81,6 +104,7 @@ describe("openclaw-tools: subagents", () => {
 
     const result = await tool.execute("call10", {
       task: "do thing",
+      label: "Research task",
       agentId: "research",
     });
 
@@ -120,6 +144,7 @@ describe("openclaw-tools: subagents", () => {
 
     const result = await tool.execute("call9", {
       task: "do thing",
+      label: "Cross agent task",
       agentId: "beta",
     });
     expect(result.details).toMatchObject({
@@ -191,6 +216,7 @@ describe("openclaw-tools: subagents", () => {
 
     const result = await tool.execute("call1", {
       task: "do thing",
+      label: "Cleanup task",
       runTimeoutSeconds: 1,
       cleanup: "delete",
     });
@@ -302,6 +328,7 @@ describe("openclaw-tools: subagents", () => {
 
     const result = await tool.execute("call2", {
       task: "do thing",
+      label: "AccountId task",
       runTimeoutSeconds: 1,
       cleanup: "keep",
     });
