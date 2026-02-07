@@ -38,6 +38,16 @@ type FallbackAttempt = {
   code?: string;
 };
 
+export class AllModelsInCooldownError extends Error {
+  attempts: FallbackAttempt[];
+
+  constructor(message: string, attempts: FallbackAttempt[]) {
+    super(message);
+    this.name = "AllModelsInCooldownError";
+    this.attempts = attempts;
+  }
+}
+
 function maybeWarnFallbackRate(cfg: OpenClawConfig | undefined, countLastHour: number) {
   const message = `Pre-cascade warning: ${countLastHour} fallbacks/hour`;
   logWarn(message);
@@ -162,7 +172,7 @@ function resolveImageFallbackCandidates(params: {
   return candidates;
 }
 
-function resolveFallbackCandidates(params: {
+export function resolveFallbackCandidates(params: {
   cfg: OpenClawConfig | undefined;
   provider: string;
   model: string;
@@ -364,9 +374,10 @@ export async function runWithModelFallback<T>(params: {
   if (!lastError && attempts.length > 0) {
     const allCooldownSkipped = attempts.every((attempt) => attempt.reason === "rate_limit");
     if (allCooldownSkipped) {
-      throw new Error(
+      throw new AllModelsInCooldownError(
         `All models in cooldown (${attempts.length || candidates.length}): ` +
           "no available auth profiles",
+        attempts,
       );
     }
   }

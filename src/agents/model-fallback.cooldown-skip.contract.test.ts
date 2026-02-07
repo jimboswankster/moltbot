@@ -22,7 +22,7 @@ import type { OpenClawConfig } from "../config/config.js";
 import type { AuthProfileStore } from "./auth-profiles.js";
 import { saveAuthProfileStore } from "./auth-profiles.js";
 import { AUTH_STORE_VERSION } from "./auth-profiles/constants.js";
-import { runWithModelFallback } from "./model-fallback.js";
+import { AllModelsInCooldownError, runWithModelFallback } from "./model-fallback.js";
 
 function makeCfg(primary: string): OpenClawConfig {
   return {
@@ -73,7 +73,7 @@ describe("runWithModelFallback cooldown-skip remediation contract", () => {
           agentDir: tempDir,
           run,
         }),
-      ).rejects.toThrow(/cooldown|unavailable/i);
+      ).rejects.toThrow(AllModelsInCooldownError);
 
       expect(run).not.toHaveBeenCalled();
     } finally {

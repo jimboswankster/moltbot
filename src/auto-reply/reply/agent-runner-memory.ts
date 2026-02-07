@@ -9,7 +9,7 @@ import {
   isProfileInCooldown,
   resolveAuthProfileOrder,
 } from "../../agents/auth-profiles.js";
-import { runWithModelFallback } from "../../agents/model-fallback.js";
+import { resolveFallbackCandidates, runWithModelFallback } from "../../agents/model-fallback.js";
 import { isCliProvider } from "../../agents/model-selection.js";
 import { buildModelAliasIndex, resolveModelRefFromString } from "../../agents/model-selection.js";
 import { runEmbeddedPiAgent } from "../../agents/pi-embedded.js";
@@ -70,15 +70,22 @@ export async function runMemoryFlushIfNeeded(params: {
     if (!authStore) {
       return true;
     }
-    const profileIds = resolveAuthProfileOrder({
+    const candidates = resolveFallbackCandidates({
       cfg: params.cfg,
-      store: authStore,
       provider: flushProvider,
+      model: flushModel ?? params.defaultModel,
     });
-    if (profileIds.length === 0) {
-      return true;
-    }
-    return profileIds.some((id) => !isProfileInCooldown(authStore, id));
+    return candidates.some((candidate) => {
+      const profileIds = resolveAuthProfileOrder({
+        cfg: params.cfg,
+        store: authStore,
+        provider: candidate.provider,
+      });
+      if (profileIds.length === 0) {
+        return true;
+      }
+      return profileIds.some((id) => !isProfileInCooldown(authStore, id));
+    });
   })();
 
   const memoryFlushWritable = (() => {
@@ -232,13 +239,12 @@ export async function runMemoryFlushIfNeeded(params: {
     logWarn(`memory flush run failed: ${String(err)}`);
     if (isDiagnosticsEnabled(params.cfg)) {
       emitDiagnosticEvent({
-        type: "message.processed",
-        channel: params.followupRun.run.messageProvider ?? "unknown",
-        outcome: "error",
-        reason: "memory_flush_failed",
-        error: String(err),
+        type: "memory.flush.failed",
         sessionKey: params.sessionKey,
         sessionId: params.followupRun.run.sessionId,
+        provider: flushProvider,
+        model: flushModel,
+        error: String(err),
       });
     }
   }

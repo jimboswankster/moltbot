@@ -138,7 +138,9 @@ describe("runMemoryFlushIfNeeded logging remediation contract", () => {
     });
 
     expect(logWarnMock).toHaveBeenCalled();
-    expect(emitDiagnosticEventMock).toHaveBeenCalled();
+    expect(emitDiagnosticEventMock).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "memory.flush.failed" }),
+    );
     expect(logVerboseMock).not.toHaveBeenCalled();
   });
 });
