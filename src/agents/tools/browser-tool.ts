@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import type { OpenClawConfig } from "../../config/config.js";
 import {
   browserAct,
   browserArmDialog,
@@ -22,7 +23,13 @@ import {
 import { resolveBrowserConfig } from "../../browser/config.js";
 import { DEFAULT_AI_SNAPSHOT_MAX_CHARS } from "../../browser/constants.js";
 import { loadConfig } from "../../config/config.js";
+import {
+  loadSessionStore,
+  resolveStorePath,
+  updateSessionStoreEntry,
+} from "../../config/sessions.js";
 import { saveMediaBuffer } from "../../media/store.js";
+import { resolveSessionAgentId } from "../agent-scope.js";
 import { BrowserToolSchema } from "./browser-tool.schema.js";
 import { type AnyAgentTool, imageResultFromFile, jsonResult, readStringParam } from "./common.js";
 import { callGatewayTool } from "./gateway.js";
@@ -41,6 +48,7 @@ type BrowserProxyResult = {
 
 const DEFAULT_BROWSER_PROXY_TIMEOUT_MS = 20_000;
 const BROWSER_IDEMPOTENCY_TTL_MS = 60 * 60 * 1000;
+const BROWSER_IDEMPOTENCY_MAX_ENTRIES = 200;
 
 const browserIdempotencyCache = new Map<
   string,
@@ -67,6 +75,22 @@ function getIdempotentBrowserResult(key: string, run: () => Promise<unknown>) {
   });
   browserIdempotencyCache.set(key, { ts: now, promise });
   return promise;
+}
+
+type BrowserIdempotencyEntry = {
+  ts: number;
+  result: unknown;
+};
+
+type BrowserIdempotencyLedger = Record<string, BrowserIdempotencyEntry>;
+
+function pruneBrowserLedger(ledger: BrowserIdempotencyLedger, now: number) {
+  const entries = Object.entries(ledger).filter(
+    ([, value]) => now - value.ts <= BROWSER_IDEMPOTENCY_TTL_MS,
+  );
+  entries.sort((a, b) => a[1].ts - b[1].ts);
+  const trimmed = entries.slice(Math.max(0, entries.length - BROWSER_IDEMPOTENCY_MAX_ENTRIES));
+  return Object.fromEntries(trimmed);
 }
 
 type BrowserNodeTarget = {
@@ -246,9 +270,61 @@ function resolveBrowserBaseUrl(params: {
   return undefined;
 }
 
+async function readBrowserLedgerResult(params: {
+  storePath?: string;
+  sessionKey?: string;
+  idempotencyKey: string;
+}) {
+  if (!params.storePath || !params.sessionKey) {
+    return null;
+  }
+  const store = loadSessionStore(params.storePath, { skipCache: true });
+  const entry = store[params.sessionKey];
+  if (!entry?.browserIdempotencyLedger) {
+    return null;
+  }
+  const now = Date.now();
+  const pruned = pruneBrowserLedger(entry.browserIdempotencyLedger, now);
+  const hit = pruned[params.idempotencyKey];
+  if (!hit) {
+    return null;
+  }
+  if (Object.keys(pruned).length !== Object.keys(entry.browserIdempotencyLedger).length) {
+    await updateSessionStoreEntry({
+      storePath: params.storePath,
+      sessionKey: params.sessionKey,
+      update: async () => ({ browserIdempotencyLedger: pruned }),
+    });
+  }
+  return hit.result;
+}
+
+async function writeBrowserLedgerResult(params: {
+  storePath?: string;
+  sessionKey?: string;
+  idempotencyKey: string;
+  result: unknown;
+}) {
+  if (!params.storePath || !params.sessionKey) {
+    return;
+  }
+  await updateSessionStoreEntry({
+    storePath: params.storePath,
+    sessionKey: params.sessionKey,
+    update: async (entry) => {
+      const now = Date.now();
+      const ledger = pruneBrowserLedger(entry.browserIdempotencyLedger ?? {}, now);
+      ledger[params.idempotencyKey] = { ts: now, result: params.result };
+      return { browserIdempotencyLedger: ledger };
+    },
+  });
+}
+
 export function createBrowserTool(opts?: {
   sandboxBridgeUrl?: string;
   allowHostControl?: boolean;
+  agentSessionKey?: string;
+  config?: OpenClawConfig;
 }): AnyAgentTool {
   const targetDefault = opts?.sandboxBridgeUrl ? "sandbox" : "host";
   const hostHint =
@@ -274,6 +350,12 @@ export function createBrowserTool(opts?: {
       const action = readStringParam(params, "action", { required: true });
       const profile = readStringParam(params, "profile");
       const idempotencyKey = readStringParam(params, "idempotencyKey")?.trim() || undefined;
+      const cfg = opts?.config ?? loadConfig();
+      const agentId = resolveSessionAgentId({
+        sessionKey: opts?.agentSessionKey,
+        config: cfg,
+      });
+      const storePath = resolveStorePath(cfg.session?.store, { agentId });
       const requestedNode = readStringParam(params, "node");
       let target = readStringParam(params, "target") as "sandbox" | "host" | "node" | undefined;
 
@@ -760,8 +842,31 @@ export function createBrowserTool(opts?: {
         }
       };
 
+      const durableEnabled = Boolean(idempotencyKey && !nodeTarget);
+      if (idempotencyKey && durableEnabled) {
+        const cached = await readBrowserLedgerResult({
+          storePath,
+          sessionKey: opts?.agentSessionKey,
+          idempotencyKey,
+        });
+        if (cached !== null) {
+          return cached;
+        }
+      }
+
       if (idempotencyKey) {
-        return await getIdempotentBrowserResult(idempotencyKey, executeAction);
+        return await getIdempotentBrowserResult(idempotencyKey, async () => {
+          const result = await executeAction();
+          if (durableEnabled && idempotencyKey) {
+            await writeBrowserLedgerResult({
+              storePath,
+              sessionKey: opts?.agentSessionKey,
+              idempotencyKey,
+              result,
+            });
+          }
+          return result;
+        });
       }
       return await executeAction();
     },
