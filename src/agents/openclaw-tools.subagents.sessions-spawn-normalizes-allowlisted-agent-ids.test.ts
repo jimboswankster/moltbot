@@ -30,9 +30,9 @@ import { createOpenClawTools } from "./openclaw-tools.js";
 import { resetSubagentRegistryForTests } from "./subagent-registry.js";
 
 describe("openclaw-tools: subagents", () => {
-  let loadAuthProfileStoreMock: ReturnType<typeof vi.spyOn> | undefined;
-  let resolveAuthProfileOrderMock: ReturnType<typeof vi.spyOn> | undefined;
-  let isProfileInCooldownMock: ReturnType<typeof vi.spyOn> | undefined;
+  let loadAuthProfileStoreMock!: ReturnType<typeof vi.spyOn>;
+  let resolveAuthProfileOrderMock!: ReturnType<typeof vi.spyOn>;
+  let isProfileInCooldownMock!: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     configOverride = {
@@ -41,10 +41,6 @@ describe("openclaw-tools: subagents", () => {
         scope: "per-sender",
       },
     };
-    loadAuthProfileStoreMock?.mockRestore();
-    resolveAuthProfileOrderMock?.mockRestore();
-    isProfileInCooldownMock?.mockRestore();
-
     loadAuthProfileStoreMock = vi
       .spyOn(authProfiles, "loadAuthProfileStore")
       .mockReturnValue({ version: 1, profiles: {}, usageStats: {} } as never);
@@ -52,6 +48,12 @@ describe("openclaw-tools: subagents", () => {
       .spyOn(authProfiles, "resolveAuthProfileOrder")
       .mockReturnValue([]);
     isProfileInCooldownMock = vi.spyOn(authProfiles, "isProfileInCooldown").mockReturnValue(false);
+  });
+
+  afterEach(() => {
+    loadAuthProfileStoreMock.mockRestore();
+    resolveAuthProfileOrderMock.mockRestore();
+    isProfileInCooldownMock.mockRestore();
   });
 
   it("requires label for sessions_spawn", async () => {

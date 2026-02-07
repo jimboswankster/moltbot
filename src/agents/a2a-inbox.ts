@@ -170,9 +170,9 @@ export function buildA2AInboxPromptBlock(params: {
   maxEvents: number;
   maxChars: number;
 }): A2AInboxPromptBlockResult {
-  const events = params.events
-    .slice()
-    .sort((a, b) => a.createdAt - b.createdAt || a.runId.localeCompare(b.runId));
+  const events = params.events.toSorted(
+    (a, b) => a.createdAt - b.createdAt || a.runId.localeCompare(b.runId),
+  );
   const selected = events.slice(0, Math.max(0, params.maxEvents));
 
   let text = TRANSITIONAL_A2A_INBOX_TAG;
