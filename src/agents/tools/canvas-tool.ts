@@ -28,6 +28,8 @@ const CanvasToolSchema = Type.Object({
   gatewayToken: Type.Optional(Type.String()),
   timeoutMs: Type.Optional(Type.Number()),
   node: Type.Optional(Type.String()),
+  idempotencyKey: Type.Optional(Type.String({ minLength: 1 })),
+  idempotencyKeySeed: Type.Optional(Type.String({ minLength: 1 })),
   // present
   target: Type.Optional(Type.String()),
   x: Type.Optional(Type.Number()),
@@ -58,6 +60,7 @@ export function createCanvasTool(): AnyAgentTool {
     execute: async (_toolCallId, args) => {
       const params = args as Record<string, unknown>;
       const action = readStringParam(params, "action", { required: true });
+      const idempotencyKey = readStringParam(params, "idempotencyKey")?.trim() || undefined;
       const gatewayOpts: GatewayCallOptions = {
         gatewayUrl: readStringParam(params, "gatewayUrl", { trim: false }),
         gatewayToken: readStringParam(params, "gatewayToken", { trim: false }),
@@ -75,7 +78,7 @@ export function createCanvasTool(): AnyAgentTool {
           nodeId,
           command,
           params: invokeParams,
-          idempotencyKey: crypto.randomUUID(),
+          idempotencyKey: idempotencyKey || crypto.randomUUID(),
         });
 
       switch (action) {
