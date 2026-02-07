@@ -11,7 +11,7 @@ import {
 } from "../../agents/auth-profiles.js";
 import { lookupContextTokens } from "../../agents/context.js";
 import { resolveFallbackCandidates, runWithModelFallback } from "../../agents/model-fallback.js";
-import { isCliProvider } from "../../agents/model-selection.js";
+import { isCliProvider, resolveConfiguredModelRef } from "../../agents/model-selection.js";
 import { buildModelAliasIndex, resolveModelRefFromString } from "../../agents/model-selection.js";
 import { runEmbeddedPiAgent } from "../../agents/pi-embedded.js";
 import { resolveSandboxConfigForAgent, resolveSandboxRuntimeStatus } from "../../agents/sandbox.js";
@@ -61,8 +61,24 @@ export async function runMemoryFlushIfNeeded(params: {
         aliasIndex,
       })?.ref
     : null;
-  const flushProvider = resolvedFlushModel?.provider ?? params.followupRun.run.provider;
-  const flushModel = resolvedFlushModel?.model ?? params.followupRun.run.model;
+  const configuredPrimary = resolveConfiguredModelRef({
+    cfg: params.cfg,
+    defaultProvider: params.followupRun.run.provider ?? "anthropic",
+    defaultModel: params.followupRun.run.model ?? params.defaultModel,
+  });
+  const shouldRefreshModel =
+    !resolvedFlushModel &&
+    configuredPrimary &&
+    (configuredPrimary.provider !== params.followupRun.run.provider ||
+      configuredPrimary.model !== params.followupRun.run.model);
+  const flushProvider =
+    resolvedFlushModel?.provider ??
+    (shouldRefreshModel ? configuredPrimary?.provider : undefined) ??
+    params.followupRun.run.provider;
+  const flushModel =
+    resolvedFlushModel?.model ??
+    (shouldRefreshModel ? configuredPrimary?.model : undefined) ??
+    params.followupRun.run.model;
 
   const isAnyModelAvailable = (() => {
     if (!params.cfg || !params.followupRun.run.agentDir || !flushProvider) {
