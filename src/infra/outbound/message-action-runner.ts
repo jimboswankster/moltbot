@@ -724,6 +724,7 @@ async function handleSendAction(ctx: ResolvedActionContext): Promise<MessageActi
   const mediaUrl = readStringParam(params, "media", { trim: false });
   const gifPlayback = readBooleanParam(params, "gifPlayback") ?? false;
   const bestEffort = readBooleanParam(params, "bestEffort");
+  const idempotencyKey = readStringParam(params, "idempotencyKey")?.trim() || undefined;
 
   const replyToId = readStringParam(params, "replyTo");
   const threadId = readStringParam(params, "threadId");
@@ -784,6 +785,7 @@ async function handleSendAction(ctx: ResolvedActionContext): Promise<MessageActi
     mediaUrls: mergedMediaUrls.length ? mergedMediaUrls : undefined,
     gifPlayback,
     bestEffort: bestEffort ?? undefined,
+    idempotencyKey,
   });
 
   return {
@@ -815,6 +817,7 @@ async function handlePollAction(ctx: ResolvedActionContext): Promise<MessageActi
   const durationHours = readNumberParam(params, "pollDurationHours", {
     integer: true,
   });
+  const idempotencyKey = readStringParam(params, "idempotencyKey")?.trim() || undefined;
   const maxSelections = allowMultiselect ? Math.max(2, options.length) : 1;
   const base = typeof params.message === "string" ? params.message : "";
   await maybeApplyCrossContextMarker({
@@ -844,6 +847,7 @@ async function handlePollAction(ctx: ResolvedActionContext): Promise<MessageActi
     options,
     maxSelections,
     durationHours: durationHours ?? undefined,
+    idempotencyKey,
   });
 
   return {

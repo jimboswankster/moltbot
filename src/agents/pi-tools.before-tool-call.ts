@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import type { AnyAgentTool } from "./tools/common.js";
+import { emitAgentEvent } from "../infra/agent-events.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { getGlobalHookRunner } from "../plugins/hook-runner-global.js";
 import { normalizeToolName } from "./tool-policy.js";
@@ -43,9 +44,11 @@ function buildIdempotencyKey(params: {
   runId: string;
   toolName: string;
   payload: Record<string, unknown>;
+  seed?: string;
 }) {
-  const seed = `${params.runId}:${params.toolName}:${stableStringify(params.payload)}`;
-  return crypto.createHash("sha256").update(seed).digest("hex").slice(0, 32);
+  const seedSuffix = params.seed ? `:${params.seed}` : "";
+  const source = `${params.runId}:${params.toolName}:${stableStringify(params.payload)}${seedSuffix}`;
+  return crypto.createHash("sha256").update(source).digest("hex").slice(0, 32);
 }
 
 function applyToolIdempotency(params: {
@@ -69,14 +72,33 @@ function applyToolIdempotency(params: {
   if (typeof existing === "string" && existing.trim()) {
     return params.args;
   }
+  const seedOverride =
+    typeof params.args.idempotencyKeySeed === "string" && params.args.idempotencyKeySeed.trim()
+      ? params.args.idempotencyKeySeed.trim()
+      : undefined;
   const payload = { ...params.args };
   delete payload.idempotencyKey;
+  delete payload.idempotencyKeySeed;
   const idempotencyKey = buildIdempotencyKey({
     runId: params.ctx.runId,
     toolName,
     payload,
+    seed: seedOverride,
   });
-  return { ...params.args, idempotencyKey };
+  emitAgentEvent({
+    runId: params.ctx.runId,
+    stream: "lifecycle",
+    ...(params.ctx.sessionKey ? { sessionKey: params.ctx.sessionKey } : {}),
+    data: {
+      phase: "telemetry",
+      kind: "idempotency_injected",
+      scope: "cron",
+      toolName,
+      toolCallId: params.toolCallId,
+      keyPrefix: idempotencyKey.slice(0, 8),
+    },
+  });
+  return { ...payload, idempotencyKey };
 }
 
 export async function runBeforeToolCallHook(args: {

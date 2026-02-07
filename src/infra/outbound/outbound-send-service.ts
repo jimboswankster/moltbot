@@ -75,6 +75,7 @@ export async function executeSendAction(params: {
   mediaUrls?: string[];
   gifPlayback?: boolean;
   bestEffort?: boolean;
+  idempotencyKey?: string;
 }): Promise<{
   handledBy: "plugin" | "core";
   payload: unknown;
@@ -130,6 +131,7 @@ export async function executeSendAction(params: {
     deps: params.ctx.deps,
     gateway: params.ctx.gateway,
     mirror: params.ctx.mirror,
+    idempotencyKey: params.idempotencyKey,
     abortSignal: params.ctx.abortSignal,
   });
 
@@ -147,6 +149,7 @@ export async function executePollAction(params: {
   options: string[];
   maxSelections: number;
   durationHours?: number;
+  idempotencyKey?: string;
 }): Promise<{
   handledBy: "plugin" | "core";
   payload: unknown;
@@ -183,6 +186,7 @@ export async function executePollAction(params: {
     channel: params.ctx.channel,
     dryRun: params.ctx.dryRun,
     gateway: params.ctx.gateway,
+    idempotencyKey: params.idempotencyKey,
   });
 
   return {
