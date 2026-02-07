@@ -1,3 +1,4 @@
+import type { AgentActivity } from "./activity-hud-state";
 import type { EventLogEntry } from "./app-events";
 import type { DevicePairingList } from "./controllers/devices";
 import type { ExecApprovalRequest } from "./controllers/exec-approval";
@@ -28,7 +29,6 @@ import type {
 } from "./types";
 import type { ChatAttachment, ChatQueueItem, CronFormState } from "./ui-types";
 import type { NostrProfileFormState } from "./views/channels.nostr-profile-form";
-import type { AgentActivity } from "./activity-hud-state";
 
 export type AppViewState = {
   settings: UiSettings;

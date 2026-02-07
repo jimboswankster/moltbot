@@ -4,6 +4,7 @@ This changelog tracks incremental, audited updates to the A2A regression harness
 and related integration tests. Each entry includes the commit hash and tests run.
 
 ## 2026-02-05
+
 - Initialize changelog (commit: 9a2c9bf7e)
   Tests: none
 - Skip A2A flow in async sessions_send (commit: 36bcb53d4)
@@ -50,9 +51,24 @@ and related integration tests. Each entry includes the commit hash and tests run
   Tests: `npx vitest run src/agents/tools/regression/ src/gateway/server-methods/send-a2a-announce.integration.test.ts`
 
 ## 2026-02-06
+
+- Regression harness + gateway announce integration green run (commit: n/a)
+  Tests: `npx vitest run src/agents/tools/regression/` `npx vitest run src/gateway/server-methods/send-a2a-announce.integration.test.ts`
+- Regression harness + gateway announce integration green run (post-ackMode) (commit: n/a)
+  Tests: `npx vitest run src/agents/tools/regression/` `npx vitest run src/gateway/server-methods/send-a2a-announce.integration.test.ts`
+- Add inbox ackMode clear coverage (commit: n/a)
+  Tests: `npx vitest run src/agents/tools/regression/a2a-inbox.regression.test.ts`
+- Add atomic ack/clear failure coverage (commit: n/a)
+  Tests: `npx vitest run src/agents/tools/regression/a2a-inbox.regression.test.ts`
+- Live validation: inboxAckMode=clear (commit: n/a)
+  Tests: `npx tsx -e "(...)"` (manual script); verified a2a_inbox_event_written → a2a_inbox_acked → a2a_inbox_injected → a2a_inbox_cleared; events_after=0
+- Add inbox retention pruning coverage (commit: n/a)
+  Tests: `npx vitest run src/agents/tools/regression/a2a-inbox.regression.test.ts`
 - Fix webchat streaming across provider retries by deferring chat finalization until dispatch completes (commit: f71ec0de2)
   Tests: none
   Notes: Agent lifecycle `end` could fire before fallback retries finished, clearing chat run linkage and dropping streaming in Control UI. Now gateway keeps chat run active until the chat dispatch completes, emits final once, and cleans up run context at the end. Verbose logging added to correlate run/session mapping during investigation.
+- Add chat streaming delta + dedupe coverage (commit: n/a)
+  Tests: `pnpm vitest run src/gateway/server-chat.agent-events.test.ts` `pnpm vitest run --config vitest.e2e.config.ts src/gateway/server.chat.gateway-server-chat.e2e.test.ts --hookTimeout 60000 --testTimeout 20000`
 - Record A2A input-source metadata on agent steps (commit: ffc576f4f)
   Tests: `npx vitest run src/agents/tools/regression/agent-step.regression.test.ts`
 - Log inputSource metadata when recorded in embedded run (commit: 956c74ef4)
@@ -85,3 +101,7 @@ and related integration tests. Each entry includes the commit hash and tests run
   Tests: `npx vitest run src/agents/tools/regression/a2a-inbox.regression.test.ts`
 - Fix legacy namingMode test config to use temp session store (commit: 00e971b90)
   Tests: `npx vitest run src/agents/tools/regression/a2a-inbox.regression.test.ts`
+- Add fallback-rate pre-cascade telemetry + system warning (commit: n/a)
+  Tests: `pnpm vitest run src/gateway/server-chat.agent-events.test.ts src/agents/model-fallback.test.ts`
+- Harden chat delta dedupe when full text repeats (commit: n/a)
+  Tests: `pnpm vitest run src/gateway/server-chat.agent-events.test.ts src/agents/model-fallback.test.ts`

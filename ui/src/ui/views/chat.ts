@@ -249,9 +249,7 @@ export function renderChat(props: ChatProps) {
     if (!slashContainer) {
       return;
     }
-    const items = slashContainer.querySelectorAll<HTMLButtonElement>(
-      ".chat-slash-suggestion",
-    );
+    const items = slashContainer.querySelectorAll<HTMLButtonElement>(".chat-slash-suggestion");
     const target = items[index];
     if (!target) {
       return;
@@ -644,8 +642,7 @@ function splitSystemPreface(message: unknown): Array<ChatItem> | null {
   if (prefixLines.length === 0 || !prefixLines.every((line) => line.startsWith("System: "))) {
     return null;
   }
-  const timestamp =
-    typeof m.timestamp === "number" ? m.timestamp : Date.now();
+  const timestamp = typeof m.timestamp === "number" ? m.timestamp : Date.now();
   return [
     {
       kind: "message",

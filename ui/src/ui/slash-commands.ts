@@ -26,8 +26,7 @@ export const slashCommands: SlashCommand[] = [
   {
     name: "/global_changelog",
     summary: "Open/update SYSTEM_CHANGELOG.md.",
-    prompt:
-      "Open SYSTEM_CHANGELOG.md at the workspace root and summarize the most recent entries.",
+    prompt: "Open SYSTEM_CHANGELOG.md at the workspace root and summarize the most recent entries.",
   },
   {
     name: "/os_changelog",

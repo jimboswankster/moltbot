@@ -5,6 +5,8 @@ vi.mock("../gateway/call.js", () => ({
   callGateway: (opts: unknown) => callGatewayMock(opts),
 }));
 
+import * as authProfiles from "./auth-profiles.js";
+
 let configOverride: ReturnType<(typeof import("../config/config.js"))["loadConfig"]> = {
   session: {
     mainKey: "main",
@@ -28,6 +30,10 @@ import { createOpenClawTools } from "./openclaw-tools.js";
 import { resetSubagentRegistryForTests } from "./subagent-registry.js";
 
 describe("openclaw-tools: subagents", () => {
+  let loadAuthProfileStoreMock!: ReturnType<typeof vi.spyOn>;
+  let resolveAuthProfileOrderMock!: ReturnType<typeof vi.spyOn>;
+  let isProfileInCooldownMock!: ReturnType<typeof vi.spyOn>;
+
   beforeEach(() => {
     configOverride = {
       session: {
@@ -35,6 +41,19 @@ describe("openclaw-tools: subagents", () => {
         scope: "per-sender",
       },
     };
+    loadAuthProfileStoreMock = vi
+      .spyOn(authProfiles, "loadAuthProfileStore")
+      .mockReturnValue({ version: 1, profiles: {}, usageStats: {} } as never);
+    resolveAuthProfileOrderMock = vi
+      .spyOn(authProfiles, "resolveAuthProfileOrder")
+      .mockReturnValue([]);
+    isProfileInCooldownMock = vi.spyOn(authProfiles, "isProfileInCooldown").mockReturnValue(false);
+  });
+
+  afterEach(() => {
+    loadAuthProfileStoreMock.mockRestore();
+    resolveAuthProfileOrderMock.mockRestore();
+    isProfileInCooldownMock.mockRestore();
   });
 
   it("requires label for sessions_spawn", async () => {
@@ -56,6 +75,47 @@ describe("openclaw-tools: subagents", () => {
     expect(result.details).toMatchObject({
       status: "error",
       error: "label is required for sessions_spawn",
+    });
+    expect(callGatewayMock).not.toHaveBeenCalled();
+  });
+
+  it("blocks sessions_spawn when all auth profiles are in cooldown", async () => {
+    resetSubagentRegistryForTests();
+    callGatewayMock.mockReset();
+
+    loadAuthProfileStoreMock?.mockReturnValue({
+      version: 1,
+      profiles: {
+        "anthropic:default": { type: "api_key", provider: "anthropic", key: "sk-test" },
+      },
+      usageStats: {
+        "anthropic:default": { cooldownUntil: Date.now() + 60_000 },
+      },
+    });
+    resolveAuthProfileOrderMock?.mockReturnValue(["anthropic:default"]);
+    isProfileInCooldownMock?.mockImplementation((_store, profileId: string) => {
+      return profileId === "anthropic:default";
+    });
+
+    const tool = createOpenClawTools({
+      agentSessionKey: "main",
+      agentChannel: "whatsapp",
+    }).find((candidate) => candidate.name === "sessions_spawn");
+    if (!tool) {
+      throw new Error("missing sessions_spawn tool");
+    }
+
+    const result = await tool.execute("call-cooldown", {
+      task: "do thing",
+      label: "Cooldown test",
+    });
+
+    expect(loadAuthProfileStoreMock).toHaveBeenCalled();
+    expect(resolveAuthProfileOrderMock).toHaveBeenCalled();
+    expect(isProfileInCooldownMock).toHaveBeenCalled();
+    expect(result.details).toMatchObject({
+      status: "error",
+      error: expect.stringContaining("Quota stress"),
     });
     expect(callGatewayMock).not.toHaveBeenCalled();
   });

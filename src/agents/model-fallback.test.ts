@@ -5,6 +5,9 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
 import type { AuthProfileStore } from "./auth-profiles.js";
+import { resolveMainSessionKey } from "../config/sessions.js";
+import { getFallbackTelemetry, resetFallbackTelemetry } from "../infra/fallback-telemetry.js";
+import { peekSystemEvents, resetSystemEventsForTest } from "../infra/system-events.js";
 import { saveAuthProfileStore } from "./auth-profiles.js";
 import { AUTH_STORE_VERSION } from "./auth-profiles/constants.js";
 import { runWithModelFallback } from "./model-fallback.js";
@@ -540,5 +543,46 @@ describe("runWithModelFallback", () => {
     expect(run).toHaveBeenCalledTimes(2);
     expect(result.provider).toBe("openai");
     expect(result.model).toBe("gpt-4.1-mini");
+  });
+
+  it("warns when fallback rate exceeds the pre-cascade threshold", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-02-06T00:00:00.000Z"));
+    resetFallbackTelemetry();
+    resetSystemEventsForTest();
+
+    const fallbacks = Array.from({ length: 10 }, (_, idx) => `anthropic/haiku-${idx + 1}`);
+    const cfg = makeCfg({
+      agents: {
+        defaults: {
+          model: {
+            primary: "openai/gpt-4.1-mini",
+            fallbacks,
+          },
+        },
+      },
+    });
+    const run = vi
+      .fn()
+      .mockRejectedValue(Object.assign(new Error("rate limited"), { status: 429 }));
+
+    await expect(
+      runWithModelFallback({
+        cfg,
+        provider: "openai",
+        model: "gpt-4.1-mini",
+        run,
+      }),
+    ).rejects.toThrow("All models failed");
+
+    const telemetry = getFallbackTelemetry();
+    expect(telemetry.lastHourCount).toBe(11);
+    expect(telemetry.warningCount).toBe(1);
+
+    const sessionKey = resolveMainSessionKey(cfg);
+    const events = peekSystemEvents(sessionKey);
+    expect(events.some((event) => event.includes("Pre-cascade warning"))).toBe(true);
+
+    vi.useRealTimers();
   });
 });

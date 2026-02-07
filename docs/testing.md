@@ -17,6 +17,7 @@ This doc is a “how we test” guide:
 - Which commands to run for common workflows (local, pre-push, debugging)
 - How live tests discover credentials and select models/providers
 - How to add regressions for real-world model/provider issues
+- Machine-readable index: `docs/testing-index.yaml`
 
 ## Quick start
 
@@ -89,6 +90,31 @@ Use this decision table:
 - Editing logic/tests: run `pnpm test` (and `pnpm test:coverage` if you changed a lot)
 - Touching gateway networking / WS protocol / pairing: add `pnpm test:e2e`
 - Debugging “my bot is down” / provider-specific failures / tool calling: run a narrowed `pnpm test:live`
+
+## Known local gate failures (environment-dependent)
+
+When running the full gate locally, these tests may fail due to sandbox/network
+restrictions rather than product logic. Document them here to avoid losing time
+re-triaging:
+
+- `src/media/server.test.ts` — `listen EPERM` (bind not permitted)
+- `src/infra/ports.test.ts` — `listen EPERM` (bind not permitted)
+- `src/infra/ports-inspect.test.ts` — `listen EPERM` (bind not permitted)
+- `src/telegram/webhook.test.ts` — `listen EPERM` (bind not permitted)
+- `src/canvas-host/server.test.ts` — `listen EPERM` (bind not permitted)
+- `src/browser/cdp.test.ts` — `listen EPERM` (bind not permitted)
+- `src/media-understanding/providers/google/video.test.ts` — `ENOTFOUND` (network/DNS)
+
+If these fail in CI or a non-sandboxed environment, treat as regressions.
+
+## Deferred test failures (logic to revisit)
+
+These are real test failures observed during the gate run and should be
+triaged when we return to them:
+
+- `src/agents/system-prompt.test.ts` — 2 failures
+- `src/agents/openclaw-tools.sessions.test.ts` — 2 failures
+- `src/slack/monitor/media.test.ts` — 2 failures
 
 ## Live: model smoke (profile keys)
 

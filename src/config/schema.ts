@@ -108,6 +108,8 @@ const FIELD_LABELS: Record<string, string> = {
   "update.checkOnStart": "Update Check on Start",
   "diagnostics.enabled": "Diagnostics Enabled",
   "diagnostics.flags": "Diagnostics Flags",
+  "extensions.streamBuffer.enabled": "Enable client-side stream buffer adapter (default: false).",
+  "extensions.streamBuffer.adapterPath": "Workspace path to the stream buffer adapter module.",
   "diagnostics.otel.enabled": "OpenTelemetry Enabled",
   "diagnostics.otel.endpoint": "OpenTelemetry Endpoint",
   "diagnostics.otel.protocol": "OpenTelemetry Protocol",
@@ -686,6 +688,10 @@ const FIELD_HELP: Record<string, string> = {
     "Max reply-back turns between requester and target (0–5).",
   "tools.agentToAgent.deliveryMode":
     'A2A delivery mode: "inject" (current ping-pong + announce) or "inbox" (record inbox only).',
+  "tools.agentToAgent.inboxAckMode":
+    'A2A inbox ack mode: "mark" keeps delivered events; "clear" removes them after injection.',
+  "tools.agentToAgent.inboxRetentionDays":
+    "A2A inbox retention in days for delivered events when using mark mode.",
   "tools.agentToAgent.namingMode":
     'A2A naming contract: "contract" (current) or "legacy" (prior fallback order).',
   "channels.telegram.customCommands":

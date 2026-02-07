@@ -4,18 +4,23 @@ import type { TemplateContext } from "../templating.js";
 import type { VerboseLevel } from "../thinking.js";
 import type { GetReplyOptions } from "../types.js";
 import type { FollowupRun } from "./queue.js";
-import { resolveAgentModelFallbacksOverride } from "../../agents/agent-scope.js";
-import { runWithModelFallback } from "../../agents/model-fallback.js";
-import { isCliProvider } from "../../agents/model-selection.js";
+import {
+  ensureAuthProfileStore,
+  isProfileInCooldown,
+  resolveAuthProfileOrder,
+} from "../../agents/auth-profiles.js";
+import { lookupContextTokens } from "../../agents/context.js";
+import { resolveFallbackCandidates, runWithModelFallback } from "../../agents/model-fallback.js";
+import { isCliProvider, resolveConfiguredModelRef } from "../../agents/model-selection.js";
+import { buildModelAliasIndex, resolveModelRefFromString } from "../../agents/model-selection.js";
 import { runEmbeddedPiAgent } from "../../agents/pi-embedded.js";
 import { resolveSandboxConfigForAgent, resolveSandboxRuntimeStatus } from "../../agents/sandbox.js";
-import {
-  resolveAgentIdFromSessionKey,
-  type SessionEntry,
-  updateSessionStoreEntry,
-} from "../../config/sessions.js";
+import { type SessionEntry, updateSessionStoreEntry } from "../../config/sessions.js";
 import { logVerbose } from "../../globals.js";
 import { registerAgentRunContext } from "../../infra/agent-events.js";
+import { emitAgentEvent } from "../../infra/agent-events.js";
+import { emitDiagnosticEvent, isDiagnosticsEnabled } from "../../infra/diagnostic-events.js";
+import { logWarn } from "../../logger.js";
 import { buildThreadingToolContext, resolveEnforceFinalTag } from "./agent-runner-utils.js";
 import {
   resolveMemoryFlushContextWindowTokens,
@@ -23,6 +28,9 @@ import {
   shouldRunMemoryFlush,
 } from "./memory-flush.js";
 import { incrementCompactionCount } from "./session-updates.js";
+
+const MEMORY_FLUSH_FAILURE_BACKOFF_BASE_MS = 60_000;
+const MEMORY_FLUSH_FAILURE_BACKOFF_MAX_MS = 30 * 60_000;
 
 export async function runMemoryFlushIfNeeded(params: {
   cfg: OpenClawConfig;
@@ -43,6 +51,64 @@ export async function runMemoryFlushIfNeeded(params: {
     return params.sessionEntry;
   }
 
+  const aliasIndex = buildModelAliasIndex({
+    cfg: params.cfg ?? {},
+    defaultProvider: params.followupRun.run.provider ?? "anthropic",
+  });
+  const resolvedFlushModel = memoryFlushSettings.model
+    ? resolveModelRefFromString({
+        raw: memoryFlushSettings.model,
+        defaultProvider: params.followupRun.run.provider ?? "anthropic",
+        aliasIndex,
+      })?.ref
+    : null;
+  const configuredPrimary = resolveConfiguredModelRef({
+    cfg: params.cfg,
+    defaultProvider: params.followupRun.run.provider ?? "anthropic",
+    defaultModel: params.followupRun.run.model ?? params.defaultModel,
+  });
+  const shouldRefreshModel =
+    !resolvedFlushModel &&
+    configuredPrimary &&
+    (configuredPrimary.provider !== params.followupRun.run.provider ||
+      configuredPrimary.model !== params.followupRun.run.model);
+  const flushProvider =
+    resolvedFlushModel?.provider ??
+    (shouldRefreshModel ? configuredPrimary?.provider : undefined) ??
+    params.followupRun.run.provider;
+  const flushModel =
+    resolvedFlushModel?.model ??
+    (shouldRefreshModel ? configuredPrimary?.model : undefined) ??
+    params.followupRun.run.model;
+
+  const isAnyModelAvailable = (() => {
+    if (!params.cfg || !params.followupRun.run.agentDir || !flushProvider) {
+      return true;
+    }
+    const authStore = ensureAuthProfileStore(params.followupRun.run.agentDir, {
+      allowKeychainPrompt: false,
+    });
+    if (!authStore) {
+      return true;
+    }
+    const candidates = resolveFallbackCandidates({
+      cfg: params.cfg,
+      provider: flushProvider,
+      model: flushModel ?? params.defaultModel,
+    });
+    return candidates.some((candidate) => {
+      const profileIds = resolveAuthProfileOrder({
+        cfg: params.cfg,
+        store: authStore,
+        provider: candidate.provider,
+      });
+      if (profileIds.length === 0) {
+        return true;
+      }
+      return profileIds.some((id) => !isProfileInCooldown(authStore, id));
+    });
+  })();
+
   const memoryFlushWritable = (() => {
     if (!params.sessionKey) {
       return true;
@@ -58,6 +124,70 @@ export async function runMemoryFlushIfNeeded(params: {
     return sandboxCfg.workspaceAccess === "rw";
   })();
 
+  const now = Date.now();
+  const telemetryRunId = `memoryFlush:${params.followupRun.run.sessionId}`;
+  let activeSessionEntry = params.sessionEntry;
+  const activeSessionStore = params.sessionStore;
+  const memoryFlushState =
+    params.sessionEntry ??
+    (params.sessionKey ? params.sessionStore?.[params.sessionKey] : undefined);
+  const contextWindowTokens = resolveMemoryFlushContextWindowTokens({
+    modelId: flushModel ?? params.defaultModel,
+    agentCfgContextTokens: params.agentCfgContextTokens,
+  });
+  const resolvedContextFromRegistry = lookupContextTokens(flushModel ?? params.defaultModel);
+  const contextDefaulted =
+    resolvedContextFromRegistry === undefined && params.agentCfgContextTokens === undefined;
+  if (contextDefaulted) {
+    const defaultedAt = memoryFlushState?.memoryFlushContextTokensDefaultedAt;
+    if (!defaultedAt) {
+      logWarn("memory flush context window defaulted; consider configuring model context size");
+      emitAgentEvent({
+        runId: telemetryRunId,
+        stream: "lifecycle",
+        sessionKey: params.sessionKey,
+        data: {
+          phase: "telemetry",
+          kind: "memory_flush_context_defaulted",
+        },
+      });
+      if (params.storePath && params.sessionKey) {
+        try {
+          const updatedEntry = await updateSessionStoreEntry({
+            storePath: params.storePath,
+            sessionKey: params.sessionKey,
+            update: async () => ({
+              memoryFlushContextTokensDefaultedAt: Date.now(),
+            }),
+          });
+          if (updatedEntry) {
+            activeSessionEntry = updatedEntry;
+          }
+        } catch (persistErr) {
+          logVerbose(
+            `failed to persist memory flush context-window default warning: ${String(persistErr)}`,
+          );
+        }
+      }
+    }
+  }
+
+  const nextAllowedAt = memoryFlushState?.memoryFlushNextAllowedAt ?? 0;
+  if (nextAllowedAt && now < nextAllowedAt) {
+    logWarn(`memory flush suppressed by backoff until ${new Date(nextAllowedAt).toISOString()}`);
+    emitAgentEvent({
+      runId: telemetryRunId,
+      stream: "lifecycle",
+      sessionKey: params.sessionKey,
+      data: {
+        phase: "telemetry",
+        kind: "memory_flush_backoff",
+        nextAllowedAt,
+      },
+    });
+    return params.sessionEntry;
+  }
+
   const shouldFlushMemory =
     memoryFlushSettings &&
     memoryFlushWritable &&
@@ -67,20 +197,16 @@ export async function runMemoryFlushIfNeeded(params: {
       entry:
         params.sessionEntry ??
         (params.sessionKey ? params.sessionStore?.[params.sessionKey] : undefined),
-      contextWindowTokens: resolveMemoryFlushContextWindowTokens({
-        modelId: params.followupRun.run.model ?? params.defaultModel,
-        agentCfgContextTokens: params.agentCfgContextTokens,
-      }),
+      contextWindowTokens,
       reserveTokensFloor: memoryFlushSettings.reserveTokensFloor,
       softThresholdTokens: memoryFlushSettings.softThresholdTokens,
+      isAnyModelAvailable,
     });
 
   if (!shouldFlushMemory) {
     return params.sessionEntry;
   }
 
-  let activeSessionEntry = params.sessionEntry;
-  const activeSessionStore = params.sessionStore;
   const flushRunId = crypto.randomUUID();
   if (params.sessionKey) {
     registerAgentRunContext(flushRunId, {
@@ -98,13 +224,9 @@ export async function runMemoryFlushIfNeeded(params: {
   try {
     await runWithModelFallback({
       cfg: params.followupRun.run.config,
-      provider: params.followupRun.run.provider,
-      model: params.followupRun.run.model,
+      provider: flushProvider,
+      model: flushModel,
       agentDir: params.followupRun.run.agentDir,
-      fallbacksOverride: resolveAgentModelFallbacksOverride(
-        params.followupRun.run.config,
-        resolveAgentIdFromSessionKey(params.followupRun.run.sessionKey),
-      ),
       run: (provider, model) => {
         const authProfileId =
           provider === params.followupRun.run.provider
@@ -193,8 +315,72 @@ export async function runMemoryFlushIfNeeded(params: {
         logVerbose(`failed to persist memory flush metadata: ${String(err)}`);
       }
     }
+    if (!memoryCompactionCompleted) {
+      logWarn("memory flush completed without compaction event; counters unchanged");
+      emitAgentEvent({
+        runId: telemetryRunId,
+        stream: "lifecycle",
+        sessionKey: params.sessionKey,
+        data: {
+          phase: "telemetry",
+          kind: "memory_flush_compaction_missing",
+        },
+      });
+    }
   } catch (err) {
-    logVerbose(`memory flush run failed: ${String(err)}`);
+    logWarn(`memory flush run failed: ${String(err)}`);
+    emitAgentEvent({
+      runId: telemetryRunId,
+      stream: "lifecycle",
+      sessionKey: params.sessionKey,
+      data: {
+        phase: "telemetry",
+        kind: "memory_flush_failed",
+        error: String(err),
+      },
+    });
+    if (isDiagnosticsEnabled(params.cfg)) {
+      emitDiagnosticEvent({
+        type: "memory.flush.failed",
+        sessionKey: params.sessionKey,
+        sessionId: params.followupRun.run.sessionId,
+        provider: flushProvider,
+        model: flushModel,
+        error: String(err),
+      });
+    }
+    const baseEntry =
+      activeSessionEntry ??
+      (params.sessionKey ? activeSessionStore?.[params.sessionKey] : undefined);
+    const failureCount = (baseEntry?.memoryFlushFailureCount ?? 0) + 1;
+    const exponent = Math.min(6, Math.max(0, failureCount - 1));
+    const backoffMs = Math.min(
+      MEMORY_FLUSH_FAILURE_BACKOFF_BASE_MS * 2 ** exponent,
+      MEMORY_FLUSH_FAILURE_BACKOFF_MAX_MS,
+    );
+    const nextAllowed = Date.now() + backoffMs;
+    const failurePatch = {
+      memoryFlushFailureCount: failureCount,
+      memoryFlushLastFailureAt: Date.now(),
+      memoryFlushNextAllowedAt: nextAllowed,
+    };
+    if (activeSessionEntry) {
+      Object.assign(activeSessionEntry, failurePatch);
+    }
+    if (params.storePath && params.sessionKey) {
+      try {
+        const updatedEntry = await updateSessionStoreEntry({
+          storePath: params.storePath,
+          sessionKey: params.sessionKey,
+          update: async () => failurePatch,
+        });
+        if (updatedEntry) {
+          activeSessionEntry = updatedEntry;
+        }
+      } catch (persistErr) {
+        logVerbose(`failed to persist memory flush failure state: ${String(persistErr)}`);
+      }
+    }
   }
 
   return activeSessionEntry;

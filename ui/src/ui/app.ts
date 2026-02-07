@@ -29,6 +29,7 @@ import type {
   NostrProfile,
 } from "./types";
 import type { NostrProfileFormState } from "./views/channels.nostr-profile-form";
+import { sweepActivity, type AgentActivity } from "./activity-hud-state";
 import {
   handleChannelConfigReload as handleChannelConfigReloadInternal,
   handleChannelConfigSave as handleChannelConfigSaveInternal,
@@ -75,17 +76,16 @@ import {
   resetToolStream as resetToolStreamInternal,
   type ToolStreamEntry,
 } from "./app-tool-stream";
-import { sweepActivity, type AgentActivity } from "./activity-hud-state";
 import { resolveInjectedAssistantIdentity } from "./assistant-identity";
 import { loadAssistantIdentity as loadAssistantIdentityInternal } from "./controllers/assistant-identity";
 import { loadChatHistory } from "./controllers/chat";
-import { loadSettings, type UiSettings } from "./storage";
-import { type ChatAttachment, type ChatQueueItem, type CronFormState } from "./ui-types";
 import {
   loadSlashCommands as loadSlashCommandsInternal,
   slashCommands as defaultSlashCommands,
   type SlashCommand,
 } from "./slash-commands";
+import { loadSettings, type UiSettings } from "./storage";
+import { type ChatAttachment, type ChatQueueItem, type CronFormState } from "./ui-types";
 
 declare global {
   interface Window {

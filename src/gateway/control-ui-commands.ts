@@ -83,10 +83,18 @@ export function handleControlUiCommandsRequest(
   try {
     const raw = fs.readFileSync(filePath, "utf-8");
     const parsed = YAML.parse(raw) as CommandsFile | null;
-    const entries = Array.isArray(parsed?.commands) ? parsed!.commands : [];
+    const entries = Array.isArray(parsed?.commands) ? parsed.commands : [];
     respondJson(res, 200, { commands: normalizeCommands(entries) });
   } catch (err) {
-    respondJson(res, 500, { error: String(err ?? "failed to load commands") });
+    const message =
+      err instanceof Error
+        ? err.message
+        : typeof err === "string"
+          ? err
+          : err == null
+            ? "failed to load commands"
+            : JSON.stringify(err);
+    respondJson(res, 500, { error: message });
   }
   return true;
 }

@@ -51,10 +51,10 @@ import {
 } from "./controllers/skills";
 import { icons } from "./icons";
 import { TAB_GROUPS, subtitleForTab, titleForTab } from "./navigation";
+import { renderAgentActivityHud } from "./views/agent-activity-hud";
 import { renderAgents } from "./views/agents";
 import { renderChannels } from "./views/channels";
 import { renderChat } from "./views/chat";
-import { renderAgentActivityHud } from "./views/agent-activity-hud";
 import { renderConfig } from "./views/config";
 import { renderCron } from "./views/cron";
 import { renderDebug } from "./views/debug";

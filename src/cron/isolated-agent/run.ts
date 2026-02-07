@@ -63,6 +63,21 @@ import {
 } from "./helpers.js";
 import { resolveCronSession } from "./session.js";
 
+const DEFAULT_CRON_TOKEN_BUDGET_RATIO = 0.9;
+
+function resolveCronTokenBudgetRatio(cfg: OpenClawConfig) {
+  const raw = cfg.cron?.tokenBudgetRatio;
+  if (typeof raw === "number" && Number.isFinite(raw)) {
+    return Math.min(1, Math.max(0.1, raw));
+  }
+  return DEFAULT_CRON_TOKEN_BUDGET_RATIO;
+}
+
+function resolveCronRunId(job: CronJob, nowMs: number) {
+  const planned = job.state.plannedRunAtMs ?? nowMs;
+  return `cron:${job.id}:${planned}`;
+}
+
 function matchesMessagingToolDeliveryTarget(
   target: MessagingToolSend,
   delivery: { channel: string; to?: string; accountId?: string },
@@ -218,6 +233,25 @@ export async function runCronIsolatedAgentTurn(params: {
     agentId,
     nowMs: now,
   });
+  const runId = resolveCronRunId(params.job, now);
+  const tokenBudgetRatio = resolveCronTokenBudgetRatio(params.cfg);
+  const contextTokens =
+    agentCfg?.contextTokens ?? lookupContextTokens(model) ?? DEFAULT_CONTEXT_TOKENS;
+  const totalTokens = cronSession.sessionEntry.totalTokens;
+  if (typeof totalTokens === "number" && Number.isFinite(totalTokens) && totalTokens > 0) {
+    const maxTokens = Math.max(1, Math.floor(contextTokens * tokenBudgetRatio));
+    if (totalTokens >= maxTokens) {
+      logWarn(
+        `cron: skipping isolated run due to token budget ` +
+          `(job=${params.job.id} session=${agentSessionKey} total=${totalTokens} ` +
+          `context=${contextTokens} ratio=${tokenBudgetRatio})`,
+      );
+      return {
+        status: "skipped",
+        summary: `Skipped: token budget exceeded (${totalTokens}/${contextTokens}).`,
+      };
+    }
+  }
 
   // Resolve thinking level - job thinking > hooks.gmail.thinking > agent default
   const hooksGmailThinking = isGmailHook
@@ -368,7 +402,7 @@ export async function runCronIsolatedAgentTurn(params: {
             model: modelOverride,
             thinkLevel,
             timeoutMs,
-            runId: cronSession.sessionEntry.sessionId,
+            runId,
             cliSessionId,
           });
         }
@@ -388,7 +422,7 @@ export async function runCronIsolatedAgentTurn(params: {
           thinkLevel,
           verboseLevel: resolvedVerboseLevel,
           timeoutMs,
-          runId: cronSession.sessionEntry.sessionId,
+          runId,
         });
       },
     });
@@ -406,12 +440,12 @@ export async function runCronIsolatedAgentTurn(params: {
     const usage = runResult.meta.agentMeta?.usage;
     const modelUsed = runResult.meta.agentMeta?.model ?? fallbackModel ?? model;
     const providerUsed = runResult.meta.agentMeta?.provider ?? fallbackProvider ?? provider;
-    const contextTokens =
+    const resolvedContextTokens =
       agentCfg?.contextTokens ?? lookupContextTokens(modelUsed) ?? DEFAULT_CONTEXT_TOKENS;
 
     cronSession.sessionEntry.modelProvider = providerUsed;
     cronSession.sessionEntry.model = modelUsed;
-    cronSession.sessionEntry.contextTokens = contextTokens;
+    cronSession.sessionEntry.contextTokens = resolvedContextTokens;
     if (isCliProvider(providerUsed, cfgWithAgentDefaults)) {
       const cliSessionId = runResult.meta.agentMeta?.sessionId?.trim();
       if (cliSessionId) {

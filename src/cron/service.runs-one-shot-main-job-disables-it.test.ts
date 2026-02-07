@@ -18,7 +18,7 @@ async function makeStorePath() {
   return {
     storePath: path.join(dir, "cron", "jobs.json"),
     cleanup: async () => {
-      await fs.rm(dir, { recursive: true, force: true });
+      await fs.rm(dir, { recursive: true, force: true }).catch(() => undefined);
     },
   };
 }
@@ -104,7 +104,7 @@ describe("CronService", () => {
 
     await cron.list({ includeDisabled: true });
     cron.stop();
-    await store.cleanup();
+    await store.cleanup().catch(() => undefined);
   });
 
   it("runs a one-shot job and deletes it after success when requested", async () => {
@@ -142,6 +142,57 @@ describe("CronService", () => {
       agentId: undefined,
     });
     expect(requestHeartbeatNow).toHaveBeenCalled();
+
+    cron.stop();
+    await store.cleanup();
+  });
+
+  it("applies backoff after consecutive failures", async () => {
+    const store = await makeStorePath();
+    const enqueueSystemEvent = vi.fn();
+    const requestHeartbeatNow = vi.fn();
+    const runIsolatedAgentJob = vi.fn(async () => ({ status: "error", error: "boom" }));
+
+    const cron = new CronService({
+      storePath: store.storePath,
+      cronEnabled: true,
+      log: noopLogger,
+      enqueueSystemEvent,
+      requestHeartbeatNow,
+      runIsolatedAgentJob,
+    });
+
+    await cron.start();
+    const job = await cron.add({
+      name: "backoff job",
+      enabled: true,
+      schedule: { kind: "every", everyMs: 1_000 },
+      sessionTarget: "isolated",
+      wakeMode: "now",
+      payload: { kind: "agentTurn", message: "hello" },
+    });
+
+    vi.setSystemTime(new Date("2025-12-13T00:00:02.000Z"));
+    await vi.runOnlyPendingTimersAsync();
+
+    const afterFirst = await waitForJob(
+      cron,
+      job.id,
+      (entry) => entry?.state.lastStatus === "error",
+    );
+    expect(afterFirst?.state.failureCount).toBe(1);
+    expect(afterFirst?.state.nextAllowedAtMs).toBeTypeOf("number");
+    expect(runIsolatedAgentJob).toHaveBeenCalledTimes(1);
+
+    // Advance less than backoff window (default 60s) - should not run again
+    await vi.advanceTimersByTimeAsync(30_000);
+    await cron.run(job.id, "due");
+    expect(runIsolatedAgentJob).toHaveBeenCalledTimes(1);
+
+    // Advance beyond backoff window
+    await vi.advanceTimersByTimeAsync(40_000);
+    await cron.run(job.id, "due");
+    expect(runIsolatedAgentJob).toHaveBeenCalledTimes(2);
 
     cron.stop();
     await store.cleanup();

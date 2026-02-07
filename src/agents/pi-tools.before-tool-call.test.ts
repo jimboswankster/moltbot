@@ -29,6 +29,7 @@ describe("before_tool_call hook integration", () => {
     const tool = wrapToolWithBeforeToolCallHook({ name: "Read", execute } as any, {
       agentId: "main",
       sessionKey: "main",
+      runId: "run-1",
     });
 
     await tool.execute("call-1", { path: "/tmp/file" }, undefined, undefined);
@@ -90,6 +91,7 @@ describe("before_tool_call hook integration", () => {
     const tool = wrapToolWithBeforeToolCallHook({ name: "ReAd", execute } as any, {
       agentId: "main",
       sessionKey: "main",
+      runId: "run-2",
     });
 
     await tool.execute("call-5", "not-an-object", undefined, undefined);
@@ -103,6 +105,7 @@ describe("before_tool_call hook integration", () => {
         toolName: "read",
         agentId: "main",
         sessionKey: "main",
+        runId: "run-2",
       },
     );
   });

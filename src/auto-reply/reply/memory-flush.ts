@@ -21,6 +21,7 @@ export const DEFAULT_MEMORY_FLUSH_SYSTEM_PROMPT = [
 
 export type MemoryFlushSettings = {
   enabled: boolean;
+  model?: string;
   softThresholdTokens: number;
   prompt: string;
   systemPrompt: string;
@@ -45,12 +46,14 @@ export function resolveMemoryFlushSettings(cfg?: OpenClawConfig): MemoryFlushSet
     normalizeNonNegativeInt(defaults?.softThresholdTokens) ?? DEFAULT_MEMORY_FLUSH_SOFT_TOKENS;
   const prompt = defaults?.prompt?.trim() || DEFAULT_MEMORY_FLUSH_PROMPT;
   const systemPrompt = defaults?.systemPrompt?.trim() || DEFAULT_MEMORY_FLUSH_SYSTEM_PROMPT;
+  const model = defaults?.model?.trim() || undefined;
   const reserveTokensFloor =
     normalizeNonNegativeInt(cfg?.agents?.defaults?.compaction?.reserveTokensFloor) ??
     DEFAULT_PI_COMPACTION_RESERVE_TOKENS_FLOOR;
 
   return {
     enabled,
+    model,
     softThresholdTokens,
     prompt: ensureNoReplyHint(prompt),
     systemPrompt: ensureNoReplyHint(systemPrompt),
@@ -79,7 +82,11 @@ export function shouldRunMemoryFlush(params: {
   contextWindowTokens: number;
   reserveTokensFloor: number;
   softThresholdTokens: number;
+  isAnyModelAvailable?: boolean;
 }): boolean {
+  if (params.isAnyModelAvailable === false) {
+    return false;
+  }
   const totalTokens = params.entry?.totalTokens;
   if (!totalTokens || totalTokens <= 0) {
     return false;

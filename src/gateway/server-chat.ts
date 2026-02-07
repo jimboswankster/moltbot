@@ -138,6 +138,7 @@ export type AgentEventHandlerOptions = {
   resolveSessionKeyForRun: (runId: string) => string | undefined;
   clearAgentRunContext: (runId: string) => void;
   logGateway?: { info?: (message: string) => void };
+  streamBufferAdapter?: import("../infra/stream-buffer-adapter.js").StreamBufferAdapter | null;
 };
 
 export function createAgentEventHandler({
@@ -149,13 +150,74 @@ export function createAgentEventHandler({
   resolveSessionKeyForRun,
   clearAgentRunContext,
   logGateway,
+  streamBufferAdapter,
 }: AgentEventHandlerOptions) {
   const verbose = isVerbose();
-  const emitChatDelta = (sessionKey: string, clientRunId: string, seq: number, text: string) => {
-    chatRunState.buffers.set(clientRunId, text);
+  const emitChatDelta = (
+    sessionKey: string,
+    clientRunId: string,
+    seq: number,
+    text: string,
+    deltaText?: string,
+  ) => {
+    const previous = chatRunState.buffers.get(clientRunId) ?? "";
+    let resolvedDelta = deltaText;
+    const trimOverlap = (base: string, incoming: string) => {
+      const max = Math.min(base.length, incoming.length);
+      for (let len = max; len > 0; len -= 1) {
+        if (base.endsWith(incoming.slice(0, len))) {
+          return incoming.slice(len);
+        }
+      }
+      return incoming;
+    };
+    if (text && previous && text.startsWith(previous)) {
+      resolvedDelta = text.slice(previous.length);
+    }
+    if (resolvedDelta && previous) {
+      if (resolvedDelta.startsWith(previous)) {
+        // Incoming delta is actually a full replay of previous text.
+        resolvedDelta = resolvedDelta.slice(previous.length);
+      } else {
+        resolvedDelta = trimOverlap(previous, resolvedDelta);
+      }
+    }
+    if (text && text === previous) {
+      return;
+    }
+    const nextText = resolvedDelta ? `${previous}${resolvedDelta}` : text;
+    if (nextText === previous) {
+      return;
+    }
+    chatRunState.buffers.set(clientRunId, nextText);
     const now = Date.now();
     const last = chatRunState.deltaSentAt.get(clientRunId) ?? 0;
-    if (now - last < 150) {
+    let minDeltaMs = 150;
+    let allow = true;
+    if (streamBufferAdapter) {
+      try {
+        const decision = streamBufferAdapter({
+          sessionKey,
+          runId: clientRunId,
+          seq,
+          text: nextText,
+          deltaText: resolvedDelta,
+          timestamp: now,
+        });
+        if (decision?.coalesceMs && Number.isFinite(decision.coalesceMs)) {
+          minDeltaMs = Math.max(minDeltaMs, Math.max(0, decision.coalesceMs));
+        }
+        if (decision?.allow !== undefined) {
+          allow = decision.allow;
+        }
+      } catch (err) {
+        logGateway?.info?.(`stream buffer adapter failed: ${String(err)}`);
+      }
+    }
+    if (!allow) {
+      return;
+    }
+    if (now - last < minDeltaMs) {
       return;
     }
     chatRunState.deltaSentAt.set(clientRunId, now);
@@ -164,9 +226,10 @@ export function createAgentEventHandler({
       sessionKey,
       seq,
       state: "delta" as const,
+      deltaText: resolvedDelta,
       message: {
         role: "assistant",
-        content: [{ type: "text", text }],
+        content: [{ type: "text", text: nextText }],
         timestamp: now,
       },
     };
@@ -291,7 +354,8 @@ export function createAgentEventHandler({
     if (sessionKey) {
       nodeSendToSession(sessionKey, "agent", agentPayload);
       if (!isAborted && evt.stream === "assistant" && typeof evt.data?.text === "string") {
-        emitChatDelta(sessionKey, clientRunId, evt.seq, evt.data.text);
+        const deltaText = typeof evt.data?.delta === "string" ? evt.data.delta : undefined;
+        emitChatDelta(sessionKey, clientRunId, evt.seq, evt.data.text, deltaText);
       } else if (!isAborted && (lifecyclePhase === "end" || lifecyclePhase === "error")) {
         if (isActiveChatRun) {
           if (verbose && logGateway?.info) {

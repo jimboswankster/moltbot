@@ -49,6 +49,7 @@ export async function runDueJobs(state: CronServiceState) {
       return [];
     }
     const now = state.deps.nowMs();
+    let mutated = false;
     const ids = state.store.jobs
       .filter((j) => {
         if (!j.enabled) {
@@ -57,10 +58,21 @@ export async function runDueJobs(state: CronServiceState) {
         if (typeof j.state.runningAtMs === "number") {
           return false;
         }
+        const nextAllowed = j.state.nextAllowedAtMs;
+        if (typeof nextAllowed === "number" && now < nextAllowed) {
+          if (!j.state.nextRunAtMs || j.state.nextRunAtMs < nextAllowed) {
+            j.state.nextRunAtMs = nextAllowed;
+            mutated = true;
+          }
+          return false;
+        }
         const next = j.state.nextRunAtMs;
         return typeof next === "number" && now >= next;
       })
       .map((j) => j.id);
+    if (mutated) {
+      await persist(state);
+    }
     if (ids.length === 0) {
       armTimer(state);
     }
@@ -89,8 +101,15 @@ export async function executeJob(
     if (!job) {
       return null;
     }
+    const plannedRunAtMs =
+      !opts.forced &&
+      job.state.lastStatus === "error" &&
+      typeof job.state.plannedRunAtMs === "number"
+        ? job.state.plannedRunAtMs
+        : (job.state.nextRunAtMs ?? startedAt);
     job.state.runningAtMs = startedAt;
     job.state.lastError = undefined;
+    job.state.plannedRunAtMs = plannedRunAtMs;
     job.state.nextRunAtMs = undefined;
     emit(state, { jobId: job.id, action: "started", runAtMs: startedAt });
     await persist(state);
@@ -129,6 +148,21 @@ export async function executeJob(
     job.state.lastStatus = outcome.status;
     job.state.lastDurationMs = Math.max(0, endedAt - startedAt);
     job.state.lastError = outcome.err;
+    if (outcome.status === "ok") {
+      job.state.failureCount = undefined;
+      job.state.nextAllowedAtMs = undefined;
+      job.state.plannedRunAtMs = undefined;
+    }
+    if (outcome.status === "skipped") {
+      job.state.plannedRunAtMs = undefined;
+    }
+    if (outcome.status === "error" && job.enabled) {
+      const failureCount = (job.state.failureCount ?? 0) + 1;
+      const exponent = Math.min(6, Math.max(0, failureCount - 1));
+      const backoffMs = Math.min(60_000 * 2 ** exponent, 30 * 60_000);
+      job.state.failureCount = failureCount;
+      job.state.nextAllowedAtMs = endedAt + backoffMs;
+    }
 
     const shouldDelete =
       job.schedule.kind === "at" && outcome.status === "ok" && job.deleteAfterRun === true;
@@ -150,7 +184,13 @@ export async function executeJob(
         job.enabled = false;
         job.state.nextRunAtMs = undefined;
       } else if (job.enabled) {
-        job.state.nextRunAtMs = computeJobNextRunAtMs(job, endedAt);
+        const nextRun = computeJobNextRunAtMs(job, endedAt);
+        const nextAllowed = job.state.nextAllowedAtMs;
+        if (typeof nextAllowed === "number") {
+          job.state.nextRunAtMs = nextRun ? Math.max(nextRun, nextAllowed) : nextAllowed;
+        } else {
+          job.state.nextRunAtMs = nextRun;
+        }
       } else {
         job.state.nextRunAtMs = undefined;
       }
@@ -177,7 +217,13 @@ export async function executeJob(
     job.updatedAtMs = nowMs;
     if (!opts.forced && job.enabled && !deleted) {
       // Keep nextRunAtMs in sync in case the schedule advanced during a long run.
-      job.state.nextRunAtMs = computeJobNextRunAtMs(job, state.deps.nowMs());
+      const nextRun = computeJobNextRunAtMs(job, state.deps.nowMs());
+      const nextAllowed = job.state.nextAllowedAtMs;
+      if (typeof nextAllowed === "number") {
+        job.state.nextRunAtMs = nextRun ? Math.max(nextRun, nextAllowed) : nextAllowed;
+      } else {
+        job.state.nextRunAtMs = nextRun;
+      }
     }
     await persist(state);
     armTimer(state);

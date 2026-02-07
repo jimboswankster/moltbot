@@ -151,6 +151,18 @@ export const OpenClawSchema = z
       })
       .strict()
       .optional(),
+    extensions: z
+      .object({
+        streamBuffer: z
+          .object({
+            enabled: z.boolean().optional(),
+            adapterPath: z.string().optional(),
+          })
+          .strict()
+          .optional(),
+      })
+      .strict()
+      .optional(),
     logging: z
       .object({
         level: z

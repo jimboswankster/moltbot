@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import type { GatewayMessageChannel } from "../../utils/message-channel.js";
 import { loadConfig } from "../../config/config.js";
 import { callGateway } from "../../gateway/call.js";
+import { emitAgentEvent } from "../../infra/agent-events.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { recordA2AInboxEvent } from "../a2a-inbox.js";
@@ -19,6 +20,24 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function emitA2ATelemetry(params: {
+  runId: string;
+  sessionKey?: string;
+  kind: string;
+  details?: Record<string, unknown>;
+}) {
+  emitAgentEvent({
+    runId: params.runId,
+    stream: "lifecycle",
+    data: {
+      phase: "telemetry",
+      kind: params.kind,
+      ...params.details,
+    },
+    ...(params.sessionKey ? { sessionKey: params.sessionKey } : {}),
+  });
+}
+
 export async function runSessionsSendA2AFlow(params: {
   targetSessionKey: string;
   displayKey: string;
@@ -30,7 +49,7 @@ export async function runSessionsSendA2AFlow(params: {
   roundOneReply?: string;
   waitRunId?: string;
 }) {
-  const runContextId = params.waitRunId ?? "unknown";
+  const runContextId = params.waitRunId ?? `a2a:${crypto.randomUUID()}`;
   try {
     const cfg = loadConfig();
     const deliveryMode = cfg.tools?.agentToAgent?.deliveryMode ?? "inject";
@@ -126,6 +145,16 @@ export async function runSessionsSendA2AFlow(params: {
           to: announceTarget.to,
           error: formatErrorMessage(err),
         });
+        emitA2ATelemetry({
+          runId: runContextId,
+          sessionKey: params.requesterSessionKey ?? params.targetSessionKey,
+          kind: "a2a_announce_delivery_failed",
+          details: {
+            channel: announceTarget.channel,
+            to: announceTarget.to,
+            error: formatErrorMessage(err),
+          },
+        });
       }
     }
 
@@ -148,6 +177,12 @@ export async function runSessionsSendA2AFlow(params: {
     log.warn("sessions_send announce flow failed", {
       runId: runContextId,
       error: formatErrorMessage(err),
+    });
+    emitA2ATelemetry({
+      runId: runContextId,
+      sessionKey: params.requesterSessionKey ?? params.targetSessionKey,
+      kind: "a2a_announce_flow_failed",
+      details: { error: formatErrorMessage(err) },
     });
   }
 }

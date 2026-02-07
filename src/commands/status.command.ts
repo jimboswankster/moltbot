@@ -237,11 +237,25 @@ export async function statusCommand(
   const a2aValue = (() => {
     const a2aSummary = summary.a2a;
     if (!a2aSummary || a2aSummary.inboxDisplayFallbackCount === 0) {
-      return muted("ok");
+      return muted(`ok · ack ${a2aSummary?.inboxAckMode ?? "mark"}`);
     }
     const ids = a2aSummary.inboxDisplayFallback.map((entry) => entry.id).join(", ");
     const detail = ids ? ` · ${shortenText(ids, 48)}` : "";
-    return warn(`${a2aSummary.inboxDisplayFallbackCount} fallback${detail}`);
+    return warn(
+      `${a2aSummary.inboxDisplayFallbackCount} fallback${detail} · ack ${a2aSummary.inboxAckMode}`,
+    );
+  })();
+
+  const fallbackValue = (() => {
+    const fb = summary.fallbacks;
+    if (!fb || fb.lastHourCount === 0) {
+      return muted("ok");
+    }
+    const topProvider = fb.byProvider[0]?.provider ?? null;
+    const providerSuffix = topProvider ? ` · ${shortenText(topProvider, 24)}` : "";
+    const warnCount = fb.warningCount > 0 ? ` · warn ${fb.warningCount}` : "";
+    const label = `${fb.lastHourCount}/hr${warnCount}${providerSuffix}`;
+    return fb.lastHourCount >= fb.warnThreshold ? warn(label) : muted(label);
   })();
 
   const agentsValue = (() => {
@@ -386,6 +400,7 @@ export async function statusCommand(
     { Item: "Gateway", Value: gatewayValue },
     { Item: "Watchers", Value: watcherValue },
     { Item: "A2A Inbox", Value: a2aValue },
+    { Item: "Fallbacks", Value: fallbackValue },
     { Item: "Gateway service", Value: daemonValue },
     { Item: "Node service", Value: nodeDaemonValue },
     { Item: "Agents", Value: agentsValue },

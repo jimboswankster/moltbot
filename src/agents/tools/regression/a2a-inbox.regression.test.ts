@@ -867,6 +867,55 @@ describe("A2A Inbox - Audit Logging", () => {
   });
 });
 
+describe("A2A Inbox - Ack + Clear (feature flag)", () => {
+  it("clears delivered events when inboxAckMode=clear", async () => {
+    configOverride = {
+      session: {
+        mainKey: "main",
+        scope: "per-sender",
+      },
+      tools: {
+        agentToAgent: {
+          inboxAckMode: "clear",
+        },
+      },
+    } as OpenClawConfig;
+
+    const { storePath, sessionKey, cfg } = await setupSessionStore();
+    const cfgWithAck = {
+      ...cfg,
+      tools: {
+        agentToAgent: {
+          inboxAckMode: "clear",
+        },
+      },
+    } as OpenClawConfig;
+
+    await recordA2AInboxEvent({
+      cfg: cfgWithAck,
+      sessionKey,
+      sourceSessionKey: "agent:main:subagent:sub-001",
+      sourceDisplayKey: "Docs Writer",
+      runId: "run-ack-1",
+      replyText: "Deliverable complete.",
+      now: 1738737600000,
+    });
+
+    const injected = await injectA2AInboxPrependContext({
+      cfg: cfgWithAck,
+      sessionKey,
+      runId: "run-main-ack",
+      now: 1738737601000,
+    });
+
+    expect(injected?.prependContext).toContain(TRANSITIONAL_A2A_INBOX_TAG);
+
+    const store = loadSessionStore(storePath, { skipCache: true });
+    const events = store[sessionKey]?.a2aInbox?.events ?? [];
+    expect(events).toHaveLength(0);
+  });
+});
+
 describe("A2A Inbox - Policy Enforcement", () => {
   it("blocks inbox writes when agentToAgent allowlist denies", async () => {
     const { dir, cfg, sessionKey, storePath } = await setupSessionStore();
@@ -998,6 +1047,92 @@ describe("A2A Inbox - Versioning + Staleness", () => {
           sourceSessionKey: "agent:main:subagent:sub-002",
           eventCount: 1,
           unsupportedVersion: true,
+        }),
+      );
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("A2A Inbox - Retention", () => {
+  it("prunes delivered events older than retention days in mark mode", async () => {
+    const { dir, cfg, sessionKey, storePath } = await setupSessionStore();
+    const now = 1738737600000;
+    const dayMs = 24 * 60 * 60 * 1000;
+    const cfgWithRetention = {
+      ...cfg,
+      tools: {
+        agentToAgent: {
+          inboxAckMode: "mark",
+          inboxRetentionDays: 7,
+        },
+      },
+    } as OpenClawConfig;
+    try {
+      await saveSessionStore(storePath, {
+        [sessionKey]: {
+          sessionId: "session-1",
+          updatedAt: Date.now(),
+          a2aInbox: {
+            events: [
+              {
+                schemaVersion: 1,
+                createdAt: now - 10 * dayMs,
+                runId: "run-old",
+                sourceSessionKey: "agent:main:subagent:sub-old",
+                sourceDisplayKey: "Old Worker",
+                replyText: "Old delivered.",
+                deliveredAt: now - 8 * dayMs,
+                deliveredRunId: "run-master-old",
+              },
+              {
+                schemaVersion: 1,
+                createdAt: now - 2 * dayMs,
+                runId: "run-recent",
+                sourceSessionKey: "agent:main:subagent:sub-recent",
+                sourceDisplayKey: "Recent Worker",
+                replyText: "Recent delivered.",
+                deliveredAt: now - 1 * dayMs,
+                deliveredRunId: "run-master-recent",
+              },
+              {
+                schemaVersion: 1,
+                createdAt: now,
+                runId: "run-pending",
+                sourceSessionKey: "agent:main:subagent:sub-pending",
+                sourceDisplayKey: "Pending Worker",
+                replyText: "Pending reply.",
+              },
+            ],
+          },
+        },
+      });
+
+      const injected = await injectA2AInboxPrependContext({
+        cfg: cfgWithRetention,
+        sessionKey,
+        runId: "run-master-retention",
+        now,
+      });
+
+      expect(injected?.prependContext).toContain(TRANSITIONAL_A2A_INBOX_TAG);
+
+      const store = loadSessionStore(storePath, { skipCache: true });
+      const events = store[sessionKey]?.a2aInbox?.events ?? [];
+      const ids = events.map((event) => event.runId);
+      expect(ids).toContain("run-recent");
+      expect(ids).toContain("run-pending");
+      expect(ids).not.toContain("run-old");
+      const pending = events.find((event) => event.runId === "run-pending");
+      expect(pending?.deliveredAt).toBe(now);
+      expect(logInfo).toHaveBeenCalledWith(
+        "a2a_inbox_retention_pruned",
+        expect.objectContaining({
+          runId: "run-master-retention",
+          sessionKey,
+          eventCount: 1,
+          retentionDays: 7,
         }),
       );
     } finally {
@@ -1181,6 +1316,45 @@ describe("A2A Inbox - Fail Closed Clear Strategy", () => {
       );
       updateSpy.mockRestore();
     } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("A2A Inbox - Atomic Ack/Clear", () => {
+  it("does not mutate inbox when ack update fails", async () => {
+    const { dir, cfg, sessionKey, storePath } = await setupSessionStore();
+    const updateSpy = vi.spyOn(sessions, "updateSessionStore");
+    try {
+      await recordA2AInboxEvent({
+        cfg,
+        sessionKey,
+        sourceSessionKey: "agent:main:subagent:sub-001",
+        sourceDisplayKey: "Docs Writer",
+        runId: "run-atomic-1",
+        replyText: "Atomic delivery",
+        now: 1738737600000,
+      });
+
+      updateSpy.mockImplementationOnce(async () => {
+        throw new Error("simulated update failure");
+      });
+
+      const injected = await injectA2AInboxPrependContext({
+        cfg,
+        sessionKey,
+        runId: "run-main-atomic",
+        now: 1738737601000,
+      });
+
+      expect(injected).toBeUndefined();
+
+      const store = loadSessionStore(storePath, { skipCache: true });
+      const events = store[sessionKey]?.a2aInbox?.events ?? [];
+      expect(events).toHaveLength(1);
+      expect(events[0]?.deliveredAt).toBeUndefined();
+    } finally {
+      updateSpy.mockRestore();
       await fs.rm(dir, { recursive: true, force: true });
     }
   });

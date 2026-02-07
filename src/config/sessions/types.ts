@@ -91,6 +91,10 @@ export type SessionEntry = {
   compactionCount?: number;
   memoryFlushAt?: number;
   memoryFlushCompactionCount?: number;
+  memoryFlushFailureCount?: number;
+  memoryFlushLastFailureAt?: number;
+  memoryFlushNextAllowedAt?: number;
+  memoryFlushContextTokensDefaultedAt?: number;
   cliSessionIds?: Record<string, string>;
   claudeCliSessionId?: string;
   label?: string;
@@ -109,6 +113,8 @@ export type SessionEntry = {
   skillsSnapshot?: SessionSkillSnapshot;
   systemPromptReport?: SessionSystemPromptReport;
   a2aInbox?: A2AInboxState;
+  /** Durable ledger of browser host/sandbox idempotent results. */
+  browserIdempotencyLedger?: Record<string, { ts: number; result: unknown }>;
 };
 
 export function mergeSessionEntry(

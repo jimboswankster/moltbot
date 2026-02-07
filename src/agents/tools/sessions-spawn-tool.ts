@@ -12,7 +12,18 @@ import {
 } from "../../routing/session-key.js";
 import { normalizeDeliveryContext } from "../../utils/delivery-context.js";
 import { resolveAgentConfig } from "../agent-scope.js";
+import {
+  isProfileInCooldown,
+  loadAuthProfileStore,
+  resolveAuthProfileOrder,
+} from "../auth-profiles.js";
+import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "../defaults.js";
 import { AGENT_LANE_SUBAGENT } from "../lanes.js";
+import {
+  buildModelAliasIndex,
+  resolveConfiguredModelRef,
+  resolveModelRefFromString,
+} from "../model-selection.js";
 import { optionalStringEnum } from "../schema/typebox.js";
 import { buildSubagentSystemPrompt } from "../subagent-announce.js";
 import { registerSubagentRun } from "../subagent-registry.js";
@@ -36,6 +47,8 @@ const SessionsSpawnToolSchema = Type.Object({
   // Back-compat alias. Prefer runTimeoutSeconds.
   timeoutSeconds: Type.Optional(Type.Number({ minimum: 0 })),
   cleanup: optionalStringEnum(["delete", "keep"] as const),
+  idempotencyKey: Type.Optional(Type.String({ minLength: 1 })),
+  idempotencyKeySeed: Type.Optional(Type.String({ minLength: 1 })),
 });
 
 function splitModelRef(ref?: string) {
@@ -66,6 +79,29 @@ function normalizeModelSelection(value: unknown): string | undefined {
     return primary.trim();
   }
   return undefined;
+}
+
+function resolveSpawnProvider(params: { cfg: ReturnType<typeof loadConfig>; model?: string }) {
+  const defaultRef = resolveConfiguredModelRef({
+    cfg: params.cfg,
+    defaultProvider: DEFAULT_PROVIDER,
+    defaultModel: DEFAULT_MODEL,
+  });
+  const aliasIndex = buildModelAliasIndex({
+    cfg: params.cfg,
+    defaultProvider: defaultRef.provider,
+  });
+  if (params.model) {
+    const resolved = resolveModelRefFromString({
+      raw: params.model,
+      defaultProvider: defaultRef.provider,
+      aliasIndex,
+    });
+    if (resolved?.ref?.provider) {
+      return resolved.ref.provider;
+    }
+  }
+  return defaultRef.provider;
 }
 
 export function createSessionsSpawnTool(opts?: {
@@ -196,6 +232,23 @@ export function createSessionsSpawnTool(opts?: {
           normalizeModelSelection(cfg.agents?.defaults?.subagents?.model);
       }
 
+      const spawnProvider = resolveSpawnProvider({ cfg, model: resolvedModel });
+      const authStore = loadAuthProfileStore();
+      const authOrder = resolveAuthProfileOrder({
+        cfg,
+        store: authStore,
+        provider: spawnProvider,
+      });
+      if (
+        authOrder.length > 0 &&
+        authOrder.every((profileId) => isProfileInCooldown(authStore, profileId))
+      ) {
+        return jsonResult({
+          status: "error",
+          error: `Quota stress: all ${spawnProvider} auth profiles are in cooldown; skipping sessions_spawn.`,
+        });
+      }
+
       const resolvedThinkingDefaultRaw =
         readStringParam(targetAgentConfig?.subagents ?? {}, "thinking") ??
         readStringParam(cfg.agents?.defaults?.subagents ?? {}, "thinking");
@@ -245,7 +298,8 @@ export function createSessionsSpawnTool(opts?: {
         task,
       });
 
-      const childIdem = crypto.randomUUID();
+      const providedIdempotencyKey = readStringParam(params, "idempotencyKey")?.trim();
+      const childIdem = providedIdempotencyKey || crypto.randomUUID();
       let childRunId: string = childIdem;
       try {
         const response = await callGateway<{ runId: string }>({

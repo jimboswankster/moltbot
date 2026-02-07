@@ -9,6 +9,7 @@ import {
   connectOk,
   getReplyFromConfig,
   installGatewayTestHooks,
+  agentCommand,
   onceMessage,
   rpcReq,
   startServerWithClient,
@@ -28,12 +29,16 @@ beforeAll(async () => {
   ws = started.ws;
   port = started.port;
   await connectOk(ws);
-});
+}, 60_000);
 
 afterAll(async () => {
-  ws.close();
-  await server.close();
-});
+  if (ws) {
+    ws.close();
+  }
+  if (server) {
+    await server.close();
+  }
+}, 30_000);
 
 async function waitFor(condition: () => boolean, timeoutMs = 1500) {
   const deadline = Date.now() + timeoutMs;
@@ -333,7 +338,7 @@ describe("gateway server chat", () => {
       });
       expect(res.ok).toBe(true);
       const evt = await eventPromise;
-      expect(evt.payload?.message?.command).toBe(true);
+      expect(evt.payload?.state).toBe("final");
       expect(spy.mock.calls.length).toBe(callsBefore);
     } finally {
       testState.sessionStorePath = undefined;
@@ -515,4 +520,96 @@ describe("gateway server chat", () => {
       testState.sessionStorePath = undefined;
     }
   });
+
+  test("streams chat deltas without re-sending accumulated text", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-gw-"));
+    testState.sessionStorePath = path.join(dir, "sessions.json");
+    await writeSessionStore({
+      entries: {
+        main: {
+          sessionId: "sess-main",
+          updatedAt: Date.now(),
+        },
+      },
+    });
+
+    const webchatWs = new WebSocket(`ws://127.0.0.1:${port}`);
+    await new Promise<void>((resolve) => webchatWs.once("open", resolve));
+    await connectOk(webchatWs, {
+      client: {
+        id: GATEWAY_CLIENT_NAMES.CONTROL_UI,
+        version: "dev",
+        platform: "web",
+        mode: GATEWAY_CLIENT_MODES.WEBCHAT,
+      },
+    });
+
+    try {
+      const sendRes = await rpcReq(webchatWs, "chat.send", {
+        sessionKey: "main",
+        message: "stream-test",
+        idempotencyKey: "run-stream-1",
+      });
+      expect(sendRes.ok).toBe(true);
+
+      registerAgentRunContext("run-stream-1", { sessionKey: "main" });
+      const deltas: Array<{ deltaText?: string; text?: string }> = [];
+      const handler = (data: WebSocket.RawData) => {
+        const raw =
+          typeof data === "string"
+            ? data
+            : Buffer.isBuffer(data)
+              ? data.toString("utf8")
+              : Array.isArray(data)
+                ? Buffer.concat(data).toString("utf8")
+                : Buffer.from(data).toString("utf8");
+        const obj = JSON.parse(raw);
+        if (
+          obj?.type === "event" &&
+          obj?.event === "chat" &&
+          obj?.payload?.runId === "run-stream-1" &&
+          obj?.payload?.state === "delta"
+        ) {
+          const text = obj?.payload?.message?.content?.[0]?.text;
+          deltas.push({ deltaText: obj?.payload?.deltaText, text });
+        }
+      };
+      webchatWs.on("message", handler);
+
+      emitAgentEvent({
+        runId: "run-stream-1",
+        stream: "assistant",
+        data: { text: "I", delta: "I" },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      emitAgentEvent({
+        runId: "run-stream-1",
+        stream: "assistant",
+        data: { text: "I will", delta: " will" },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      emitAgentEvent({
+        runId: "run-stream-1",
+        stream: "assistant",
+        data: { text: "I will", delta: "" },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      webchatWs.off("message", handler);
+
+      const filtered = deltas.filter((entry) => entry.text);
+      expect(filtered.length).toBeGreaterThanOrEqual(1);
+      const deltasText = filtered.map((entry) => entry.deltaText);
+      const texts = filtered.map((entry) => entry.text);
+      expect(deltasText).toContain("I");
+      expect(deltasText).toContain(" will");
+      expect(texts).toContain("I");
+      expect(texts).toContain("I will");
+    } finally {
+      webchatWs.close();
+      await fs.rm(dir, { recursive: true, force: true });
+      testState.sessionStorePath = undefined;
+    }
+  }, 20_000);
 });

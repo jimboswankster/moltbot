@@ -608,6 +608,10 @@ Options:
 - `--store <path>`
 - `--active <minutes>`
 
+Subcommands:
+
+- `sessions migrate-naming` (dry-run by default; backfills missing session labels for A2A naming)
+
 ## Reset / Uninstall
 
 ### `reset`

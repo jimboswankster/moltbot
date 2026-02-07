@@ -31,6 +31,18 @@ function buildRoutingSchema() {
     targets: Type.Optional(channelTargetsSchema()),
     accountId: Type.Optional(Type.String()),
     dryRun: Type.Optional(Type.Boolean()),
+    idempotencyKey: Type.Optional(
+      Type.String({
+        minLength: 1,
+        description: "Optional idempotency key for send/poll actions.",
+      }),
+    ),
+    idempotencyKeySeed: Type.Optional(
+      Type.String({
+        minLength: 1,
+        description: "Optional seed used to derive idempotencyKey for cron runs.",
+      }),
+    ),
   };
 }
 

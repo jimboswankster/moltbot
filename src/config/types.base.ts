@@ -141,6 +141,17 @@ export type DiagnosticsConfig = {
   cacheTrace?: DiagnosticsCacheTraceConfig;
 };
 
+export type StreamBufferConfig = {
+  /** Enable the client-side stream buffer adapter. */
+  enabled?: boolean;
+  /** Adapter module path (workspace-owned). */
+  adapterPath?: string;
+};
+
+export type ExtensionsConfig = {
+  streamBuffer?: StreamBufferConfig;
+};
+
 export type WebReconnectConfig = {
   initialMs?: number;
   maxMs?: number;

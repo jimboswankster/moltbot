@@ -333,6 +333,10 @@ export async function initSessionState(params: {
     sessionEntry.compactionCount = 0;
     sessionEntry.memoryFlushCompactionCount = undefined;
     sessionEntry.memoryFlushAt = undefined;
+    sessionEntry.memoryFlushFailureCount = undefined;
+    sessionEntry.memoryFlushLastFailureAt = undefined;
+    sessionEntry.memoryFlushNextAllowedAt = undefined;
+    sessionEntry.memoryFlushContextTokensDefaultedAt = undefined;
   }
   // Preserve per-session overrides while resetting compaction state on /new.
   sessionStore[sessionKey] = { ...sessionStore[sessionKey], ...sessionEntry };

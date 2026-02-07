@@ -1,6 +1,6 @@
 import type { Command } from "commander";
 import { healthCommand } from "../../commands/health.js";
-import { sessionsCommand } from "../../commands/sessions.js";
+import { sessionsCommand, sessionsMigrateNamingCommand } from "../../commands/sessions.js";
 import { statusCommand } from "../../commands/status.js";
 import { setVerbose } from "../../globals.js";
 import { defaultRuntime } from "../../runtime.js";
@@ -108,7 +108,7 @@ export function registerStatusHealthSessionsCommands(program: Command) {
       });
     });
 
-  program
+  const sessions = program
     .command("sessions")
     .description("List stored conversation sessions")
     .option("--json", "Output as JSON", false)
@@ -139,6 +139,38 @@ export function registerStatusHealthSessionsCommands(program: Command) {
           json: Boolean(opts.json),
           store: opts.store as string | undefined,
           active: opts.active as string | undefined,
+        },
+        defaultRuntime,
+      );
+    });
+
+  sessions
+    .command("migrate-naming")
+    .description("Backfill missing session labels for A2A naming (dry-run by default)")
+    .option("--json", "Output as JSON", false)
+    .option("--store <path>", "Path to session store (default: resolved from config)")
+    .option("--agent <id>", "Only migrate the specified agent id", "")
+    .option("--apply", "Apply the migration (default: dry-run)", false)
+    .addHelpText(
+      "after",
+      () =>
+        `\n${theme.heading("Examples:")}\n${formatHelpExamples([
+          ["openclaw sessions migrate-naming", "Dry-run (report only)."],
+          ["openclaw sessions migrate-naming --apply", "Apply the backfill."],
+          ["openclaw sessions migrate-naming --agent work", "Only migrate one agent."],
+          [
+            "openclaw sessions migrate-naming --store ./tmp/sessions.json --apply",
+            "Use a specific session store.",
+          ],
+        ])}`,
+    )
+    .action(async (opts) => {
+      await sessionsMigrateNamingCommand(
+        {
+          json: Boolean(opts.json),
+          store: opts.store as string | undefined,
+          agent: opts.agent as string | undefined,
+          apply: Boolean(opts.apply),
         },
         defaultRuntime,
       );

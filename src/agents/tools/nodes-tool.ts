@@ -53,6 +53,8 @@ const NodesToolSchema = Type.Object({
   timeoutMs: Type.Optional(Type.Number()),
   node: Type.Optional(Type.String()),
   requestId: Type.Optional(Type.String()),
+  idempotencyKey: Type.Optional(Type.String({ minLength: 1 })),
+  idempotencyKeySeed: Type.Optional(Type.String({ minLength: 1 })),
   // notify
   title: Type.Optional(Type.String()),
   body: Type.Optional(Type.String()),
@@ -90,6 +92,20 @@ const NodesToolSchema = Type.Object({
   invokeParamsJson: Type.Optional(Type.String()),
 });
 
+function buildIdempotencyKey(seed: string, suffix?: string) {
+  if (!suffix) {
+    return seed;
+  }
+  return crypto.createHash("sha256").update(`${seed}:${suffix}`).digest("hex").slice(0, 32);
+}
+
+function resolveIdempotencyKey(seed: string | undefined, suffix?: string) {
+  if (!seed) {
+    return crypto.randomUUID();
+  }
+  return buildIdempotencyKey(seed, suffix);
+}
+
 export function createNodesTool(options?: {
   agentSessionKey?: string;
   config?: OpenClawConfig;
@@ -108,6 +124,7 @@ export function createNodesTool(options?: {
     execute: async (_toolCallId, args) => {
       const params = args as Record<string, unknown>;
       const action = readStringParam(params, "action", { required: true });
+      const baseIdempotencyKey = readStringParam(params, "idempotencyKey")?.trim() || undefined;
       const gatewayOpts: GatewayCallOptions = {
         gatewayUrl: readStringParam(params, "gatewayUrl", { trim: false }),
         gatewayToken: readStringParam(params, "gatewayToken", { trim: false }),
@@ -163,7 +180,7 @@ export function createNodesTool(options?: {
                 priority: typeof params.priority === "string" ? params.priority : undefined,
                 delivery: typeof params.delivery === "string" ? params.delivery : undefined,
               },
-              idempotencyKey: crypto.randomUUID(),
+              idempotencyKey: resolveIdempotencyKey(baseIdempotencyKey),
             });
             return jsonResult({ ok: true });
           }
@@ -212,7 +229,7 @@ export function createNodesTool(options?: {
                   delayMs,
                   deviceId,
                 },
-                idempotencyKey: crypto.randomUUID(),
+                idempotencyKey: resolveIdempotencyKey(baseIdempotencyKey, `camera_snap:${facing}`),
               });
               const payload = parseCameraSnapPayload(raw?.payload);
               const normalizedFormat = payload.format.toLowerCase();
@@ -256,7 +273,7 @@ export function createNodesTool(options?: {
               nodeId,
               command: "camera.list",
               params: {},
-              idempotencyKey: crypto.randomUUID(),
+              idempotencyKey: resolveIdempotencyKey(baseIdempotencyKey, "camera_list"),
             });
             const payload =
               raw && typeof raw.payload === "object" && raw.payload !== null ? raw.payload : {};
@@ -292,7 +309,7 @@ export function createNodesTool(options?: {
                 format: "mp4",
                 deviceId,
               },
-              idempotencyKey: crypto.randomUUID(),
+              idempotencyKey: resolveIdempotencyKey(baseIdempotencyKey, "camera_clip"),
             });
             const payload = parseCameraClipPayload(raw?.payload);
             const filePath = cameraTempPath({
@@ -338,7 +355,7 @@ export function createNodesTool(options?: {
                 format: "mp4",
                 includeAudio,
               },
-              idempotencyKey: crypto.randomUUID(),
+              idempotencyKey: resolveIdempotencyKey(baseIdempotencyKey, "screen_record"),
             });
             const payload = parseScreenRecordPayload(raw?.payload);
             const filePath =
@@ -383,7 +400,7 @@ export function createNodesTool(options?: {
                 desiredAccuracy,
                 timeoutMs: locationTimeoutMs,
               },
-              idempotencyKey: crypto.randomUUID(),
+              idempotencyKey: resolveIdempotencyKey(baseIdempotencyKey, "location_get"),
             });
             return jsonResult(raw?.payload ?? {});
           }
@@ -438,7 +455,7 @@ export function createNodesTool(options?: {
                 sessionKey,
               },
               timeoutMs: invokeTimeoutMs,
-              idempotencyKey: crypto.randomUUID(),
+              idempotencyKey: resolveIdempotencyKey(baseIdempotencyKey, "run"),
             });
             return jsonResult(raw?.payload ?? {});
           }
@@ -465,7 +482,7 @@ export function createNodesTool(options?: {
               command: invokeCommand,
               params: invokeParams,
               timeoutMs: invokeTimeoutMs,
-              idempotencyKey: crypto.randomUUID(),
+              idempotencyKey: resolveIdempotencyKey(baseIdempotencyKey, "invoke"),
             });
             return jsonResult(raw ?? {});
           }

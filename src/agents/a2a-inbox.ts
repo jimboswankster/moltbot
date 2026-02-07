@@ -38,9 +38,22 @@ type A2AInboxStoreTarget = {
 };
 
 type A2ANamingMode = "contract" | "legacy";
+type A2AInboxAckMode = "mark" | "clear";
 
 function resolveA2ANamingMode(cfg: OpenClawConfig): A2ANamingMode {
   return cfg.tools?.agentToAgent?.namingMode ?? "contract";
+}
+
+function resolveA2AInboxAckMode(cfg: OpenClawConfig): A2AInboxAckMode {
+  return cfg.tools?.agentToAgent?.inboxAckMode ?? "mark";
+}
+
+function resolveA2AInboxRetentionDays(cfg: OpenClawConfig): number | null {
+  const value = cfg.tools?.agentToAgent?.inboxRetentionDays;
+  if (typeof value !== "number" || Number.isNaN(value) || value <= 0) {
+    return null;
+  }
+  return value;
 }
 
 function resolveDisplayKeyFromEntry(entry: {
@@ -157,9 +170,9 @@ export function buildA2AInboxPromptBlock(params: {
   maxEvents: number;
   maxChars: number;
 }): A2AInboxPromptBlockResult {
-  const events = params.events
-    .slice()
-    .sort((a, b) => a.createdAt - b.createdAt || a.runId.localeCompare(b.runId));
+  const events = params.events.toSorted(
+    (a, b) => a.createdAt - b.createdAt || a.runId.localeCompare(b.runId),
+  );
   const selected = events.slice(0, Math.max(0, params.maxEvents));
 
   let text = TRANSITIONAL_A2A_INBOX_TAG;
@@ -384,17 +397,32 @@ export async function injectA2AInboxPrependContext(params: {
       return undefined;
     }
 
+    const ackMode = resolveA2AInboxAckMode(params.cfg);
+    const retentionDays = resolveA2AInboxRetentionDays(params.cfg);
+    const retentionCutoff =
+      retentionDays != null ? now - retentionDays * 24 * 60 * 60 * 1000 : null;
+    let prunedCount = 0;
     await updateSessionStore(storePath, (mutable) => {
       const current = mutable[canonicalKey];
       if (!current?.a2aInbox?.events) {
         return;
       }
-      const nextEvents = current.a2aInbox.events.map((event) => {
+      let nextEvents = current.a2aInbox.events.map((event) => {
         if (!block.includedRunIds.includes(event.runId)) {
           return event;
         }
         return { ...event, deliveredAt: now, deliveredRunId: params.runId };
       });
+      if (ackMode === "clear") {
+        nextEvents = nextEvents.filter((event) => !block.includedRunIds.includes(event.runId));
+      }
+      if (ackMode === "mark" && retentionCutoff != null) {
+        const before = nextEvents.length;
+        nextEvents = nextEvents.filter(
+          (event) => !(event.deliveredAt && event.deliveredAt < retentionCutoff),
+        );
+        prunedCount = before - nextEvents.length;
+      }
       mutable[canonicalKey] = mergeSessionEntry(current, {
         updatedAt: now,
         a2aInbox: {
@@ -406,6 +434,13 @@ export async function injectA2AInboxPrependContext(params: {
     const sourceSessionKey = pending[0]?.sourceSessionKey;
     const eventCount = block.includedRunIds.length;
     if (eventCount > 0) {
+      log.info("a2a_inbox_acked", {
+        runId: params.runId,
+        sessionKey: canonicalKey,
+        sourceSessionKey,
+        eventCount,
+        ackMode,
+      });
       log.info("a2a_inbox_injected", {
         runId: params.runId,
         sessionKey: canonicalKey,
@@ -417,6 +452,15 @@ export async function injectA2AInboxPrependContext(params: {
         sessionKey: canonicalKey,
         sourceSessionKey,
         eventCount,
+      });
+    }
+    if (prunedCount > 0) {
+      log.info("a2a_inbox_retention_pruned", {
+        runId: params.runId,
+        sessionKey: canonicalKey,
+        sourceSessionKey,
+        eventCount: prunedCount,
+        retentionDays,
       });
     }
 
