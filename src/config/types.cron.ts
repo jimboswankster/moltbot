@@ -7,4 +7,9 @@ export type CronConfig = {
    * Use a cheap orchestrator model for background work.
    */
   agentTurnModel?: string;
+  /**
+   * Skip isolated cron runs when session tokens exceed this fraction of the context window.
+   * Defaults to 0.9 (90% of context window).
+   */
+  tokenBudgetRatio?: number;
 };

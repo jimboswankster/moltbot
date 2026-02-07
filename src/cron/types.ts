@@ -57,9 +57,12 @@ export type CronJobState = {
   nextRunAtMs?: number;
   runningAtMs?: number;
   lastRunAtMs?: number;
+  plannedRunAtMs?: number;
   lastStatus?: "ok" | "error" | "skipped";
   lastError?: string;
   lastDurationMs?: number;
+  failureCount?: number;
+  nextAllowedAtMs?: number;
 };
 
 export type CronJob = {
