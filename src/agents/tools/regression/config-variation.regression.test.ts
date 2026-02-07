@@ -245,8 +245,12 @@ describe("sessions_send - Config Variation: session.scope", () => {
 
   function setupDefaultMocks() {
     callGatewayMock.mockImplementation(async (opts: { method: string }) => {
-      if (opts.method === "agent") return { runId: "run-scope-test" };
-      if (opts.method === "agent.wait") return { status: "ok" };
+      if (opts.method === "agent") {
+        return { runId: "run-scope-test" };
+      }
+      if (opts.method === "agent.wait") {
+        return { status: "ok" };
+      }
       if (opts.method === "chat.history") {
         return { messages: [{ role: "assistant", content: "Done" }] };
       }

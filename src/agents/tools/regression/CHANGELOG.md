@@ -4,6 +4,7 @@ This changelog tracks incremental, audited updates to the A2A regression harness
 and related integration tests. Each entry includes the commit hash and tests run.
 
 ## 2026-02-05
+
 - Initialize changelog (commit: 9a2c9bf7e)
   Tests: none
 - Skip A2A flow in async sessions_send (commit: 36bcb53d4)
@@ -50,6 +51,7 @@ and related integration tests. Each entry includes the commit hash and tests run
   Tests: `npx vitest run src/agents/tools/regression/ src/gateway/server-methods/send-a2a-announce.integration.test.ts`
 
 ## 2026-02-06
+
 - Regression harness + gateway announce integration green run (commit: n/a)
   Tests: `npx vitest run src/agents/tools/regression/` `npx vitest run src/gateway/server-methods/send-a2a-announce.integration.test.ts`
 - Regression harness + gateway announce integration green run (post-ackMode) (commit: n/a)
@@ -99,3 +101,7 @@ and related integration tests. Each entry includes the commit hash and tests run
   Tests: `npx vitest run src/agents/tools/regression/a2a-inbox.regression.test.ts`
 - Fix legacy namingMode test config to use temp session store (commit: 00e971b90)
   Tests: `npx vitest run src/agents/tools/regression/a2a-inbox.regression.test.ts`
+- Add fallback-rate pre-cascade telemetry + system warning (commit: n/a)
+  Tests: `pnpm vitest run src/gateway/server-chat.agent-events.test.ts src/agents/model-fallback.test.ts`
+- Harden chat delta dedupe when full text repeats (commit: n/a)
+  Tests: `pnpm vitest run src/gateway/server-chat.agent-events.test.ts src/agents/model-fallback.test.ts`

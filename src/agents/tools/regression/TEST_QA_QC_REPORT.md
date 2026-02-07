@@ -100,6 +100,7 @@
 
 **Status:** PASS  
 **Verification:**
+
 - ✅ Real `runSessionsSendA2AFlow()` function invoked (not mocked)
 - ✅ Real `isReplySkip()`, `isAnnounceSkip()` functions invoked
 - ✅ Real `buildAgentToAgentReplyContext()`, `buildAgentToAgentAnnounceContext()` invoked
@@ -107,6 +108,7 @@
 - ✅ Only external boundaries mocked: `callGateway`, `runAgentStep`, `createSubsystemLogger`
 
 **Examples:**
+
 ```typescript
 // Real function invocation (not mocked)
 const result = isReplySkip(REPLY_SKIP_TOKEN);
@@ -127,15 +129,17 @@ expect(result.details.status).toBe("ok");
 
 ### ✅ PHASE 3: Assertion Quality Gate
 
-**Status:** PASS  
+**Status:** PASS
 
 **Checks:**
+
 - ❌ No `expect(true)` or `expect(false)` trivial assertions
 - ❌ No existence-only assertions without behavior checks
 - ✅ All assertions verify SUT-produced observables
 - ✅ Assertions check specific values, call arguments, call counts
 
 **Sample Good Assertions:**
+
 ```typescript
 // Specific return value
 expect(isReplySkip("REPLY_SKIP")).toBe(true);
@@ -167,6 +171,7 @@ expect(result.details).toMatchObject({
 
 **Status:** PASS  
 **Evidence:**
+
 - ✅ 1 `test.fails` with documented rationale (async A2A bug)
 - ✅ 1 `test.skip` with documented rationale (config variation requires dynamic mock)
 - ❌ No conditional returns (`if (!env) return`)
@@ -192,18 +197,21 @@ expect(result.details).toMatchObject({
 **Error Tests (8 total):**
 
 1. ✅ **Network error during announce delivery**
+
    ```typescript
    callGatewayMock.mockRejectedValue(new Error("Network error"));
    await expect(runSessionsSendA2AFlow(params)).resolves.toBeUndefined();
    ```
 
 2. ✅ **Agent step failure**
+
    ```typescript
    runAgentStepMock.mockRejectedValue(new Error("Agent step failed"));
    await expect(runSessionsSendA2AFlow(params)).resolves.toBeUndefined();
    ```
 
 3. ✅ **Timeout status from agent.wait**
+
    ```typescript
    callGatewayMock.mockImplementation(async (opts) => {
      if (opts.method === "agent.wait") return { status: "timeout" };
@@ -212,6 +220,7 @@ expect(result.details).toMatchObject({
    ```
 
 4. ✅ **Error status from agent.wait**
+
    ```typescript
    callGatewayMock.mockImplementation(async (opts) => {
      if (opts.method === "agent.wait") return { status: "error", error: "Agent crashed" };
@@ -220,6 +229,7 @@ expect(result.details).toMatchObject({
    ```
 
 5. ✅ **Gateway throws during agent call**
+
    ```typescript
    callGatewayMock.mockImplementation(async (opts) => {
      if (opts.method === "agent") throw new Error("Gateway connection failed");
@@ -228,6 +238,7 @@ expect(result.details).toMatchObject({
    ```
 
 6. ✅ **No reply and wait fails**
+
    ```typescript
    const params = createDefaultParams({ roundOneReply: undefined });
    await runSessionsSendA2AFlow(params);
@@ -235,16 +246,17 @@ expect(result.details).toMatchObject({
    ```
 
 7. ✅ **Null announce target**
+
    ```typescript
    resolveAnnounceTargetMock.mockResolvedValue(null);
-   const sendCall = callGatewayMock.mock.calls.find(c => c[0].method === "send");
+   const sendCall = callGatewayMock.mock.calls.find((c) => c[0].method === "send");
    expect(sendCall).toBeUndefined();
    ```
 
 8. ✅ **Empty/whitespace announce reply**
    ```typescript
    runAgentStepMock.mockResolvedValueOnce("   ");
-   const sendCall = callGatewayMock.mock.calls.find(c => c[0].method === "send");
+   const sendCall = callGatewayMock.mock.calls.find((c) => c[0].method === "send");
    expect(sendCall).toBeUndefined();
    ```
 
@@ -256,18 +268,21 @@ expect(result.details).toMatchObject({
 **Evidence:**
 
 **No Shared State:**
+
 - ✅ Each test uses `beforeEach(() => vi.clearAllMocks())`
 - ✅ Each test uses `afterEach(() => vi.clearAllMocks())`
 - ✅ No global state mutations
 - ✅ Mock implementations reset per test
 
 **Deterministic:**
+
 - ✅ Fake timers used for timing tests (`vi.useFakeTimers()`, `vi.runAllTimersAsync()`)
 - ✅ No randomness (all session keys, run IDs deterministic)
 - ✅ No external network calls (gateway fully mocked)
 - ✅ No filesystem I/O
 
 **Explicit Setup:**
+
 ```typescript
 beforeEach(() => {
   vi.clearAllMocks();
@@ -285,6 +300,7 @@ afterEach(() => {
 **Status:** PASS
 
 **Unit Test Protocol Compliance:**
+
 - ✅ External boundaries mocked: `callGateway`, `runAgentStep`, `readLatestAssistantReply`, `resolveAnnounceTarget`, `loadConfig`, `createSubsystemLogger`, `appendAssistantMessageToSessionTranscript`
 - ✅ SUT remains real: `runSessionsSendA2AFlow`, `isReplySkip`, `isAnnounceSkip`, `createSessionsSendTool`, context builders, `sendHandlers.send`
 - ✅ Fast execution (< 15s for all 63 tests)
@@ -313,21 +329,21 @@ afterEach(() => {
 
 **Mutation Scenarios Tested:**
 
-| SUT Function | Mutation | Would Test Fail? |
-|--------------|----------|------------------|
-| `isReplySkip("REPLY_SKIP")` | Returns `false` | ✅ Yes - explicit `toBe(true)` |
-| `isReplySkip("")` | Returns `true` | ✅ Yes - explicit `toBe(false)` |
-| `isAnnounceSkip("ANNOUNCE_SKIP")` | Returns `false` | ✅ Yes - explicit `toBe(true)` |
-| `buildAgentToAgentReplyContext()` | Omits "Do NOT use tools" | ✅ Yes - `toContain` fails |
-| `buildAgentToAgentReplyContext()` | Wrong turn count | ✅ Yes - `toContain("Turn 1 of 5")` fails |
-| `runSessionsSendA2AFlow()` | Skips ping-pong entirely | ✅ Yes - call count assertion fails |
-| `runSessionsSendA2AFlow()` | Doesn't alternate sessions | ✅ Yes - session key assertions fail |
-| `runSessionsSendA2AFlow()` | Skips announce delivery | ✅ Yes - `toMatchObject` on send params fails |
-| `runSessionsSendA2AFlow()` | Ignores ANNOUNCE_SKIP | ✅ Yes - expects no send call |
-| `runSessionsSendA2AFlow()` | Throws on error | ✅ Yes - `resolves.toBeUndefined()` fails |
-| `createSessionsSendTool().execute()` | Returns wrong status | ✅ Yes - status field assertion fails |
-| `createSessionsSendTool().execute()` | Doesn't call A2A flow | ✅ Yes - `toHaveBeenCalledTimes` fails |
-| `createSessionsSendTool().execute()` | Wrong session keys | ✅ Yes - `toMatchObject` on call args fails |
+| SUT Function                         | Mutation                   | Would Test Fail?                              |
+| ------------------------------------ | -------------------------- | --------------------------------------------- |
+| `isReplySkip("REPLY_SKIP")`          | Returns `false`            | ✅ Yes - explicit `toBe(true)`                |
+| `isReplySkip("")`                    | Returns `true`             | ✅ Yes - explicit `toBe(false)`               |
+| `isAnnounceSkip("ANNOUNCE_SKIP")`    | Returns `false`            | ✅ Yes - explicit `toBe(true)`                |
+| `buildAgentToAgentReplyContext()`    | Omits "Do NOT use tools"   | ✅ Yes - `toContain` fails                    |
+| `buildAgentToAgentReplyContext()`    | Wrong turn count           | ✅ Yes - `toContain("Turn 1 of 5")` fails     |
+| `runSessionsSendA2AFlow()`           | Skips ping-pong entirely   | ✅ Yes - call count assertion fails           |
+| `runSessionsSendA2AFlow()`           | Doesn't alternate sessions | ✅ Yes - session key assertions fail          |
+| `runSessionsSendA2AFlow()`           | Skips announce delivery    | ✅ Yes - `toMatchObject` on send params fails |
+| `runSessionsSendA2AFlow()`           | Ignores ANNOUNCE_SKIP      | ✅ Yes - expects no send call                 |
+| `runSessionsSendA2AFlow()`           | Throws on error            | ✅ Yes - `resolves.toBeUndefined()` fails     |
+| `createSessionsSendTool().execute()` | Returns wrong status       | ✅ Yes - status field assertion fails         |
+| `createSessionsSendTool().execute()` | Doesn't call A2A flow      | ✅ Yes - `toHaveBeenCalledTimes` fails        |
+| `createSessionsSendTool().execute()` | Wrong session keys         | ✅ Yes - `toMatchObject` on call args fails   |
 
 **Conclusion:** All tests verify real behavior. Mutations would be detected.
 
@@ -373,17 +389,17 @@ Tests  62 passed (62)
 
 ## Boundary Gap Coverage Matrix
 
-| Gap # | Description | Status | Test Location | Notes |
-|-------|-------------|--------|---------------|-------|
-| #1 | Gateway mirror behavior | ✅ Covered | `send-a2a-announce.integration` | 5 integration tests, mirror persistence verified |
-| #2 | Role/source distinction | 🧪 test.fails | `a2a-flow` | Interface contract documented, awaiting fix |
-| #3 | Async skip enforcement | 🧪 test.fails | `sessions-send-async` | Awaiting fix implementation |
-| #4 | Max-turns exhaustion | ✅ Covered | `a2a-flow` | 2 tests (full loop, alternation) |
-| #5 | Announce skip normalization | ✅ Covered | `a2a-flow` | 2 tests (leading/trailing whitespace) |
-| #6 | History reply retrieval | ✅ Covered | `a2a-flow` | 2 tests (mock call, history reply usage) |
-| #7 | Tool restriction enforcement | ✅ Covered | `a2a-integration` | 5 tests (prompt + context verification) |
-| #8 | Concurrency / race safeguard | ✅ Covered | `a2a-integration` | 2 tests (latestReply isolation, slow gateway) |
-| #9 | Config variations | ✅ Covered | `config-variation` | 5 tests with vi.doMock pattern |
+| Gap # | Description                  | Status        | Test Location                   | Notes                                            |
+| ----- | ---------------------------- | ------------- | ------------------------------- | ------------------------------------------------ |
+| #1    | Gateway mirror behavior      | ✅ Covered    | `send-a2a-announce.integration` | 5 integration tests, mirror persistence verified |
+| #2    | Role/source distinction      | 🧪 test.fails | `a2a-flow`                      | Interface contract documented, awaiting fix      |
+| #3    | Async skip enforcement       | 🧪 test.fails | `sessions-send-async`           | Awaiting fix implementation                      |
+| #4    | Max-turns exhaustion         | ✅ Covered    | `a2a-flow`                      | 2 tests (full loop, alternation)                 |
+| #5    | Announce skip normalization  | ✅ Covered    | `a2a-flow`                      | 2 tests (leading/trailing whitespace)            |
+| #6    | History reply retrieval      | ✅ Covered    | `a2a-flow`                      | 2 tests (mock call, history reply usage)         |
+| #7    | Tool restriction enforcement | ✅ Covered    | `a2a-integration`               | 5 tests (prompt + context verification)          |
+| #8    | Concurrency / race safeguard | ✅ Covered    | `a2a-integration`               | 2 tests (latestReply isolation, slow gateway)    |
+| #9    | Config variations            | ✅ Covered    | `config-variation`              | 5 tests with vi.doMock pattern                   |
 
 ---
 
@@ -410,6 +426,7 @@ Tests  62 passed (62)
 **Status:** ✅ **ALL_TESTS_PASS_QA_NO_PASSING_FAILURES**
 
 **Rationale:**
+
 1. ✅ 63 tests passing (100%)
 2. ✅ All 9 QC phases passed
 3. ✅ 3 expected-fail tests document known bugs with clear fix interfaces
@@ -429,30 +446,36 @@ Tests  62 passed (62)
 ## Appendix: Test Hardening Applied
 
 ### 1. Initial Gap Coverage Tests (Phase 1)
+
 **Files:** `a2a-flow.regression.test.ts`, `sessions-send-async.regression.test.ts`  
 **Change:** Added tests for boundary gaps #2, #4, #5, #6  
 **Impact:** Improved refactor safety for core A2A flow
 
 ### 2. Fixed Logger Mock
+
 **Files:** Both regression test files  
 **Before:** `createSubsystemLogger` mock missing `.child()` method  
 **After:** Added `.child()` returning mock logger instance  
 **Impact:** Tests execute without runtime errors
 
 ### 3. Added Integration Tests (Phase 2)
+
 **New Files:**
+
 - `config-variation.regression.test.ts` - Config variations (Gap #9)
 - `a2a-integration.regression.test.ts` - Tool restriction (Gap #7), Concurrency (Gap #8)
 - `send-a2a-announce.integration.test.ts` - Gateway mirror (Gap #1)
-**Impact:** Full boundary gap coverage achieved
+  **Impact:** Full boundary gap coverage achieved
 
 ### 4. Test Hardening Pass (Phase 3)
+
 **Files:** `a2a-integration.regression.test.ts`, `send-a2a-announce.integration.test.ts`  
 **Changes:**
+
 - Replaced documentation-only concurrency tests with real latestReply isolation tests using `vi.useFakeTimers()`
 - Made mirror persistence observable by mocking `appendAssistantMessageToSessionTranscript`
 - Added concrete "persist once" assertion for mirror behavior
-**Impact:** Eliminated non-behavioral tests, all assertions now verify real SUT behavior
+  **Impact:** Eliminated non-behavioral tests, all assertions now verify real SUT behavior
 
 ---
 
