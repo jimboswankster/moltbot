@@ -9,6 +9,7 @@ import {
   isProfileInCooldown,
   resolveAuthProfileOrder,
 } from "../../agents/auth-profiles.js";
+import { lookupContextTokens } from "../../agents/context.js";
 import { resolveFallbackCandidates, runWithModelFallback } from "../../agents/model-fallback.js";
 import { isCliProvider } from "../../agents/model-selection.js";
 import { buildModelAliasIndex, resolveModelRefFromString } from "../../agents/model-selection.js";
@@ -26,6 +27,9 @@ import {
   shouldRunMemoryFlush,
 } from "./memory-flush.js";
 import { incrementCompactionCount } from "./session-updates.js";
+
+const MEMORY_FLUSH_FAILURE_BACKOFF_BASE_MS = 60_000;
+const MEMORY_FLUSH_FAILURE_BACKOFF_MAX_MS = 30 * 60_000;
 
 export async function runMemoryFlushIfNeeded(params: {
   cfg: OpenClawConfig;
@@ -103,6 +107,50 @@ export async function runMemoryFlushIfNeeded(params: {
     return sandboxCfg.workspaceAccess === "rw";
   })();
 
+  const now = Date.now();
+  let activeSessionEntry = params.sessionEntry;
+  const activeSessionStore = params.sessionStore;
+  const memoryFlushState =
+    params.sessionEntry ??
+    (params.sessionKey ? params.sessionStore?.[params.sessionKey] : undefined);
+  const contextWindowTokens = resolveMemoryFlushContextWindowTokens({
+    modelId: flushModel ?? params.defaultModel,
+    agentCfgContextTokens: params.agentCfgContextTokens,
+  });
+  const resolvedContextFromRegistry = lookupContextTokens(flushModel ?? params.defaultModel);
+  const contextDefaulted =
+    resolvedContextFromRegistry === undefined && params.agentCfgContextTokens === undefined;
+  if (contextDefaulted) {
+    const defaultedAt = memoryFlushState?.memoryFlushContextTokensDefaultedAt;
+    if (!defaultedAt) {
+      logWarn("memory flush context window defaulted; consider configuring model context size");
+      if (params.storePath && params.sessionKey) {
+        try {
+          const updatedEntry = await updateSessionStoreEntry({
+            storePath: params.storePath,
+            sessionKey: params.sessionKey,
+            update: async () => ({
+              memoryFlushContextTokensDefaultedAt: Date.now(),
+            }),
+          });
+          if (updatedEntry) {
+            activeSessionEntry = updatedEntry;
+          }
+        } catch (persistErr) {
+          logVerbose(
+            `failed to persist memory flush context-window default warning: ${String(persistErr)}`,
+          );
+        }
+      }
+    }
+  }
+
+  const nextAllowedAt = memoryFlushState?.memoryFlushNextAllowedAt ?? 0;
+  if (nextAllowedAt && now < nextAllowedAt) {
+    logWarn(`memory flush suppressed by backoff until ${new Date(nextAllowedAt).toISOString()}`);
+    return params.sessionEntry;
+  }
+
   const shouldFlushMemory =
     memoryFlushSettings &&
     memoryFlushWritable &&
@@ -112,10 +160,7 @@ export async function runMemoryFlushIfNeeded(params: {
       entry:
         params.sessionEntry ??
         (params.sessionKey ? params.sessionStore?.[params.sessionKey] : undefined),
-      contextWindowTokens: resolveMemoryFlushContextWindowTokens({
-        modelId: flushModel ?? params.defaultModel,
-        agentCfgContextTokens: params.agentCfgContextTokens,
-      }),
+      contextWindowTokens,
       reserveTokensFloor: memoryFlushSettings.reserveTokensFloor,
       softThresholdTokens: memoryFlushSettings.softThresholdTokens,
       isAnyModelAvailable,
@@ -125,8 +170,6 @@ export async function runMemoryFlushIfNeeded(params: {
     return params.sessionEntry;
   }
 
-  let activeSessionEntry = params.sessionEntry;
-  const activeSessionStore = params.sessionStore;
   const flushRunId = crypto.randomUUID();
   if (params.sessionKey) {
     registerAgentRunContext(flushRunId, {
@@ -235,6 +278,9 @@ export async function runMemoryFlushIfNeeded(params: {
         logVerbose(`failed to persist memory flush metadata: ${String(err)}`);
       }
     }
+    if (!memoryCompactionCompleted) {
+      logWarn("memory flush completed without compaction event; counters unchanged");
+    }
   } catch (err) {
     logWarn(`memory flush run failed: ${String(err)}`);
     if (isDiagnosticsEnabled(params.cfg)) {
@@ -246,6 +292,38 @@ export async function runMemoryFlushIfNeeded(params: {
         model: flushModel,
         error: String(err),
       });
+    }
+    const baseEntry =
+      activeSessionEntry ??
+      (params.sessionKey ? activeSessionStore?.[params.sessionKey] : undefined);
+    const failureCount = (baseEntry?.memoryFlushFailureCount ?? 0) + 1;
+    const exponent = Math.min(6, Math.max(0, failureCount - 1));
+    const backoffMs = Math.min(
+      MEMORY_FLUSH_FAILURE_BACKOFF_BASE_MS * 2 ** exponent,
+      MEMORY_FLUSH_FAILURE_BACKOFF_MAX_MS,
+    );
+    const nextAllowed = Date.now() + backoffMs;
+    const failurePatch = {
+      memoryFlushFailureCount: failureCount,
+      memoryFlushLastFailureAt: Date.now(),
+      memoryFlushNextAllowedAt: nextAllowed,
+    };
+    if (activeSessionEntry) {
+      Object.assign(activeSessionEntry, failurePatch);
+    }
+    if (params.storePath && params.sessionKey) {
+      try {
+        const updatedEntry = await updateSessionStoreEntry({
+          storePath: params.storePath,
+          sessionKey: params.sessionKey,
+          update: async () => failurePatch,
+        });
+        if (updatedEntry) {
+          activeSessionEntry = updatedEntry;
+        }
+      } catch (persistErr) {
+        logVerbose(`failed to persist memory flush failure state: ${String(persistErr)}`);
+      }
     }
   }
 

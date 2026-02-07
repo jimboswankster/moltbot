@@ -91,6 +91,10 @@ export type SessionEntry = {
   compactionCount?: number;
   memoryFlushAt?: number;
   memoryFlushCompactionCount?: number;
+  memoryFlushFailureCount?: number;
+  memoryFlushLastFailureAt?: number;
+  memoryFlushNextAllowedAt?: number;
+  memoryFlushContextTokensDefaultedAt?: number;
   cliSessionIds?: Record<string, string>;
   claudeCliSessionId?: string;
   label?: string;
