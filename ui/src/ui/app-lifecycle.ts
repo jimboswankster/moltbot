@@ -12,7 +12,6 @@ import {
   startActivityHudSessionsPolling,
   stopActivityHudSessionsPolling,
 } from "./app-polling";
-import { loadSessions } from "./controllers/sessions";
 import { observeTopbar, scheduleChatScroll, scheduleLogsScroll } from "./app-scroll";
 import {
   applySettingsFromUrl,
@@ -22,6 +21,7 @@ import {
   syncTabWithLocation,
   syncThemeWithSettings,
 } from "./app-settings";
+import { loadSessions } from "./controllers/sessions";
 
 type LifecycleHost = {
   basePath: string;
@@ -59,7 +59,9 @@ export function handleConnected(host: LifecycleHost) {
     startDebugPolling(host as unknown as Parameters<typeof startDebugPolling>[0]);
   }
   if (host.tab === "activity-hud") {
-    startActivityHudSessionsPolling(host as unknown as Parameters<typeof startActivityHudSessionsPolling>[0]);
+    startActivityHudSessionsPolling(
+      host as unknown as Parameters<typeof startActivityHudSessionsPolling>[0],
+    );
   }
 }
 
@@ -72,7 +74,9 @@ export function handleDisconnected(host: LifecycleHost) {
   stopNodesPolling(host as unknown as Parameters<typeof stopNodesPolling>[0]);
   stopLogsPolling(host as unknown as Parameters<typeof stopLogsPolling>[0]);
   stopDebugPolling(host as unknown as Parameters<typeof stopDebugPolling>[0]);
-  stopActivityHudSessionsPolling(host as unknown as Parameters<typeof stopActivityHudSessionsPolling>[0]);
+  stopActivityHudSessionsPolling(
+    host as unknown as Parameters<typeof stopActivityHudSessionsPolling>[0],
+  );
   host.stopActivityTicker();
   detachThemeListener(host as unknown as Parameters<typeof detachThemeListener>[0]);
   host.topbarObserver?.disconnect();
@@ -113,12 +117,16 @@ export function handleUpdated(host: LifecycleHost, changed: Map<PropertyKey, unk
       startActivityHudSessionsPolling(app);
       if (app.connected && app.client) {
         void loadSessions(app, { limit: 50, activeMinutes: 60 }).then(() => {
-          syncSubagentsFromSessionsList(app as unknown as Parameters<typeof syncSubagentsFromSessionsList>[0]);
+          syncSubagentsFromSessionsList(
+            app as unknown as Parameters<typeof syncSubagentsFromSessionsList>[0],
+          );
           app.requestUpdate();
         });
       }
     } else {
-      stopActivityHudSessionsPolling(host as unknown as Parameters<typeof stopActivityHudSessionsPolling>[0]);
+      stopActivityHudSessionsPolling(
+        host as unknown as Parameters<typeof stopActivityHudSessionsPolling>[0],
+      );
     }
   }
 }

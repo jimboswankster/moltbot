@@ -86,7 +86,9 @@ export function startActivityHudSessionsPolling(host: PollingHost) {
       return;
     }
     await loadSessions(app, { limit: 50, activeMinutes: 60 });
-    syncSubagentsFromSessionsList(app as unknown as Parameters<typeof syncSubagentsFromSessionsList>[0]);
+    syncSubagentsFromSessionsList(
+      app as unknown as Parameters<typeof syncSubagentsFromSessionsList>[0],
+    );
     app.requestUpdate();
   }, ACTIVITY_HUD_SESSIONS_POLL_MS);
 }

@@ -5,10 +5,15 @@ import type { GatewayEventFrame, GatewayHelloOk } from "./gateway";
 import type { Tab } from "./navigation";
 import type { UiSettings } from "./storage";
 import type { AgentsListResult, PresenceEntry, HealthSnapshot, StatusSummary } from "./types";
+import {
+  ensureMainActivity,
+  noteChatActivity,
+  syncSubagentsFromSessionsList,
+  type AgentActivity,
+} from "./activity-hud-state";
 import { CHAT_SESSIONS_ACTIVE_MINUTES, flushChatQueueForEvent } from "./app-chat";
 import { applySettings, loadCron, refreshActiveTab, setLastActiveSessionKey } from "./app-settings";
 import { handleAgentEvent, resetToolStream, type AgentEventPayload } from "./app-tool-stream";
-import { ensureMainActivity, noteChatActivity, syncSubagentsFromSessionsList, type AgentActivity } from "./activity-hud-state";
 import { loadAgents } from "./controllers/agents";
 import { loadAssistantIdentity } from "./controllers/assistant-identity";
 import { loadChatHistory } from "./controllers/chat";
@@ -172,7 +177,9 @@ export function connectGateway(host: GatewayHost) {
       if (host.tab === "activity-hud") {
         void loadSessions(host as unknown as OpenClawApp, { limit: 50, activeMinutes: 60 }).then(
           () => {
-            syncSubagentsFromSessionsList(host as unknown as Parameters<typeof syncSubagentsFromSessionsList>[0]);
+            syncSubagentsFromSessionsList(
+              host as unknown as Parameters<typeof syncSubagentsFromSessionsList>[0],
+            );
             (host as unknown as OpenClawApp).requestUpdate();
           },
         );
@@ -280,10 +287,7 @@ function handleGatewayEventUnsafe(host: GatewayHost, evt: GatewayEventFrame) {
         }
       }
     }
-    handleAgentEvent(
-      host as unknown as Parameters<typeof handleAgentEvent>[0],
-      payload,
-    );
+    handleAgentEvent(host as unknown as Parameters<typeof handleAgentEvent>[0], payload);
     (host as unknown as OpenClawApp).requestUpdate();
     return;
   }

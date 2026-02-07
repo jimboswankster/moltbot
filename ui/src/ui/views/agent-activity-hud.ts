@@ -1,7 +1,7 @@
 import { html, nothing } from "lit";
+import type { AgentActivity } from "../activity-hud-state";
 import type { GatewayHelloOk } from "../gateway";
 import type { SessionsListResult } from "../types";
-import type { AgentActivity } from "../activity-hud-state";
 
 type ActivityHudProps = {
   entries: AgentActivity[];
@@ -85,8 +85,9 @@ function renderHudChip(entry: AgentActivity, props: ActivityHudProps) {
     <div class="activity-chip ${entry.active ? "is-active" : ""}" title="${label}">
       <span class="activity-chip__dot"></span>
       <span class="activity-chip__label">${truncatedLabel}</span>
-      ${props.onDismissSession
-        ? html`
+      ${
+        props.onDismissSession
+          ? html`
             <button
               type="button"
               class="activity-chip__dismiss"
@@ -96,7 +97,8 @@ function renderHudChip(entry: AgentActivity, props: ActivityHudProps) {
               ×
             </button>
           `
-        : nothing}
+          : nothing
+      }
     </div>
   `;
 }
@@ -132,15 +134,20 @@ export function renderAgentActivityHud(props: ActivityHudProps) {
 
         ${
           !props.connected
-            ? html`<div class="callout">Connect to the gateway to see live activity.</div>`
+            ? html`
+                <div class="callout">Connect to the gateway to see live activity.</div>
+              `
             : nothing
         }
 
         <div class="activity-list">
-          ${props.entries.length === 0
-            ? html`<div class="muted">No agent activity yet.</div>`
-            : props.entries.map(
-                (item) => html`
+          ${
+            props.entries.length === 0
+              ? html`
+                  <div class="muted">No agent activity yet.</div>
+                `
+              : props.entries.map(
+                  (item) => html`
                   <div class="activity-row ${item.active ? "is-active" : ""}">
                     <div class="activity-row__label">
                       <strong>${resolveLabel(item, props)}</strong>
@@ -151,7 +158,8 @@ export function renderAgentActivityHud(props: ActivityHudProps) {
                     </div>
                   </div>
                 `,
-              )}
+                )
+          }
         </div>
       </div>
     </section>

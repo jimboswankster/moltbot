@@ -1,6 +1,6 @@
+import type { ChatEventPayload } from "./controllers/chat";
 import type { GatewayHelloOk } from "./gateway";
 import type { SessionsListResult } from "./types";
-import type { ChatEventPayload } from "./controllers/chat";
 
 export type AgentActivity = {
   sessionKey: string;
@@ -136,7 +136,7 @@ export function noteChatActivity(host: ActivityHost, payload?: ChatEventPayload)
       ? true
       : payload.state === "final" || payload.state === "aborted" || payload.state === "error"
         ? false
-        : existing?.active ?? false;
+        : (existing?.active ?? false);
   const next: AgentActivity = {
     sessionKey,
     agentId: existing?.agentId ?? resolveAgentId(sessionKey),
