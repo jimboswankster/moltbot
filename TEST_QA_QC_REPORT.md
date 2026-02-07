@@ -1,7 +1,7 @@
 # TEST QA/QC REPORT
 
 **Date:** 2026-02-07  
-**Scope:** Memory flush remediation contract tests (H-1..H-6 + H-CHAIN + backoff + auth-store availability)  
+**Scope:** Memory flush remediation contract tests (H-1..H-6 + H-CHAIN + backoff + auth-store availability + model refresh) + streaming delta enforcement + cron token budget guard  
 **Protocol:** TEST-QA-STATIC-LINTER v1.0.0 + TEST-QA-PASSING-FAILURE v1.0.0
 
 ## Test Inventory
@@ -14,9 +14,13 @@
 - src/auto-reply/reply/agent-runner-memory.flush-e2e.contract.test.ts (contract)
 - src/auto-reply/reply/agent-runner-memory.flush-backoff.contract.test.ts (contract)
 - src/auto-reply/reply/agent-runner-memory.flush-availability-authstore.contract.test.ts (contract)
+- src/auto-reply/reply/agent-runner-memory.flush-model-refresh.contract.test.ts (contract)
+- src/gateway/openresponses-http.streaming.contract.test.ts (contract)
+- src/cron/isolated-agent.token-budget.contract.test.ts (contract)
 
 ## Execution Evidence
-- `npx vitest run **/*.contract.test.ts` → **PASS** (9 files, 11 tests)
+- `npx vitest run **/*.contract.test.ts` → **PASS** (11 files, 15 tests)
+- `npx vitest run src/cron/isolated-agent.token-budget.contract.test.ts` → **PASS** (1 file, 2 tests)
 - `qc-linter-phase1.sh` on full repo `src/` → **FAIL** (pre-existing violations outside scope)
 - Phase 1 linter checks on the scoped test files → **PASS**
 
@@ -38,6 +42,9 @@
 - Added end-to-end failure chain contract test to ensure flush failure does not advance compaction or silently skip diagnostics.
 - Added failure backoff contract tests to validate suppression window and persisted failure state.
 - Added auth-store availability contract test to validate cooldown-only profiles suppress flush.
+- Added model refresh contract test to ensure flush re-resolves configured primary model.
+- Added streaming delta enforcement contract test to prevent cumulative text replays.
+- Added cron token budget guard contract test to prevent oversized-context cron runs.
 
 ## Final Declaration
 ALL_TESTS_PASS_QA_NO_PASSING_FAILURES
