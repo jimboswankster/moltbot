@@ -7,7 +7,7 @@
  * Hardening area: H-4
  * Source: src/agents/model-fallback.ts
  * Correct behavior: cooldown-only skip throws distinct cooldown error
- * Paired characterization: model-fallback.cooldown-skip.characterization.test.ts
+ * Paired characterization: deleted after fix H-4
  * Status: RED -> GREEN when fix H-4 lands
  *
  * Protocol: TEST-CHARACTERIZATION v1.0.0 (Phase 2: Remediation Contract)

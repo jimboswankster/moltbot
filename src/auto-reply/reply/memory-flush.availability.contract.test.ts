@@ -24,9 +24,8 @@ describe("shouldRunMemoryFlush availability remediation contract", () => {
       contextWindowTokens: 100_000,
       reserveTokensFloor: 5_000,
       softThresholdTokens: 4_000,
-      // NOTE: this parameter does not exist yet; required by fix H-5
-      // isAnyModelAvailable: false,
-    } as any);
+      isAnyModelAvailable: false,
+    });
 
     expect(result).toBe(false);
   });

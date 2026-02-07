@@ -1,5 +1,8 @@
 import type { OpenClawConfig } from "../config/config.js";
 import type { FailoverReason } from "./pi-embedded-helpers.js";
+import { resolveMainSessionKey } from "../config/sessions.js";
+import { recordFallbackAttempt } from "../infra/fallback-telemetry.js";
+import { enqueueSystemEvent } from "../infra/system-events.js";
 import { logWarn } from "../logger.js";
 import {
   ensureAuthProfileStore,
@@ -34,6 +37,20 @@ type FallbackAttempt = {
   status?: number;
   code?: string;
 };
+
+function maybeWarnFallbackRate(cfg: OpenClawConfig | undefined, countLastHour: number) {
+  const message = `Pre-cascade warning: ${countLastHour} fallbacks/hour`;
+  logWarn(message);
+  if (!cfg) {
+    return;
+  }
+  try {
+    const sessionKey = resolveMainSessionKey(cfg);
+    enqueueSystemEvent(message, { sessionKey, contextKey: "fallback-rate" });
+  } catch {
+    // Ignore system event errors, keep warning in logs.
+  }
+}
 
 function isAbortError(err: unknown): boolean {
   if (!err || typeof err !== "object") {
@@ -272,6 +289,14 @@ export async function runWithModelFallback<T>(params: {
           error: `Provider ${candidate.provider} is in cooldown (all profiles unavailable)`,
           reason: "rate_limit",
         });
+        const recorded = recordFallbackAttempt({
+          provider: candidate.provider,
+          model: candidate.model,
+          reason: "rate_limit",
+        });
+        if (recorded.warned) {
+          maybeWarnFallbackRate(params.cfg, recorded.countLastHour);
+        }
         continue;
       }
     }
@@ -306,6 +331,16 @@ export async function runWithModelFallback<T>(params: {
         status: described.status,
         code: described.code,
       });
+      const recorded = recordFallbackAttempt({
+        provider: candidate.provider,
+        model: candidate.model,
+        reason: described.reason,
+        status: described.status,
+        code: described.code,
+      });
+      if (recorded.warned) {
+        maybeWarnFallbackRate(params.cfg, recorded.countLastHour);
+      }
       if (!params.onError) {
         logWarn(
           `model fallback attempt ${i + 1}/${candidates.length} failed for ` +
@@ -325,6 +360,15 @@ export async function runWithModelFallback<T>(params: {
 
   if (attempts.length <= 1 && lastError) {
     throw lastError;
+  }
+  if (!lastError && attempts.length > 0) {
+    const allCooldownSkipped = attempts.every((attempt) => attempt.reason === "rate_limit");
+    if (allCooldownSkipped) {
+      throw new Error(
+        `All models in cooldown (${attempts.length || candidates.length}): ` +
+          "no available auth profiles",
+      );
+    }
   }
   const summary =
     attempts.length > 0

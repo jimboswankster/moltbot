@@ -7,7 +7,7 @@
  * Hardening area: H-1
  * Source: src/config/zod-schema.agent-defaults.ts
  * Correct behavior: memoryFlush accepts an optional `model` override
- * Paired characterization: zod-schema.memoryFlush.characterization.test.ts
+ * Paired characterization: deleted after fix H-1
  * Status: RED -> GREEN when fix H-1 lands
  *
  * Protocol: TEST-CHARACTERIZATION v1.0.0 (Phase 2: Remediation Contract)

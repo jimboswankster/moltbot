@@ -7,7 +7,7 @@
  * Hardening area: H-2, H-6
  * Source: src/auto-reply/reply/agent-runner-memory.ts
  * Correct behavior: flush uses memoryFlush.model when configured and omits fallbacksOverride
- * Paired characterization: agent-runner-memory.flush-model.characterization.test.ts
+ * Paired characterization: deleted after fix H-2/H-6
  * Status: RED -> GREEN when fixes land
  *
  * Protocol: TEST-CHARACTERIZATION v1.0.0 (Phase 2: Remediation Contract)

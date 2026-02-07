@@ -7,7 +7,7 @@
  * Hardening area: H-3
  * Source: src/auto-reply/reply/agent-runner-memory.ts
  * Correct behavior: flush failure logs via logWarn and emits diagnostic event
- * Paired characterization: agent-runner-memory.flush-logging.characterization.test.ts
+ * Paired characterization: deleted after fix H-3
  * Status: RED -> GREEN when fix H-3 lands
  *
  * Protocol: TEST-CHARACTERIZATION v1.0.0 (Phase 2: Remediation Contract)
@@ -68,6 +68,7 @@ function createParams(overrides?: Partial<FollowupRun["run"]>) {
         },
       },
     },
+    diagnostics: { enabled: true },
   };
 
   const followupRun = {
