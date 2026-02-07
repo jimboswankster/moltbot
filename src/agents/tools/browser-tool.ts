@@ -121,6 +121,7 @@ async function callBrowserProxy(params: {
   body?: unknown;
   timeoutMs?: number;
   profile?: string;
+  idempotencyKey?: string;
 }): Promise<BrowserProxyResult> {
   const gatewayTimeoutMs =
     typeof params.timeoutMs === "number" && Number.isFinite(params.timeoutMs)
@@ -140,7 +141,7 @@ async function callBrowserProxy(params: {
         timeoutMs: params.timeoutMs,
         profile: params.profile,
       },
-      idempotencyKey: crypto.randomUUID(),
+      idempotencyKey: params.idempotencyKey || crypto.randomUUID(),
     },
   );
   const parsed =
@@ -244,6 +245,7 @@ export function createBrowserTool(opts?: {
       const params = args as Record<string, unknown>;
       const action = readStringParam(params, "action", { required: true });
       const profile = readStringParam(params, "profile");
+      const idempotencyKey = readStringParam(params, "idempotencyKey")?.trim() || undefined;
       const requestedNode = readStringParam(params, "node");
       let target = readStringParam(params, "target") as "sandbox" | "host" | "node" | undefined;
 
@@ -288,6 +290,7 @@ export function createBrowserTool(opts?: {
               body: opts.body,
               timeoutMs: opts.timeoutMs,
               profile: opts.profile,
+              idempotencyKey,
             });
             const mapping = await persistProxyFiles(proxy.files);
             applyProxyPaths(proxy.result, mapping);

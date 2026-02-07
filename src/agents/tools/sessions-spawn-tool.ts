@@ -47,6 +47,8 @@ const SessionsSpawnToolSchema = Type.Object({
   // Back-compat alias. Prefer runTimeoutSeconds.
   timeoutSeconds: Type.Optional(Type.Number({ minimum: 0 })),
   cleanup: optionalStringEnum(["delete", "keep"] as const),
+  idempotencyKey: Type.Optional(Type.String({ minLength: 1 })),
+  idempotencyKeySeed: Type.Optional(Type.String({ minLength: 1 })),
 });
 
 function splitModelRef(ref?: string) {
@@ -296,7 +298,8 @@ export function createSessionsSpawnTool(opts?: {
         task,
       });
 
-      const childIdem = crypto.randomUUID();
+      const providedIdempotencyKey = readStringParam(params, "idempotencyKey")?.trim();
+      const childIdem = providedIdempotencyKey || crypto.randomUUID();
       let childRunId: string = childIdem;
       try {
         const response = await callGateway<{ runId: string }>({
