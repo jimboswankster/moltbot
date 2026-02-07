@@ -1,0 +1,75 @@
+---
+# OpenClaw Test Index (machine-readable)
+# Purpose: single source of truth for test suites, coverage surface, and known failures
+
+repo: openclaw
+status: active
+maturity: 2
+last_updated: "2026-02-07"
+
+suites:
+  - name: unit_integration
+    status: active
+    runner: vitest
+    config: vitest.config.ts
+    command: "pnpm test"
+    scope:
+      - "Pure unit tests"
+      - "In-process integration tests (gateway auth, routing, tooling, parsing, config)"
+    expectations:
+      - "CI-safe"
+      - "No real keys required"
+  - name: e2e
+    status: active
+    runner: vitest
+    config: vitest.e2e.config.ts
+    command: "pnpm test:e2e"
+    scope:
+      - "Multi-instance gateway end-to-end behavior"
+      - "WebSocket/HTTP surfaces, node pairing, heavier networking"
+    expectations:
+      - "CI-safe when enabled"
+      - "No real keys required"
+  - name: live
+    status: optional
+    runner: vitest
+    config: vitest.live.config.ts
+    command: "pnpm test:live"
+    scope:
+      - "Real providers + real models"
+      - "Gateway smoke for live models"
+    expectations:
+      - "Not CI-stable by design"
+      - "Requires live credentials"
+
+known_failures:
+  environment_dependent:
+    description: "Local sandbox/network restrictions (should pass in CI or non-sandboxed env)."
+    tests:
+      - path: src/media/server.test.ts
+        reason: "listen EPERM (bind not permitted)"
+      - path: src/infra/ports.test.ts
+        reason: "listen EPERM (bind not permitted)"
+      - path: src/infra/ports-inspect.test.ts
+        reason: "listen EPERM (bind not permitted)"
+      - path: src/telegram/webhook.test.ts
+        reason: "listen EPERM (bind not permitted)"
+      - path: src/canvas-host/server.test.ts
+        reason: "listen EPERM (bind not permitted)"
+      - path: src/browser/cdp.test.ts
+        reason: "listen EPERM (bind not permitted)"
+      - path: src/media-understanding/providers/google/video.test.ts
+        reason: "ENOTFOUND (network/DNS)"
+  deferred_logic:
+    description: "Real logic failures to revisit."
+    tests:
+      - path: src/agents/system-prompt.test.ts
+        reason: "2 failures in prompt assertions"
+      - path: src/agents/openclaw-tools.sessions.test.ts
+        reason: "2 failures in sessions_send behavior"
+      - path: src/slack/monitor/media.test.ts
+        reason: "2 failures in media resolution expectations"
+
+references:
+  primary_doc: docs/testing.md
+  note: "Update docs/testing.md and this index together when triaging failures."

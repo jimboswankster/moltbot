@@ -14,8 +14,8 @@ This works but forces callers to specify concrete model ids when they want diffe
 
 We add a `modelRole` parameter (e.g., `"orchestrator" | "primary" | "premium"`) and a config-driven `modelRoles` mapping so callers can say:
 
-- "Spawn an *orchestrator* subagent" (cheap),
-- "Spawn a *premium* subagent" (deep reasoning),
+- "Spawn an _orchestrator_ subagent" (cheap),
+- "Spawn a _premium_ subagent" (deep reasoning),
 
 and keep the actual model ids in config.
 
@@ -73,7 +73,7 @@ Cheap helper:
 sessions_spawn({
   task: "Scan work-items and propose 3 low-complexity tasks",
   label: "cheap helper",
-  modelRole: "orchestrator"
+  modelRole: "orchestrator",
 });
 ```
 
@@ -83,7 +83,7 @@ Deep analysis:
 sessions_spawn({
   task: "Audit model router code and propose refactor plan",
   label: "deep analysis",
-  modelRole: "premium"
+  modelRole: "premium",
 });
 ```
 
