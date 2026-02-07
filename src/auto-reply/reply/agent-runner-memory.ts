@@ -18,6 +18,7 @@ import { resolveSandboxConfigForAgent, resolveSandboxRuntimeStatus } from "../..
 import { type SessionEntry, updateSessionStoreEntry } from "../../config/sessions.js";
 import { logVerbose } from "../../globals.js";
 import { registerAgentRunContext } from "../../infra/agent-events.js";
+import { emitAgentEvent } from "../../infra/agent-events.js";
 import { emitDiagnosticEvent, isDiagnosticsEnabled } from "../../infra/diagnostic-events.js";
 import { logWarn } from "../../logger.js";
 import { buildThreadingToolContext, resolveEnforceFinalTag } from "./agent-runner-utils.js";
@@ -124,6 +125,7 @@ export async function runMemoryFlushIfNeeded(params: {
   })();
 
   const now = Date.now();
+  const telemetryRunId = `memoryFlush:${params.followupRun.run.sessionId}`;
   let activeSessionEntry = params.sessionEntry;
   const activeSessionStore = params.sessionStore;
   const memoryFlushState =
@@ -140,6 +142,15 @@ export async function runMemoryFlushIfNeeded(params: {
     const defaultedAt = memoryFlushState?.memoryFlushContextTokensDefaultedAt;
     if (!defaultedAt) {
       logWarn("memory flush context window defaulted; consider configuring model context size");
+      emitAgentEvent({
+        runId: telemetryRunId,
+        stream: "lifecycle",
+        sessionKey: params.sessionKey,
+        data: {
+          phase: "telemetry",
+          kind: "memory_flush_context_defaulted",
+        },
+      });
       if (params.storePath && params.sessionKey) {
         try {
           const updatedEntry = await updateSessionStoreEntry({
@@ -164,6 +175,16 @@ export async function runMemoryFlushIfNeeded(params: {
   const nextAllowedAt = memoryFlushState?.memoryFlushNextAllowedAt ?? 0;
   if (nextAllowedAt && now < nextAllowedAt) {
     logWarn(`memory flush suppressed by backoff until ${new Date(nextAllowedAt).toISOString()}`);
+    emitAgentEvent({
+      runId: telemetryRunId,
+      stream: "lifecycle",
+      sessionKey: params.sessionKey,
+      data: {
+        phase: "telemetry",
+        kind: "memory_flush_backoff",
+        nextAllowedAt,
+      },
+    });
     return params.sessionEntry;
   }
 
@@ -296,9 +317,28 @@ export async function runMemoryFlushIfNeeded(params: {
     }
     if (!memoryCompactionCompleted) {
       logWarn("memory flush completed without compaction event; counters unchanged");
+      emitAgentEvent({
+        runId: telemetryRunId,
+        stream: "lifecycle",
+        sessionKey: params.sessionKey,
+        data: {
+          phase: "telemetry",
+          kind: "memory_flush_compaction_missing",
+        },
+      });
     }
   } catch (err) {
     logWarn(`memory flush run failed: ${String(err)}`);
+    emitAgentEvent({
+      runId: telemetryRunId,
+      stream: "lifecycle",
+      sessionKey: params.sessionKey,
+      data: {
+        phase: "telemetry",
+        kind: "memory_flush_failed",
+        error: String(err),
+      },
+    });
     if (isDiagnosticsEnabled(params.cfg)) {
       emitDiagnosticEvent({
         type: "memory.flush.failed",

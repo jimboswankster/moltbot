@@ -15,6 +15,7 @@ import { buildHistoryContextFromEntries, type HistoryEntry } from "../auto-reply
 import { createDefaultDeps } from "../cli/deps.js";
 import { agentCommand } from "../commands/agent.js";
 import { emitAgentEvent, onAgentEvent } from "../infra/agent-events.js";
+import { emitAgentEvent } from "../infra/agent-events.js";
 import { logWarn } from "../logger.js";
 import {
   DEFAULT_INPUT_FILE_MAX_BYTES,
@@ -370,6 +371,24 @@ function createResponseResource(params: {
     usage: params.usage ?? createEmptyUsage(),
     error: params.error,
   };
+}
+
+function emitOpenResponsesTelemetry(params: {
+  runId: string;
+  sessionKey: string;
+  kind: string;
+  details?: Record<string, unknown>;
+}) {
+  emitAgentEvent({
+    runId: params.runId,
+    stream: "lifecycle",
+    sessionKey: params.sessionKey,
+    data: {
+      phase: "telemetry",
+      kind: params.kind,
+      ...params.details,
+    },
+  });
 }
 
 function createAssistantOutputItem(params: {
@@ -779,11 +798,21 @@ export async function handleOpenResponsesHttpRequest(
       if (resolved.action === "drop") {
         if (typeof text === "string" && accumulatedText.startsWith(text)) {
           logWarn("openresponses stream replay detected; dropping duplicate prefix");
+          emitOpenResponsesTelemetry({
+            runId: responseId,
+            sessionKey,
+            kind: "stream_replay_drop",
+          });
         }
         return;
       }
       if (resolved.action === "reset") {
         logWarn("openresponses stream desync detected; resetting accumulation buffer");
+        emitOpenResponsesTelemetry({
+          runId: responseId,
+          sessionKey,
+          kind: "stream_desync_reset",
+        });
       }
 
       sawAssistantDelta = true;
