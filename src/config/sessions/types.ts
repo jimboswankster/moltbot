@@ -113,7 +113,6 @@ export type SessionEntry = {
   skillsSnapshot?: SessionSkillSnapshot;
   systemPromptReport?: SessionSystemPromptReport;
   a2aInbox?: A2AInboxState;
-  browserIdempotencyLedger?: Record<string, { ts: number; result: unknown }>;
 };
 
 export function mergeSessionEntry(
