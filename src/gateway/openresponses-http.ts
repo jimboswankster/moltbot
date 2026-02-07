@@ -15,6 +15,7 @@ import { buildHistoryContextFromEntries, type HistoryEntry } from "../auto-reply
 import { createDefaultDeps } from "../cli/deps.js";
 import { agentCommand } from "../commands/agent.js";
 import { emitAgentEvent, onAgentEvent } from "../infra/agent-events.js";
+import { logWarn } from "../logger.js";
 import {
   DEFAULT_INPUT_FILE_MAX_BYTES,
   DEFAULT_INPUT_FILE_MAX_CHARS,
@@ -67,6 +68,64 @@ const DEFAULT_BODY_BYTES = 20 * 1024 * 1024;
 function writeSseEvent(res: ServerResponse, event: StreamingEvent) {
   res.write(`event: ${event.type}\n`);
   res.write(`data: ${JSON.stringify(event)}\n\n`);
+}
+
+function findOverlap(base: string, incoming: string): number {
+  const max = Math.min(base.length, incoming.length);
+  for (let len = max; len > 0; len -= 1) {
+    if (base.endsWith(incoming.slice(0, len))) {
+      return len;
+    }
+  }
+  return 0;
+}
+
+export function resolveStreamingDelta(params: {
+  accumulatedText: string;
+  delta: unknown;
+  text: unknown;
+}): { deltaText: string; nextText: string; action: "append" | "drop" | "reset" } {
+  const { accumulatedText } = params;
+  if (typeof params.delta === "string") {
+    return {
+      deltaText: params.delta,
+      nextText: `${accumulatedText}${params.delta}`,
+      action: "append",
+    };
+  }
+  if (typeof params.text !== "string") {
+    return { deltaText: "", nextText: accumulatedText, action: "drop" };
+  }
+  const text = params.text;
+  if (accumulatedText && text.startsWith(accumulatedText)) {
+    const deltaText = text.slice(accumulatedText.length);
+    if (!deltaText) {
+      return { deltaText: "", nextText: accumulatedText, action: "drop" };
+    }
+    return {
+      deltaText,
+      nextText: `${accumulatedText}${deltaText}`,
+      action: "append",
+    };
+  }
+  if (accumulatedText && accumulatedText.startsWith(text)) {
+    return { deltaText: "", nextText: accumulatedText, action: "drop" };
+  }
+  if (accumulatedText) {
+    const overlap = findOverlap(accumulatedText, text);
+    if (overlap > 0) {
+      const deltaText = text.slice(overlap);
+      if (!deltaText) {
+        return { deltaText: "", nextText: accumulatedText, action: "drop" };
+      }
+      return {
+        deltaText,
+        nextText: `${accumulatedText}${deltaText}`,
+        action: "append",
+      };
+    }
+  }
+  return { deltaText: text, nextText: text, action: "reset" };
 }
 
 function extractTextContent(content: string | ContentPart[]): string {
@@ -716,20 +775,26 @@ export async function handleOpenResponsesHttpRequest(
     if (evt.stream === "assistant") {
       const delta = evt.data?.delta;
       const text = evt.data?.text;
-      const content = typeof delta === "string" ? delta : typeof text === "string" ? text : "";
-      if (!content) {
+      const resolved = resolveStreamingDelta({ accumulatedText, delta, text });
+      if (resolved.action === "drop") {
+        if (typeof text === "string" && accumulatedText.startsWith(text)) {
+          logWarn("openresponses stream replay detected; dropping duplicate prefix");
+        }
         return;
+      }
+      if (resolved.action === "reset") {
+        logWarn("openresponses stream desync detected; resetting accumulation buffer");
       }
 
       sawAssistantDelta = true;
-      accumulatedText += content;
+      accumulatedText = resolved.nextText;
 
       writeSseEvent(res, {
         type: "response.output_text.delta",
         item_id: outputItemId,
         output_index: 0,
         content_index: 0,
-        delta: content,
+        delta: resolved.deltaText,
       });
       return;
     }

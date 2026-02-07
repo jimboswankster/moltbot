@@ -162,8 +162,25 @@ export function createAgentEventHandler({
   ) => {
     const previous = chatRunState.buffers.get(clientRunId) ?? "";
     let resolvedDelta = deltaText;
+    const trimOverlap = (base: string, incoming: string) => {
+      const max = Math.min(base.length, incoming.length);
+      for (let len = max; len > 0; len -= 1) {
+        if (base.endsWith(incoming.slice(0, len))) {
+          return incoming.slice(len);
+        }
+      }
+      return incoming;
+    };
     if (text && previous && text.startsWith(previous)) {
       resolvedDelta = text.slice(previous.length);
+    }
+    if (resolvedDelta && previous) {
+      if (resolvedDelta.startsWith(previous)) {
+        // Incoming delta is actually a full replay of previous text.
+        resolvedDelta = resolvedDelta.slice(previous.length);
+      } else {
+        resolvedDelta = trimOverlap(previous, resolvedDelta);
+      }
     }
     if (text && text === previous) {
       return;

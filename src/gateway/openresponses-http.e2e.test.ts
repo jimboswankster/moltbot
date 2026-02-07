@@ -504,4 +504,39 @@ describe("OpenResponses HTTP API (e2e)", () => {
       // shared server
     }
   });
+
+  it("streams delta-only when assistant text is cumulative", async () => {
+    const port = enabledPort;
+    try {
+      agentCommand.mockReset();
+      agentCommand.mockImplementationOnce(async (opts: unknown) => {
+        const runId = (opts as { runId?: string } | undefined)?.runId ?? "";
+        emitAgentEvent({ runId, stream: "assistant", data: { text: "I" } });
+        emitAgentEvent({ runId, stream: "assistant", data: { text: "I will" } });
+        emitAgentEvent({ runId, stream: "assistant", data: { text: "I will" } });
+        return { payloads: [{ text: "I will" }] } as never;
+      });
+
+      const resDelta = await postResponses(port, {
+        stream: true,
+        model: "openclaw",
+        input: "hi",
+      });
+      expect(resDelta.status).toBe(200);
+
+      const deltaText = await resDelta.text();
+      const deltaEvents = parseSseEvents(deltaText);
+      const deltas = deltaEvents
+        .filter((e) => e.event === "response.output_text.delta")
+        .map((e) => {
+          const parsed = JSON.parse(e.data) as { delta?: string };
+          return parsed.delta ?? "";
+        })
+        .join("");
+
+      expect(deltas).toBe("I will");
+    } finally {
+      // shared server
+    }
+  });
 });
