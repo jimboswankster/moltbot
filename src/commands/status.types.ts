@@ -53,6 +53,14 @@ export type StatusSummary = {
     }>;
     inboxAckMode: "mark" | "clear";
   };
+  fallbacks: {
+    lastHourCount: number;
+    warningCount: number;
+    lastWarningAt: number | null;
+    warnThreshold: number;
+    byProvider: Array<{ provider: string; count: number }>;
+    byReason: Array<{ reason: string; count: number }>;
+  };
   linkChannel?: {
     id: ChannelId;
     label: string;

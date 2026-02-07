@@ -70,7 +70,9 @@ export function emitAgentEvent(event: Omit<AgentEventPayload, "seq" | "ts">) {
   };
   // Diagnostic logging for lifecycle events
   if (event.stream === "lifecycle") {
-    const phase = event.data?.phase;
+    const phaseRaw = event.data?.phase;
+    const phase =
+      typeof phaseRaw === "string" ? phaseRaw : phaseRaw == null ? "" : JSON.stringify(phaseRaw);
     console.log(
       `[agent-events] lifecycle event: runId=${event.runId} phase=${phase} sessionKey=${sessionKey ?? "(unknown)"} listeners=${listeners.size}`,
     );

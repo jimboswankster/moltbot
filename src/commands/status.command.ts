@@ -246,6 +246,18 @@ export async function statusCommand(
     );
   })();
 
+  const fallbackValue = (() => {
+    const fb = summary.fallbacks;
+    if (!fb || fb.lastHourCount === 0) {
+      return muted("ok");
+    }
+    const topProvider = fb.byProvider[0]?.provider ?? null;
+    const providerSuffix = topProvider ? ` · ${shortenText(topProvider, 24)}` : "";
+    const warnCount = fb.warningCount > 0 ? ` · warn ${fb.warningCount}` : "";
+    const label = `${fb.lastHourCount}/hr${warnCount}${providerSuffix}`;
+    return fb.lastHourCount >= fb.warnThreshold ? warn(label) : muted(label);
+  })();
+
   const agentsValue = (() => {
     const pending =
       agentStatus.bootstrapPendingCount > 0
@@ -388,6 +400,7 @@ export async function statusCommand(
     { Item: "Gateway", Value: gatewayValue },
     { Item: "Watchers", Value: watcherValue },
     { Item: "A2A Inbox", Value: a2aValue },
+    { Item: "Fallbacks", Value: fallbackValue },
     { Item: "Gateway service", Value: daemonValue },
     { Item: "Node service", Value: nodeDaemonValue },
     { Item: "Agents", Value: agentsValue },

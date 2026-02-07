@@ -12,6 +12,7 @@ import {
 import { listAgentsForGateway } from "../gateway/session-utils.js";
 import { getA2ATelemetry } from "../infra/a2a-telemetry.js";
 import { buildChannelSummary } from "../infra/channel-summary.js";
+import { getFallbackTelemetry } from "../infra/fallback-telemetry.js";
 import { resolveHeartbeatSummaryForAgent } from "../infra/heartbeat-runner.js";
 import { peekSystemEvents } from "../infra/system-events.js";
 import { collectUsageSnapshot } from "../infra/usage-snapshot.js";
@@ -186,6 +187,7 @@ export async function getStatusSummary(): Promise<StatusSummary> {
       ...getA2ATelemetry(),
       inboxAckMode: cfg.tools?.agentToAgent?.inboxAckMode ?? "mark",
     },
+    fallbacks: getFallbackTelemetry(),
     linkChannel: linkContext
       ? {
           id: linkContext.plugin.id,
