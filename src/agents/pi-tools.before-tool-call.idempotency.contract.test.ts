@@ -116,4 +116,40 @@ describe("before_tool_call idempotency injection (contract)", () => {
     expect(first.idempotencyKeySeed).toBeUndefined();
     expect(second.idempotencyKeySeed).toBeUndefined();
   });
+
+  it("uses stable serialization for idempotencyKey (order independent)", async () => {
+    const execute = vi.fn().mockResolvedValue({ content: [], details: { ok: true } });
+    const tool = wrapToolWithBeforeToolCallHook({ name: "sessions_send", execute } as any, {
+      runId: "cron:job-4:1700000000000",
+      sessionKey: "agent:main:cron:job-4",
+    });
+
+    await tool.execute(
+      "call-7",
+      {
+        sessionKey: "agent:main:main",
+        message: "hi",
+        meta: { b: 2, a: 1 },
+        list: [{ z: 3, y: 2 }],
+      },
+      undefined,
+      undefined,
+    );
+    await tool.execute(
+      "call-8",
+      {
+        sessionKey: "agent:main:main",
+        message: "hi",
+        list: [{ y: 2, z: 3 }],
+        meta: { a: 1, b: 2 },
+      },
+      undefined,
+      undefined,
+    );
+
+    const first = execute.mock.calls[0]?.[1] as Record<string, unknown>;
+    const second = execute.mock.calls[1]?.[1] as Record<string, unknown>;
+    expect(first.idempotencyKey).toBeTruthy();
+    expect(first.idempotencyKey).toBe(second.idempotencyKey);
+  });
 });
