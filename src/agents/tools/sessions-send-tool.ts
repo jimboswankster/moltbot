@@ -35,6 +35,7 @@ const SessionsSendToolSchema = Type.Object({
   agentId: Type.Optional(Type.String({ minLength: 1, maxLength: 64 })),
   message: Type.String(),
   timeoutSeconds: Type.Optional(Type.Number({ minimum: 0 })),
+  idempotencyKey: Type.Optional(Type.String({ minLength: 1 })),
 });
 
 export function createSessionsSendTool(opts?: {
@@ -234,7 +235,8 @@ export function createSessionsSendTool(opts?: {
             : 30;
         const timeoutMs = timeoutSeconds * 1000;
         const announceTimeoutMs = timeoutSeconds === 0 ? 30_000 : timeoutMs;
-        const idempotencyKey = crypto.randomUUID();
+        const idempotencyKey =
+          readStringParam(params, "idempotencyKey")?.trim() || crypto.randomUUID();
         let runId: string = idempotencyKey;
         const requesterAgentId = resolveAgentIdFromSessionKey(requesterInternalKey);
         const targetAgentId = resolveAgentIdFromSessionKey(resolvedKey);
