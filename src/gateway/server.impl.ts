@@ -31,6 +31,7 @@ import {
   refreshRemoteBinsForConnectedNodes,
   setSkillsRemoteRegistry,
 } from "../infra/skills-remote.js";
+import { loadStreamBufferAdapter } from "../infra/stream-buffer-adapter.js";
 import { scheduleGatewayUpdateCheck } from "../infra/update-startup.js";
 import { startDiagnosticHeartbeat, stopDiagnosticHeartbeat } from "../logging/diagnostic.js";
 import { createSubsystemLogger, runtimeForLogger } from "../logging/subsystem.js";
@@ -396,6 +397,8 @@ export async function startGatewayServer(
     nodeSendToSession,
   });
 
+  const streamBufferAdapter = await loadStreamBufferAdapter(cfgAtStart, log.child("stream-buffer"));
+
   const agentUnsub = onAgentEvent(
     createAgentEventHandler({
       broadcast,
@@ -406,6 +409,7 @@ export async function startGatewayServer(
       resolveSessionKeyForRun,
       clearAgentRunContext,
       logGateway: log,
+      streamBufferAdapter,
     }),
   );
 

@@ -555,7 +555,15 @@ describe("gateway server chat", () => {
       registerAgentRunContext("run-stream-1", { sessionKey: "main" });
       const deltas: Array<{ deltaText?: string; text?: string }> = [];
       const handler = (data: WebSocket.RawData) => {
-        const obj = JSON.parse(String(data));
+        const raw =
+          typeof data === "string"
+            ? data
+            : Buffer.isBuffer(data)
+              ? data.toString("utf8")
+              : Array.isArray(data)
+                ? Buffer.concat(data).toString("utf8")
+                : Buffer.from(data).toString("utf8");
+        const obj = JSON.parse(raw);
         if (
           obj?.type === "event" &&
           obj?.event === "chat" &&

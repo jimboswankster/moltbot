@@ -14,6 +14,7 @@ import {
   extractShortModelName,
   type ResponsePrefixContext,
 } from "../../auto-reply/reply/response-prefix-template.js";
+import { normalizeVerboseLevel } from "../../auto-reply/thinking.js";
 import { isVerbose } from "../../globals.js";
 import { registerAgentRunContext } from "../../infra/agent-events.js";
 import { clearAgentRunContext } from "../../infra/agent-events.js";
@@ -450,7 +451,7 @@ export const chatHandlers: GatewayRequestHandlers = {
       context.addChatRun(clientRunId, { sessionKey: p.sessionKey, clientRunId });
       registerAgentRunContext(clientRunId, {
         sessionKey: p.sessionKey,
-        verboseLevel: entry?.verboseLevel,
+        verboseLevel: normalizeVerboseLevel(entry?.verboseLevel),
       });
       if (isVerbose()) {
         context.logGateway.info(
@@ -509,7 +510,7 @@ export const chatHandlers: GatewayRequestHandlers = {
       });
       registerAgentRunContext(clientRunId, {
         sessionKey: p.sessionKey,
-        verboseLevel: entry?.verboseLevel,
+        verboseLevel: normalizeVerboseLevel(entry?.verboseLevel),
       });
       let prefixContext: ResponsePrefixContext = {
         identityName: resolveIdentityName(cfg, agentId),
