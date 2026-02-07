@@ -20,14 +20,32 @@ vi.mock("../../logger.js", () => ({
   logWarn: (message: string) => logWarnMock(message),
 }));
 
+vi.mock("../../agents/context.js", () => ({
+  lookupContextTokens: () => undefined,
+}));
+
+vi.mock("../../agents/auth-profiles.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../agents/auth-profiles.js")>();
+  return {
+    ...actual,
+    ensureAuthProfileStore: () => ({ version: 1, profiles: {} }),
+    resolveAuthProfileOrder: () => [],
+    isProfileInCooldown: () => false,
+  };
+});
+
 vi.mock("../../infra/diagnostic-events.js", () => ({
   emitDiagnosticEvent: (event: unknown) => emitDiagnosticEventMock(event),
   isDiagnosticsEnabled: () => true,
 }));
 
-vi.mock("../../agents/model-fallback.js", () => ({
-  runWithModelFallback: async (params: any) => runWithModelFallbackMock(params),
-}));
+vi.mock("../../agents/model-fallback.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../agents/model-fallback.js")>();
+  return {
+    ...actual,
+    runWithModelFallback: async (params: any) => runWithModelFallbackMock(params),
+  };
+});
 
 vi.mock("../../agents/pi-embedded.js", () => ({
   queueEmbeddedPiMessage: vi.fn().mockReturnValue(false),
@@ -56,7 +74,7 @@ function createParams(overrides?: Partial<FollowupRun["run"]>) {
             systemPrompt: "Flush memory now.",
             model: "google/gemini-3-flash-preview",
           },
-          reserveTokensFloor: 5_000,
+          reserveTokensFloor: 20_000,
         },
       },
     },
@@ -69,7 +87,7 @@ function createParams(overrides?: Partial<FollowupRun["run"]>) {
       agentId: "main",
       agentDir: "/tmp/agent",
       sessionId: "session",
-      sessionKey: "main",
+      sessionKey: undefined,
       messageProvider: "whatsapp",
       sessionFile: "/tmp/session.jsonl",
       workspaceDir: "/tmp",
@@ -102,7 +120,7 @@ function createParams(overrides?: Partial<FollowupRun["run"]>) {
     cfg,
     followupRun,
     sessionCtx,
-    sessionEntry: { totalTokens: 96_000, compactionCount: 1 },
+    sessionEntry: { totalTokens: 130_000, compactionCount: 1 },
   };
 }
 
@@ -121,7 +139,8 @@ describe("memory flush failure chain remediation contract", () => {
       followupRun,
       sessionCtx,
       defaultModel: "anthropic/claude-opus-4-5",
-      agentCfgContextTokens: 100_000,
+      // Inflate context window for deterministic triggering with production-like thresholds.
+      agentCfgContextTokens: 144_000,
       resolvedVerboseLevel: "off",
       sessionEntry,
       isHeartbeat: false,
