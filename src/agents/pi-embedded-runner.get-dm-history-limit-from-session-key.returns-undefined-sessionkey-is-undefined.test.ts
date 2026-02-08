@@ -228,4 +228,28 @@ describe("getDmHistoryLimitFromSessionKey", () => {
     } as OpenClawConfig;
     expect(getDmHistoryLimitFromSessionKey("telegram:dm:123", config)).toBe(5);
   });
+
+  // --- Webchat safety limit (E-005 P0-CE fix) ---
+
+  it("returns 30 for webchat sessions (safety limit)", () => {
+    const config = {} as OpenClawConfig;
+    expect(getDmHistoryLimitFromSessionKey("agent:main:webchat:session:abc", config)).toBe(30);
+  });
+
+  it("returns 30 for webchat even without channels config", () => {
+    expect(
+      getDmHistoryLimitFromSessionKey("agent:main:webchat:session:abc", {} as OpenClawConfig),
+    ).toBe(30);
+  });
+
+  it("returns 30 for bare webchat session key", () => {
+    expect(getDmHistoryLimitFromSessionKey("webchat:session:abc", {} as OpenClawConfig)).toBe(30);
+  });
+
+  it("webchat limit applies regardless of session kind", () => {
+    // webchat doesn't have "dm" kind — it should still get a limit
+    expect(
+      getDmHistoryLimitFromSessionKey("agent:main:webchat:main:main", {} as OpenClawConfig),
+    ).toBe(30);
+  });
 });
