@@ -52,12 +52,11 @@ export function limitToolResults(messages: AgentMessage[], keepLast: number = 3)
     if (msg.role === "toolResult") {
       toolResultCount++;
       if (toolResultCount > keepLast) {
-        // Truncate this tool result
-        // We preserve errors slightly more often, but for now treat all uniformly
-        // to guarantee token savings.
+        // Truncate this tool result to a single text content block.
+        // content must be (TextContent | ImageContent)[] — not a plain string.
         result[i] = {
           ...msg,
-          content: "[Old tool result cleared to save context]",
+          content: [{ type: "text" as const, text: "[Old tool result cleared to save context]" }],
         };
       }
     }
