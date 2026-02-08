@@ -1,19 +1,22 @@
+/**
+ * Contract Test: History Pipeline Chain
+ *
+ * Protocol: TEST-CONTRACT v1.0.0
+ * QC: TEST-QA-PASSING-FAILURE v1.0.0
+ * SUT: getDmHistoryLimitFromSessionKey(), limitHistoryTurns(), limitToolResults() from history.ts
+ * Contract source: attempt.ts pipeline (lines 574-582) — the same chain that runs before every prompt.
+ *
+ * Purpose: Verify the full history processing chain produces valid message formats.
+ * This catches the class of bug where limitToolResults corrupts toolResult.content
+ * (e.g., setting it to a string instead of (TextContent | ImageContent)[]),
+ * which causes Gemini to silently produce zero output.
+ */
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import { describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "../../config/config.js";
 import { getDmHistoryLimitFromSessionKey, limitHistoryTurns, limitToolResults } from "./history.js";
 
-/**
- * Integration test: exercises the same history processing chain as attempt.ts
- *
- *   sanitize → validate → limitHistoryTurns → limitToolResults → validate format
- *
- * This catches the class of bug where limitToolResults corrupts message format
- * (e.g., setting toolResult.content to a string instead of an array), which
- * causes providers like Gemini to silently produce zero output.
- */
-
-// --- Test helpers ---
+// --- Test helpers (construct valid AgentMessage shapes) ---
 
 function makeUser(text: string): AgentMessage {
   return { role: "user", content: text } as unknown as AgentMessage;
@@ -29,14 +32,7 @@ function makeAssistant(text: string): AgentMessage {
 function makeToolCall(toolName: string, toolCallId: string): AgentMessage {
   return {
     role: "assistant",
-    content: [
-      {
-        type: "toolCall" as const,
-        toolCallId,
-        toolName,
-        arguments: {},
-      },
-    ],
+    content: [{ type: "toolCall" as const, toolCallId, toolName, arguments: {} }],
   } as unknown as AgentMessage;
 }
 
@@ -50,77 +46,77 @@ function makeToolResult(toolName: string, text: string, toolCallId: string): Age
 }
 
 /**
- * Validates that all messages in the array have the correct content format.
- * This is the same validation that attempt.ts performs after the pipeline.
- *
- * Returns an array of error descriptions (empty = all valid).
+ * Validates that all toolResult messages have correct content format.
+ * Mirrors the runtime validation in attempt.ts (post-pipeline guard).
  */
-function validateMessageFormats(messages: AgentMessage[]): string[] {
+function validateToolResultFormats(messages: AgentMessage[]): string[] {
   const errors: string[] = [];
   for (let i = 0; i < messages.length; i++) {
     const m = messages[i];
-    if (m.role === "toolResult") {
-      const content = (m as any).content;
-      if (!Array.isArray(content)) {
+    if (m.role !== "toolResult") continue;
+    const content = (m as any).content;
+    if (!Array.isArray(content)) {
+      errors.push(
+        `index ${i}: content is ${typeof content}, expected array (toolName=${(m as any).toolName})`,
+      );
+      continue;
+    }
+    for (let j = 0; j < content.length; j++) {
+      const block = content[j];
+      if (!block || typeof block !== "object") {
+        errors.push(`index ${i}: content[${j}] is not an object`);
+      } else if (block.type !== "text" && block.type !== "image") {
         errors.push(
-          `index ${i}: toolResult has non-array content (type=${typeof content}, toolName=${(m as any).toolName})`,
+          `index ${i}: content[${j}].type is "${block.type}", expected "text" or "image"`,
         );
-      } else {
-        for (let j = 0; j < content.length; j++) {
-          const block = content[j];
-          if (!block || typeof block !== "object") {
-            errors.push(`index ${i}: toolResult content[${j}] is not an object`);
-          } else if (block.type !== "text" && block.type !== "image") {
-            errors.push(`index ${i}: toolResult content[${j}] has unexpected type "${block.type}"`);
-          }
-        }
       }
     }
   }
   return errors;
 }
 
+// --- Pipeline runner (mirrors attempt.ts lines 574-582) ---
+
+function runPipeline(
+  messages: AgentMessage[],
+  sessionKey: string,
+  config: OpenClawConfig = {} as OpenClawConfig,
+  keepLastTools = 3,
+): AgentMessage[] {
+  const historyLimit = getDmHistoryLimitFromSessionKey(sessionKey, config);
+  const limited = limitHistoryTurns(messages, historyLimit);
+  return limitToolResults(limited, keepLastTools);
+}
+
 // --- Tests ---
 
-describe("history pipeline integration", () => {
-  it("processes a realistic session through the full chain with valid output", () => {
-    // Simulate a session with 10 user turns, each with tool calls
+describe("history pipeline contract", () => {
+  it("full chain produces valid message format for a 10-turn webchat session", () => {
+    // Observable: return value from pipeline — validateToolResultFormats returns zero errors
     const messages: AgentMessage[] = [];
     for (let i = 0; i < 10; i++) {
       messages.push(makeUser(`question ${i}`));
       messages.push(makeToolCall("read", `tc-${i}`));
-      messages.push(
-        makeToolResult("read", `file content for question ${i} `.repeat(100), `tc-${i}`),
-      );
-      messages.push(makeAssistant(`answer to question ${i}`));
+      messages.push(makeToolResult("read", `file content ${i} `.repeat(100), `tc-${i}`));
+      messages.push(makeAssistant(`answer ${i}`));
     }
 
-    // Run the pipeline (same order as attempt.ts)
-    const sessionKey = "agent:main:webchat:session:test123";
-    const config = {} as OpenClawConfig;
-    const historyLimit = getDmHistoryLimitFromSessionKey(sessionKey, config);
-    const limited = limitHistoryTurns(messages, historyLimit);
-    const result = limitToolResults(limited, 3);
-
-    // Validate: all messages have correct format
-    const errors = validateMessageFormats(result);
+    const result = runPipeline(messages, "agent:main:webchat:session:test123");
+    const errors = validateToolResultFormats(result);
     expect(errors).toEqual([]);
 
-    // Verify truncation happened
+    // Verify truncation counts (10 tool results, keep 3 → 7 truncated)
     const toolResults = result.filter((m) => m.role === "toolResult");
-    const truncated = toolResults.filter(
-      (m) => (m as any).content[0]?.text === "[Old tool result cleared to save context]",
-    );
     const intact = toolResults.filter(
       (m) => (m as any).content[0]?.text !== "[Old tool result cleared to save context]",
     );
-
-    expect(intact.length).toBe(3); // keepLast=3
-    expect(truncated.length).toBe(toolResults.length - 3);
+    expect(intact).toHaveLength(3);
+    expect(toolResults.length - intact.length).toBe(7);
   });
 
-  it("webchat sessions get history-limited then tool-limited", () => {
-    // Build a session with 40 user turns (exceeds webchat limit of 30)
+  it("webchat sessions get history-limited (30 turns) then tool-limited", () => {
+    // Observable: getDmHistoryLimitFromSessionKey returns 30 for webchat;
+    //             limitHistoryTurns reduces user turns; pipeline output is valid
     const messages: AgentMessage[] = [];
     for (let i = 0; i < 40; i++) {
       messages.push(makeUser(`turn ${i}`));
@@ -129,24 +125,20 @@ describe("history pipeline integration", () => {
       messages.push(makeAssistant(`response ${i}`));
     }
 
-    const sessionKey = "agent:main:webchat:session:abc";
-    const config = {} as OpenClawConfig;
-    const historyLimit = getDmHistoryLimitFromSessionKey(sessionKey, config);
-    expect(historyLimit).toBe(30); // webchat safety limit
+    const result = runPipeline(messages, "agent:main:webchat:session:abc");
 
-    const limited = limitHistoryTurns(messages, historyLimit);
-    // Should have kept last 30 user turns worth of messages
-    const userCount = limited.filter((m) => m.role === "user").length;
+    // History limit applied: user turns capped
+    const userCount = result.filter((m) => m.role === "user").length;
     expect(userCount).toBeLessThanOrEqual(30);
+    expect(userCount).toBeGreaterThan(0);
 
-    const result = limitToolResults(limited, 3);
-
-    // All messages must have valid format
-    const errors = validateMessageFormats(result);
-    expect(errors).toEqual([]);
+    // Format still valid after both limits applied
+    expect(validateToolResultFormats(result)).toEqual([]);
   });
 
-  it("non-webchat main sessions are NOT history-limited but ARE tool-limited", () => {
+  it("non-webchat main sessions skip history limit but get tool-limited", () => {
+    // Observable: getDmHistoryLimitFromSessionKey returns undefined for agent:main:main;
+    //             all messages preserved; tool results truncated
     const messages: AgentMessage[] = [];
     for (let i = 0; i < 10; i++) {
       messages.push(makeUser(`turn ${i}`));
@@ -154,47 +146,65 @@ describe("history pipeline integration", () => {
       messages.push(makeAssistant(`reply ${i}`));
     }
 
-    // agent:main:main is NOT a webchat session
-    const sessionKey = "agent:main:main";
-    const config = {} as OpenClawConfig;
-    const historyLimit = getDmHistoryLimitFromSessionKey(sessionKey, config);
-    expect(historyLimit).toBeUndefined(); // no limit for main session
+    const result = runPipeline(messages, "agent:main:main");
 
-    const limited = limitHistoryTurns(messages, historyLimit);
-    expect(limited.length).toBe(messages.length); // nothing removed
+    // No history limiting — all messages preserved
+    expect(result).toHaveLength(messages.length);
 
-    const result = limitToolResults(limited, 3);
-    const errors = validateMessageFormats(result);
-    expect(errors).toEqual([]);
-
-    // Should have truncated 7 of 10 tool results
+    // Tool limiting applied — 7 of 10 truncated
     const truncated = result.filter(
       (m) =>
         m.role === "toolResult" &&
         (m as any).content[0]?.text === "[Old tool result cleared to save context]",
     );
-    expect(truncated.length).toBe(7);
+    expect(truncated).toHaveLength(7);
+
+    // Format valid
+    expect(validateToolResultFormats(result)).toEqual([]);
   });
 
-  it("REGRESSION: corrupted toolResult content (string instead of array) is caught by validation", () => {
-    // This is the exact bug that bricked Gemini: content set to a plain string
-    const corruptedMessages: AgentMessage[] = [
+  // -- Error detection (negative tests) --
+
+  it("REGRESSION: detects corrupted toolResult content (string instead of array)", () => {
+    // Observable: validateToolResultFormats detects the exact bug that bricked Gemini
+    // This is not testing the SUT pipeline — it's testing the contract validator
+    // to ensure our safety net catches format corruption from any source.
+    const corrupted: AgentMessage[] = [
       makeUser("hi"),
       {
         role: "toolResult",
         toolName: "read",
         toolCallId: "tc-1",
-        content: "this is a string, not an array", // THE BUG
+        content: "this is a string, not an array",
       } as unknown as AgentMessage,
       makeAssistant("ok"),
     ];
 
-    const errors = validateMessageFormats(corruptedMessages);
-    expect(errors.length).toBeGreaterThan(0);
-    expect(errors[0]).toContain("non-array content");
+    const errors = validateToolResultFormats(corrupted);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatch(/content is string.*expected array/);
   });
 
-  it("empty tool results are handled gracefully", () => {
+  it("detects toolResult with non-object content blocks", () => {
+    // Observable: validateToolResultFormats catches invalid content block types
+    const badBlocks: AgentMessage[] = [
+      {
+        role: "toolResult",
+        toolName: "exec",
+        toolCallId: "tc-1",
+        content: [null, "plain string"],
+      } as unknown as AgentMessage,
+    ];
+
+    const errors = validateToolResultFormats(badBlocks);
+    expect(errors.length).toBeGreaterThan(0);
+    expect(errors[0]).toMatch(/not an object/);
+  });
+
+  // -- Edge cases --
+
+  it("handles empty tool result content gracefully", () => {
+    // Observable: pipeline output — empty text content is valid format
     const messages: AgentMessage[] = [
       makeUser("hi"),
       {
@@ -206,13 +216,13 @@ describe("history pipeline integration", () => {
       makeAssistant("ok"),
     ];
 
-    const result = limitToolResults(messages, 3);
-    const errors = validateMessageFormats(result);
-    expect(errors).toEqual([]);
+    const result = runPipeline(messages, "agent:main:main");
+    expect(validateToolResultFormats(result)).toEqual([]);
   });
 
-  it("mixed tool results with images are preserved (not truncated to text-only)", () => {
-    const imageToolResult: AgentMessage = {
+  it("image tool results remain valid after truncation", () => {
+    // Observable: pipeline output — image content blocks have valid format
+    const imageResult: AgentMessage = {
       role: "toolResult",
       toolName: "screenshot",
       toolCallId: "tc-img",
@@ -226,20 +236,17 @@ describe("history pipeline integration", () => {
       makeToolResult("read", "old", "tc-1"),
       makeAssistant("a1"),
       makeUser("q2"),
-      imageToolResult,
+      imageResult,
       makeAssistant("a2"),
       makeUser("q3"),
       makeToolResult("exec", "recent", "tc-3"),
       makeAssistant("a3"),
     ];
 
-    const result = limitToolResults(messages, 1);
-    const errors = validateMessageFormats(result);
-    expect(errors).toEqual([]);
+    const result = runPipeline(messages, "agent:main:main", {} as OpenClawConfig, 1);
+    expect(validateToolResultFormats(result)).toEqual([]);
 
-    // The image tool result should still be truncated by limitToolResults
-    // (it counts by position, not by content type)
-    // But the format should still be valid
+    // All tool results still have array content
     for (const m of result) {
       if (m.role === "toolResult") {
         expect(Array.isArray((m as any).content)).toBe(true);

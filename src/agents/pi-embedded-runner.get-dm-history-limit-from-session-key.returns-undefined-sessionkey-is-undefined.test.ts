@@ -232,22 +232,25 @@ describe("getDmHistoryLimitFromSessionKey", () => {
   // --- Webchat safety limit (E-005 P0-CE fix) ---
 
   it("returns 30 for webchat sessions (safety limit)", () => {
+    // Observable: return value — webchat sessions get hardcoded safety limit of 30
     const config = {} as OpenClawConfig;
     expect(getDmHistoryLimitFromSessionKey("agent:main:webchat:session:abc", config)).toBe(30);
   });
 
   it("returns 30 for webchat even without channels config", () => {
+    // Observable: return value — webchat limit does not depend on channels config
     expect(
       getDmHistoryLimitFromSessionKey("agent:main:webchat:session:abc", {} as OpenClawConfig),
     ).toBe(30);
   });
 
-  it("returns 30 for bare webchat session key", () => {
+  it("returns 30 for bare webchat session key (no agent: prefix)", () => {
+    // Observable: return value — bare webchat key also triggers limit
     expect(getDmHistoryLimitFromSessionKey("webchat:session:abc", {} as OpenClawConfig)).toBe(30);
   });
 
   it("webchat limit applies regardless of session kind", () => {
-    // webchat doesn't have "dm" kind — it should still get a limit
+    // Observable: return value — webchat limit not gated on "dm" kind
     expect(
       getDmHistoryLimitFromSessionKey("agent:main:webchat:main:main", {} as OpenClawConfig),
     ).toBe(30);
