@@ -39,11 +39,16 @@ export function limitHistoryTurns(
  * Limits the number of full tool results kept in history.
  * Older tool results are truncated to save context tokens.
  * This is a universal protection for all providers (Gemini, OpenAI, etc).
+ *
+ * IMPORTANT: toolResult.content MUST be (TextContent | ImageContent)[], not a string.
+ * Setting it to a plain string will cause providers (especially Gemini) to silently
+ * produce no output — the prompt completes in ~11ms with zero assistant response.
  */
 export function limitToolResults(messages: AgentMessage[], keepLast: number = 3): AgentMessage[] {
   if (keepLast < 0) return messages;
 
   let toolResultCount = 0;
+  let truncatedCount = 0;
   // Shallow copy to allow modification
   const result = [...messages];
 
@@ -54,13 +59,31 @@ export function limitToolResults(messages: AgentMessage[], keepLast: number = 3)
       if (toolResultCount > keepLast) {
         // Truncate this tool result to a single text content block.
         // content must be (TextContent | ImageContent)[] — not a plain string.
-        result[i] = {
+        const cleared = {
           ...msg,
           content: [{ type: "text" as const, text: "[Old tool result cleared to save context]" }],
         };
+
+        // Runtime guard: if content is not an array, something is very wrong.
+        if (!Array.isArray(cleared.content)) {
+          console.error(
+            `[limitToolResults] FATAL: content is not an array after truncation (got ${typeof cleared.content}). ` +
+              `This will cause the prompt to silently produce no output. index=${i} toolName=${msg.toolName}`,
+          );
+        }
+
+        result[i] = cleared;
+        truncatedCount++;
       }
     }
   }
+
+  if (truncatedCount > 0) {
+    console.log(
+      `[limitToolResults] truncated ${truncatedCount}/${toolResultCount} tool results (kept last ${keepLast})`,
+    );
+  }
+
   return result;
 }
 

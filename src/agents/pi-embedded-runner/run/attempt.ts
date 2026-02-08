@@ -577,6 +577,20 @@ export async function runEmbeddedAttempt(
         );
         const limited = limitToolResults(limitedHistory, 3);
         cacheTrace?.recordStage("session:limited", { messages: limited });
+
+        // Validate message format before sending to model — catch malformed content early and loudly.
+        for (let mi = 0; mi < limited.length; mi++) {
+          const m = limited[mi];
+          if (m.role === "toolResult" && !Array.isArray(m.content)) {
+            console.error(
+              `[attempt] FATAL: toolResult message at index ${mi} has non-array content ` +
+                `(type=${typeof m.content}, toolName=${m.toolName}). ` +
+                `This will cause the model to silently produce no output. ` +
+                `runId=${params.runId} sessionId=${params.sessionId}`,
+            );
+          }
+        }
+
         if (limited.length > 0) {
           activeSession.agent.replaceMessages(limited);
         }
@@ -852,10 +866,29 @@ export async function runEmbeddedAttempt(
           console.log(`[attempt] checkpoint 11: prompt completed runId=${params.runId}`);
         } catch (err) {
           promptError = err;
-        } finally {
-          log.debug(
-            `embedded run prompt end: runId=${params.runId} sessionId=${params.sessionId} durationMs=${Date.now() - promptStartedAt}`,
+          // Log prompt errors loudly — these were previously silent in some code paths
+          console.error(
+            `[attempt] prompt error (was silent): runId=${params.runId} ` +
+              `sessionId=${params.sessionId} error=${err instanceof Error ? err.message : String(err)}`,
           );
+        } finally {
+          const promptDurationMs = Date.now() - promptStartedAt;
+          log.debug(
+            `embedded run prompt end: runId=${params.runId} sessionId=${params.sessionId} durationMs=${promptDurationMs}`,
+          );
+
+          // Detect suspiciously fast prompt completion with no output.
+          // A real model call takes seconds. If it finishes in <500ms with no assistant text,
+          // the model was likely never called (message format error, empty context, etc).
+          const hasAssistantOutput =
+            assistantTexts.length > 0 && assistantTexts.some((t) => t.length > 0);
+          if (promptDurationMs < 500 && !hasAssistantOutput && !promptError && !aborted) {
+            console.error(
+              `[attempt] WARNING: prompt completed in ${promptDurationMs}ms with NO assistant output and NO error. ` +
+                `This likely means the model was never called (malformed messages, context issues, or provider SDK silent failure). ` +
+                `runId=${params.runId} sessionId=${params.sessionId} messageCount=${activeSession.messages.length}`,
+            );
+          }
         }
 
         try {
