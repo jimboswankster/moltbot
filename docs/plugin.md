@@ -46,6 +46,7 @@ See [Voice Call](/plugins/voice-call) for a concrete example plugin.
 - [Nostr](/channels/nostr) — `@openclaw/nostr`
 - [Zalo](/channels/zalo) — `@openclaw/zalo`
 - [Microsoft Teams](/channels/msteams) — `@openclaw/msteams`
+- Tool Result Truncation — bundled as `tool-result-truncation` (**enabled by default**); truncates large tool results before session persistence to prevent context explosion. See [Tool Result Truncation](#tool-result-truncation).
 - Google Antigravity OAuth (provider auth) — bundled as `google-antigravity-auth` (disabled by default)
 - Gemini CLI OAuth (provider auth) — bundled as `google-gemini-cli-auth` (disabled by default)
 - Qwen OAuth (provider auth) — bundled as `qwen-portal-auth` (disabled by default)
@@ -304,6 +305,55 @@ Plugins export either:
 
 - A function: `(api) => { ... }`
 - An object: `{ id, name, configSchema, register(api) { ... } }`
+
+## Tool Result Truncation
+
+The `tool-result-truncation` bundled plugin prevents context explosion by
+truncating large tool results before they are written to the session transcript.
+
+**This plugin is enabled by default.** It is the first (and currently only)
+entry in `BUNDLED_ENABLED_BY_DEFAULT` because it fixes a P0 safety issue:
+without it, tool results (50K+ chars from file reads, search results, etc.)
+are stored verbatim and replayed on every subsequent LLM call, causing O(N²)
+context growth and runaway API costs.
+
+### How it works
+
+The plugin registers a synchronous `tool_result_persist` hook that runs inside
+`appendMessage` (via `session-tool-result-guard-wrapper.ts`). For each tool
+result message:
+
+1. If all text blocks are ≤ 4,000 chars → passed through unchanged.
+2. If any text block exceeds 4,000 chars → truncated to first 2,000 chars +
+   last 500 chars with a `[...truncated...]` marker in between.
+
+This preserves diagnostic value (errors typically appear at the start or end
+of output) while capping the stored size.
+
+### Configuration
+
+Enabled by default. To disable (not recommended):
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "tool-result-truncation": { "enabled": false }
+    }
+  }
+}
+```
+
+### Interaction with other plugins
+
+The `tool_result_persist` hook supports multiple handlers composed in priority
+order. The truncation plugin uses priority 0 (default). If you register a
+higher-priority handler (e.g., priority 10), it runs first and can strip
+fields or transform the message before truncation. A lower-priority handler
+runs after truncation.
+
+See `src/agents/session-tool-result-guard.tool-result-persist-hook.test.ts`
+for examples of multi-plugin composition.
 
 ## Plugin hooks
 

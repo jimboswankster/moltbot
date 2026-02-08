@@ -1,0 +1,8 @@
+{
+  "id": "tool-result-truncation",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}

@@ -13,7 +13,29 @@ export type NormalizedPluginsConfig = {
   entries: Record<string, { enabled?: boolean; config?: unknown }>;
 };
 
-export const BUNDLED_ENABLED_BY_DEFAULT = new Set<string>();
+/**
+ * Bundled plugins that are enabled by default without explicit config.
+ *
+ * Most bundled plugins (channels, auth providers, etc.) are opt-in because
+ * they require user-specific configuration. Plugins in this set are
+ * safety-critical and should be active for all installations.
+ *
+ * Each entry must have a comment explaining WHY it's enabled by default.
+ * To disable a default plugin, set `plugins.entries.<id>.enabled: false`
+ * in openclaw.json.
+ *
+ * @see resolveEnableState — uses this set when no explicit entry exists
+ */
+export const BUNDLED_ENABLED_BY_DEFAULT = new Set<string>([
+  // P0-CE Fix 2 (E-004): Prevents context explosion by truncating large tool
+  // results (50K+ chars) before session persistence. Without this plugin,
+  // every tool result is stored verbatim and replayed on every LLM call,
+  // causing O(N²) context growth and runaway costs. Head+tail strategy
+  // preserves diagnostic value while capping size.
+  // Audit: workspace/docs/development/debug/subagent-pipeline/audits/README.md
+  // Tests: e004-fix2-phase{1,2,3} contract tests (25 tests)
+  "tool-result-truncation",
+]);
 
 const normalizeList = (value: unknown): string[] => {
   if (!Array.isArray(value)) {
