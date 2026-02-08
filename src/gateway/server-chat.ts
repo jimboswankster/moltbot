@@ -346,7 +346,18 @@ export function createAgentEventHandler({
       });
     }
     agentRunSeq.set(evt.runId, evt.seq);
-    broadcast("agent", agentPayload);
+
+    // Prevent O(N^2) flood on unthrottled channel: strip accumulated text if delta is available
+    if (evt.stream === "assistant" && typeof evt.data?.delta === "string") {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { text, ...rest } = evt.data;
+      const strippedPayload = sessionKey
+        ? { ...evt, sessionKey, data: rest }
+        : { ...evt, data: rest };
+      broadcast("agent", strippedPayload);
+    } else {
+      broadcast("agent", agentPayload);
+    }
 
     const lifecyclePhase =
       evt.stream === "lifecycle" && typeof evt.data?.phase === "string" ? evt.data.phase : null;

@@ -244,11 +244,14 @@ export async function callGateway<T = Record<string, unknown>>(
       },
     });
 
-    const timer = setTimeout(() => {
-      ignoreClose = true;
-      client.stop();
-      stop(new Error(formatTimeoutError()));
-    }, timeoutMs);
+    const timer = setTimeout(
+      () => {
+        ignoreClose = true;
+        client.stop();
+        stop(new Error(formatTimeoutError()));
+      },
+      Math.min(timeoutMs, 2147483647),
+    );
 
     client.start();
   });

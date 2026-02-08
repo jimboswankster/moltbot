@@ -36,6 +36,36 @@ export function limitHistoryTurns(
 }
 
 /**
+ * Limits the number of full tool results kept in history.
+ * Older tool results are truncated to save context tokens.
+ * This is a universal protection for all providers (Gemini, OpenAI, etc).
+ */
+export function limitToolResults(messages: AgentMessage[], keepLast: number = 3): AgentMessage[] {
+  if (keepLast < 0) return messages;
+
+  let toolResultCount = 0;
+  // Shallow copy to allow modification
+  const result = [...messages];
+
+  for (let i = result.length - 1; i >= 0; i--) {
+    const msg = result[i];
+    if (msg.role === "toolResult") {
+      toolResultCount++;
+      if (toolResultCount > keepLast) {
+        // Truncate this tool result
+        // We preserve errors slightly more often, but for now treat all uniformly
+        // to guarantee token savings.
+        result[i] = {
+          ...msg,
+          content: "[Old tool result cleared to save context]",
+        };
+      }
+    }
+  }
+  return result;
+}
+
+/**
  * Extract provider + user ID from a session key and look up dmHistoryLimit.
  * Supports per-DM overrides and provider defaults.
  */
@@ -58,6 +88,9 @@ export function getDmHistoryLimitFromSessionKey(
   const kind = providerParts[1]?.toLowerCase();
   const userIdRaw = providerParts.slice(2).join(":");
   const userId = stripThreadSuffix(userIdRaw);
+  if (provider === "webchat") {
+    return 30; // Safety limit for webchat sessions
+  }
   if (kind !== "dm") {
     return undefined;
   }

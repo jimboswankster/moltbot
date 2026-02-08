@@ -434,11 +434,16 @@ export async function runSubagentAnnounceFlow(params: {
 
     // Build instructional message for main agent
     const taskLabel = params.label || params.task || "background task";
+    const maxReplyChars = 2000;
+    let truncatedReply = reply || "(no output)";
+    if (truncatedReply.length > maxReplyChars) {
+      truncatedReply = truncatedReply.slice(0, maxReplyChars) + "\n... [truncated]";
+    }
     const triggerMessage = [
       `A background task "${taskLabel}" just ${statusLabel}.`,
       "",
       "Findings:",
-      reply || "(no output)",
+      truncatedReply,
       "",
       statsLine,
       "",

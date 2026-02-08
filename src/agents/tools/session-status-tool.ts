@@ -41,6 +41,7 @@ import {
 import { applyModelOverrideToSessionEntry } from "../../sessions/model-overrides.js";
 import { formatUserTime, resolveUserTimeFormat, resolveUserTimezone } from "../date-time.js";
 import { readStringParam } from "./common.js";
+import { resolveSessionKeyParam } from "./normalize-input.js";
 import {
   shouldResolveSessionIdInput,
   resolveInternalSessionKey,
@@ -265,7 +266,7 @@ export function createSessionStatusTool(opts?: {
       const a2aPolicy = createAgentToAgentPolicy(cfg);
 
       const requestedKeyParam = readStringParam(params, "sessionKey");
-      let requestedKeyRaw = requestedKeyParam ?? opts?.agentSessionKey;
+      let requestedKeyRaw = resolveSessionKeyParam(requestedKeyParam, opts?.agentSessionKey);
       if (!requestedKeyRaw?.trim()) {
         throw new Error("sessionKey required");
       }

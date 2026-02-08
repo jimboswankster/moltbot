@@ -16,6 +16,7 @@ import {
 } from "../../utils/message-channel.js";
 import { AGENT_LANE_NESTED } from "../lanes.js";
 import { jsonResult, readStringParam } from "./common.js";
+import { resolveSessionKeyParam } from "./normalize-input.js";
 import {
   createAgentToAgentPolicy,
   extractAssistantText,
@@ -80,7 +81,10 @@ export function createSessionsSendTool(opts?: {
 
         const a2aPolicy = createAgentToAgentPolicy(cfg);
 
-        const sessionKeyParam = readStringParam(params, "sessionKey");
+        const sessionKeyRaw = readStringParam(params, "sessionKey");
+        const sessionKeyParam = sessionKeyRaw
+          ? (resolveSessionKeyParam(sessionKeyRaw, opts?.agentSessionKey) ?? sessionKeyRaw)
+          : undefined;
         const labelParam = readStringParam(params, "label")?.trim() || undefined;
         const labelAgentIdParam = readStringParam(params, "agentId")?.trim() || undefined;
         if (sessionKeyParam && labelParam) {
