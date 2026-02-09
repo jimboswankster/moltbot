@@ -25,7 +25,12 @@ import { limitHistoryTurns } from "../agents/pi-embedded-runner/history.js";
 import { resolveModel } from "../agents/pi-embedded-runner/model.js";
 import { resolveUserPath } from "../utils.js";
 
-type LogLike = { warn?: (message: string) => void; debug?: (message: string) => void };
+type LogLike = {
+  debug?: (message: string) => void;
+  info?: (message: string) => void;
+  warn?: (message: string) => void;
+  error?: (message: string) => void;
+};
 
 // ─── Contract Types (shapes only, no logic) ────────────────────────────────
 
@@ -70,6 +75,8 @@ export interface EngineDeps {
     maxMemoryTokens?: number;
     epochCompactionThreshold?: number;
   };
+  /** Logger passed through to the extension for structured telemetry. */
+  log?: LogLike;
 }
 
 // ─── Companion LLM Bridge ───────────────────────────────────────────────────
@@ -231,7 +238,7 @@ export async function loadMemoryCompanionAdapter(
       }
     }
 
-    // Inject all engine dependencies
+    // Inject all engine dependencies (including logger for telemetry)
     const adapter = factory({
       limitHistoryTurns,
       callCompanionLlm,
@@ -240,6 +247,7 @@ export async function loadMemoryCompanionAdapter(
         maxMemoryTokens: mcConfig.maxMemoryTokens,
         epochCompactionThreshold: mcConfig.epochCompactionThreshold,
       },
+      log,
     });
 
     log?.debug?.(`memory companion adapter loaded from ${resolved}`);
