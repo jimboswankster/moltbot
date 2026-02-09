@@ -34,7 +34,7 @@ import {
   resolveMainSessionAlias,
 } from "./sessions-helpers.js";
 
-const MODEL_ROLES = ["orchestrator", "primary", "premium"] as const;
+const MODEL_ROLES = ["orchestrator", "primary", "premium", "memory"] as const;
 
 const SessionsSpawnToolSchema = Type.Object({
   task: Type.String(),
