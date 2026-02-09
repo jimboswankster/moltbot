@@ -582,7 +582,7 @@ export async function runEmbeddedAttempt(
           ? validateAnthropicTurns(validatedGemini)
           : validatedGemini;
         try {
-          mcAdapter = await loadMemoryCompanionAdapter(params.config, log);
+          mcAdapter = await loadMemoryCompanionAdapter(params.config, params.agentDir, log);
         } catch (err) {
           log.warn(`memory companion adapter load failed, falling back: ${err}`);
         }
