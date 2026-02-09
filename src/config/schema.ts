@@ -110,6 +110,15 @@ const FIELD_LABELS: Record<string, string> = {
   "diagnostics.flags": "Diagnostics Flags",
   "extensions.streamBuffer.enabled": "Enable client-side stream buffer adapter (default: false).",
   "extensions.streamBuffer.adapterPath": "Workspace path to the stream buffer adapter module.",
+  "extensions.memoryCompanion.enabled":
+    "Enable Memory Companion incremental summarizer (default: false).",
+  "extensions.memoryCompanion.adapterPath":
+    "Workspace path to the memory companion adapter module.",
+  "extensions.memoryCompanion.batchSize": "Number of user turns per summary batch (default: 5).",
+  "extensions.memoryCompanion.maxMemoryTokens":
+    "Max tokens for session memory before epoch compaction (default: 5000).",
+  "extensions.memoryCompanion.epochCompactionThreshold":
+    "Number of entries before epoch compaction triggers (default: 40).",
   "diagnostics.otel.enabled": "OpenTelemetry Enabled",
   "diagnostics.otel.endpoint": "OpenTelemetry Endpoint",
   "diagnostics.otel.protocol": "OpenTelemetry Protocol",

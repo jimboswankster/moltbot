@@ -160,6 +160,16 @@ export const OpenClawSchema = z
           })
           .strict()
           .optional(),
+        memoryCompanion: z
+          .object({
+            enabled: z.boolean().optional(),
+            adapterPath: z.string().optional(),
+            batchSize: z.number().optional(),
+            maxMemoryTokens: z.number().optional(),
+            epochCompactionThreshold: z.number().optional(),
+          })
+          .strict()
+          .optional(),
       })
       .strict()
       .optional(),

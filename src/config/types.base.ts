@@ -148,8 +148,22 @@ export type StreamBufferConfig = {
   adapterPath?: string;
 };
 
+export type MemoryCompanionConfig = {
+  /** Enable the Memory Companion incremental summarizer. */
+  enabled?: boolean;
+  /** Adapter module path (workspace-owned extension). */
+  adapterPath?: string;
+  /** Number of user turns per summary batch (default: 5). */
+  batchSize?: number;
+  /** Max tokens for session memory before epoch compaction (default: 5000). */
+  maxMemoryTokens?: number;
+  /** Number of entries before epoch compaction triggers (default: 40). */
+  epochCompactionThreshold?: number;
+};
+
 export type ExtensionsConfig = {
   streamBuffer?: StreamBufferConfig;
+  memoryCompanion?: MemoryCompanionConfig;
 };
 
 export type WebReconnectConfig = {
