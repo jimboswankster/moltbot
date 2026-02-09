@@ -70,6 +70,7 @@ import {
   sanitizeToolsForGoogle,
 } from "../google.js";
 import {
+  capToolResultSize,
   getDmHistoryLimitFromSessionKey,
   limitHistoryTurns,
   limitToolResults,
@@ -575,7 +576,8 @@ export async function runEmbeddedAttempt(
           validated,
           getDmHistoryLimitFromSessionKey(params.sessionKey, params.config),
         );
-        const limited = limitToolResults(limitedHistory, 3);
+        const toolLimited = limitToolResults(limitedHistory, 3);
+        const limited = capToolResultSize(toolLimited);
         cacheTrace?.recordStage("session:limited", { messages: limited });
 
         // Validate message format before sending to model — catch malformed content early and loudly.

@@ -88,6 +88,67 @@ export function limitToolResults(messages: AgentMessage[], keepLast: number = 3)
 }
 
 /**
+ * Caps individual tool result content size to prevent monster results (80K–370K chars)
+ * from inflating per-request token cost. Applied AFTER limitToolResults so it only
+ * affects the kept (last N) results. Truncated results keep head + tail with a marker.
+ *
+ * F2 fix: see ARCHITECTURE-HEALTH.md § Weak Point 4.
+ */
+export function capToolResultSize(
+  messages: AgentMessage[],
+  maxChars: number = 20_000,
+  headChars: number = 8_000,
+  tailChars: number = 8_000,
+): AgentMessage[] {
+  if (maxChars <= 0) return messages;
+
+  const result = [...messages];
+  let cappedCount = 0;
+
+  for (let i = 0; i < result.length; i++) {
+    const msg = result[i];
+    if (msg.role !== "toolResult" || !Array.isArray(msg.content)) continue;
+
+    // Measure total text length across all text content blocks
+    let totalChars = 0;
+    for (const block of msg.content) {
+      if (block.type === "text" && typeof block.text === "string") {
+        totalChars += block.text.length;
+      }
+    }
+
+    if (totalChars <= maxChars) continue;
+
+    // Cap: concatenate all text, then take head + marker + tail
+    const allText = msg.content
+      .filter(
+        (b: { type: string; text?: string }) => b.type === "text" && typeof b.text === "string",
+      )
+      .map((b: { text: string }) => b.text)
+      .join("\n");
+
+    const truncatedChars = allText.length - headChars - tailChars;
+    const head = allText.slice(0, headChars);
+    const tail = allText.slice(-tailChars);
+    const capped = `${head}\n\n[...truncated ${truncatedChars} chars (${Math.round(truncatedChars / 4)} est. tokens) to save context...]\n\n${tail}`;
+
+    result[i] = {
+      ...msg,
+      content: [{ type: "text" as const, text: capped }],
+    };
+    cappedCount++;
+  }
+
+  if (cappedCount > 0) {
+    console.log(
+      `[capToolResultSize] capped ${cappedCount} tool result(s) exceeding ${maxChars} chars`,
+    );
+  }
+
+  return result;
+}
+
+/**
  * Extract provider + user ID from a session key and look up dmHistoryLimit.
  * Supports per-DM overrides and provider defaults.
  */
