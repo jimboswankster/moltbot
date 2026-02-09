@@ -9,6 +9,10 @@ import type { EmbeddedRunAttemptParams, EmbeddedRunAttemptResult } from "./types
 import { resolveHeartbeatPrompt } from "../../../auto-reply/heartbeat.js";
 import { resolveChannelCapabilities } from "../../../config/channel-capabilities.js";
 import { getMachineDisplayName } from "../../../infra/machine-name.js";
+import {
+  loadMemoryCompanionAdapter,
+  type MemoryCompanionAdapter,
+} from "../../../infra/memory-companion-adapter.js";
 import { MAX_IMAGE_BYTES } from "../../../media/constants.js";
 import { getGlobalHookRunner } from "../../../plugins/hook-runner-global.js";
 import { isSubagentSessionKey } from "../../../routing/session-key.js";
@@ -555,6 +559,11 @@ export async function runEmbeddedAttempt(
         );
       }
 
+      // Memory Companion: load adapter (if extension enabled) for memory-aware limiting.
+      // Hoisted above try block so sessionMemory is accessible for prompt injection and post-turn.
+      let mcAdapter: MemoryCompanionAdapter | null = null;
+      let mcSessionMemory: string | undefined;
+
       try {
         const prior = await sanitizeSessionHistory({
           messages: activeSession.messages,
@@ -572,10 +581,33 @@ export async function runEmbeddedAttempt(
         const validated = transcriptPolicy.validateAnthropicTurns
           ? validateAnthropicTurns(validatedGemini)
           : validatedGemini;
-        const limitedHistory = limitHistoryTurns(
-          validated,
-          getDmHistoryLimitFromSessionKey(params.sessionKey, params.config),
-        );
+        try {
+          mcAdapter = await loadMemoryCompanionAdapter(params.config, log);
+        } catch (err) {
+          log.warn(`memory companion adapter load failed, falling back: ${err}`);
+        }
+
+        let limitedHistory: AgentMessage[];
+        if (mcAdapter) {
+          const mcResult = mcAdapter.limitWithMemory(
+            validated,
+            getDmHistoryLimitFromSessionKey(params.sessionKey, params.config),
+            params.sessionFile,
+          );
+          limitedHistory = mcResult.messages;
+          mcSessionMemory = mcResult.sessionMemory;
+          if (mcResult.degradationTier !== "normal") {
+            log.debug(
+              `memory companion: degradation=${mcResult.degradationTier} turnsBehind=${mcResult.turnsBehind}`,
+            );
+          }
+        } else {
+          limitedHistory = limitHistoryTurns(
+            validated,
+            getDmHistoryLimitFromSessionKey(params.sessionKey, params.config),
+          );
+        }
+
         const toolLimited = limitToolResults(limitedHistory, 3);
         const limited = capToolResultSize(toolLimited);
         cacheTrace?.recordStage("session:limited", { messages: limited });
@@ -772,6 +804,13 @@ export async function runEmbeddedAttempt(
           }
         }
 
+        // Memory Companion: inject session memory into prompt context.
+        // mcSessionMemory was populated during the history limiting phase above.
+        if (mcSessionMemory) {
+          effectivePrompt = `[SESSION MEMORY — Summary of earlier conversation]\n${mcSessionMemory}\n[END SESSION MEMORY]\n\n${effectivePrompt}`;
+          log.debug(`memory companion: injected session memory (${mcSessionMemory.length} chars)`);
+        }
+
         log.debug(`embedded run prompt start: runId=${params.runId} sessionId=${params.sessionId}`);
         cacheTrace?.recordStage("prompt:before", {
           prompt: effectivePrompt,
@@ -912,6 +951,14 @@ export async function runEmbeddedAttempt(
           note: promptError ? "prompt error" : undefined,
         });
         anthropicPayloadLogger?.recordUsage(messagesSnapshot, promptError);
+
+        // Memory Companion: fire-and-forget post-turn processing.
+        // Triggers background summarization of new turns.
+        if (mcAdapter) {
+          mcAdapter.onTurnComplete(params.sessionFile, messagesSnapshot).catch((err) => {
+            log.warn(`memory companion onTurnComplete failed: ${err}`);
+          });
+        }
 
         // Run agent_end hooks to allow plugins to analyze the conversation
         // This is fire-and-forget, so we don't await
