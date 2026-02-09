@@ -6,10 +6,16 @@ export type SystemEvent = { text: string; ts: number };
 
 const MAX_EVENTS = 20;
 
+/** Time window for content-based deduplication (default 10 minutes). */
+export const DEDUP_WINDOW_MS = 10 * 60 * 1000;
+
 type SessionQueue = {
   queue: SystemEvent[];
   lastText: string | null;
   lastContextKey: string | null;
+  /** Content hash → enqueue timestamp. Survives drains so that the next
+   *  heartbeat cycle still knows what was recently sent. */
+  recentHashes: Map<string, number>;
 };
 
 const queues = new Map<string, SessionQueue>();
@@ -57,6 +63,7 @@ export function enqueueSystemEvent(text: string, options: SystemEventOptions) {
         queue: [],
         lastText: null,
         lastContextKey: null,
+        recentHashes: new Map(),
       };
       queues.set(key, created);
       return created;
@@ -66,11 +73,27 @@ export function enqueueSystemEvent(text: string, options: SystemEventOptions) {
     return;
   }
   entry.lastContextKey = normalizeContextKey(options?.contextKey);
-  if (entry.lastText === cleaned) {
-    return;
-  } // skip consecutive duplicates
+
+  // --- Time-windowed content dedup ---
+  const now = Date.now();
+
+  // Prune expired entries from recentHashes
+  for (const [h, ts] of entry.recentHashes) {
+    if (now - ts > DEDUP_WINDOW_MS) {
+      entry.recentHashes.delete(h);
+    }
+  }
+
+  // Use the cleaned text itself as the hash key (system events are short)
+  if (entry.recentHashes.has(cleaned)) {
+    return; // identical text was enqueued within the dedup window
+  }
+
+  entry.recentHashes.set(cleaned, now);
+  // --- End dedup ---
+
   entry.lastText = cleaned;
-  entry.queue.push({ text: cleaned, ts: Date.now() });
+  entry.queue.push({ text: cleaned, ts: now });
   if (entry.queue.length > MAX_EVENTS) {
     entry.queue.shift();
   }
@@ -86,7 +109,11 @@ export function drainSystemEventEntries(sessionKey: string): SystemEvent[] {
   entry.queue.length = 0;
   entry.lastText = null;
   entry.lastContextKey = null;
-  queues.delete(key);
+  // Preserve recentHashes so that the dedup window survives across drains.
+  // Only delete the session queue if hashes are also empty (fully expired).
+  if (entry.recentHashes.size === 0) {
+    queues.delete(key);
+  }
   return out;
 }
 
