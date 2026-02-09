@@ -84,7 +84,8 @@ export interface SessionMemoryEntry {
   summary: string;
   generatedBy: string;
   generatedAt: number;
-  quality: "llm" | "deterministic";
+  quality: "llm" | "deterministic" | "epoch";
+  previousSummary?: string; // for chaining: what batch N-1 produced (H-2)
 }
 
 export interface SessionMemory {
