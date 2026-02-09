@@ -1,0 +1,204 @@
+/**
+ * Session Memory — read/write/render/compact incremental session summaries.
+ *
+ * The Memory Companion generates chained decision-level summaries of
+ * conversation history. This module manages the storage file
+ * (`{sessionId}.memory.json`) that sits alongside the session JSONL.
+ *
+ * Key design points:
+ *   - Storage is a JSON file (not JSONL) — small, atomic read/write.
+ *   - Epoch compaction (H-7): when memory grows too large, the oldest
+ *     50% of entries are flagged for re-summarization into a single epoch.
+ *   - Sanitization cap: 1,600 chars per entry (evidence-based, HR-4).
+ *   - Graceful recovery: malformed files return empty memory, never crash.
+ */
+
+import fs from "node:fs";
+import path from "node:path";
+
+// ─── Types ──────────────────────────────────────────────────────────────────
+
+export interface SessionMemoryEntry {
+  turnRange: [number, number];
+  summary: string;
+  generatedBy: string;
+  generatedAt: number;
+  quality: "llm" | "deterministic" | "epoch";
+  previousSummary?: string; // chaining audit trail (H-2)
+}
+
+export interface SessionMemory {
+  entries: SessionMemoryEntry[];
+  lastSummarizedTurn: number;
+}
+
+export interface CompactionResult {
+  needsCompaction: boolean;
+  memory: SessionMemory;
+  entriesToCompact: SessionMemoryEntry[];
+  recentEntries: SessionMemoryEntry[];
+  /** Call with the epoch summary text to get the replacement entry. */
+  replaceWithEpoch: (epochSummary: string) => SessionMemoryEntry;
+}
+
+// ─── Helpers ────────────────────────────────────────────────────────────────
+
+/** Derive the .memory.json path from the session JSONL path. */
+function memoryFilePath(sessionFile: string): string {
+  return sessionFile.replace(/\.jsonl$/, ".memory.json");
+}
+
+/** Rough token estimate: ~4 chars per token. */
+function estimateTokens(text: string): number {
+  return Math.ceil(text.length / 4);
+}
+
+// ─── Public API ─────────────────────────────────────────────────────────────
+
+/**
+ * Read session memory from disk.
+ * Returns empty memory if file is missing, empty, or malformed.
+ */
+export function readSessionMemory(sessionFile: string): SessionMemory {
+  const memFile = memoryFilePath(sessionFile);
+
+  try {
+    if (!fs.existsSync(memFile)) {
+      return { entries: [], lastSummarizedTurn: -1 };
+    }
+
+    const raw = fs.readFileSync(memFile, "utf-8").trim();
+    if (!raw) {
+      return { entries: [], lastSummarizedTurn: -1 };
+    }
+
+    const parsed = JSON.parse(raw);
+
+    // Validate structure
+    if (!parsed || !Array.isArray(parsed.entries)) {
+      return { entries: [], lastSummarizedTurn: -1 };
+    }
+
+    const entries: SessionMemoryEntry[] = parsed.entries;
+    const lastSummarizedTurn =
+      entries.length > 0 ? Math.max(...entries.map((e) => e.turnRange[1])) : -1;
+
+    return { entries, lastSummarizedTurn };
+  } catch {
+    // Malformed JSON, permission error, etc. — graceful recovery.
+    return { entries: [], lastSummarizedTurn: -1 };
+  }
+}
+
+/**
+ * Append a summary entry to session memory.
+ * Creates the file if it doesn't exist. Atomic write.
+ */
+export function appendSessionMemory(sessionFile: string, entry: SessionMemoryEntry): void {
+  const memFile = memoryFilePath(sessionFile);
+  const existing = readSessionMemory(sessionFile);
+
+  existing.entries.push(entry);
+  existing.lastSummarizedTurn = Math.max(existing.lastSummarizedTurn, entry.turnRange[1]);
+
+  // Ensure parent directory exists
+  const dir = path.dirname(memFile);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+
+  fs.writeFileSync(memFile, JSON.stringify(existing, null, 2), "utf-8");
+}
+
+/**
+ * Render session memory as human-readable text for system prompt injection.
+ * Returns empty string for empty memory.
+ *
+ * Epoch entries get a special marker to indicate compressed history.
+ */
+export function renderSessionMemoryForPrompt(memory: SessionMemory): string {
+  if (memory.entries.length === 0) {
+    return "";
+  }
+
+  const lines: string[] = [];
+
+  for (const entry of memory.entries) {
+    const [start, end] = entry.turnRange;
+    if (entry.quality === "epoch") {
+      lines.push(`[Epoch: Turns ${start}-${end} (compressed)]`);
+    } else {
+      lines.push(`[Turns ${start}-${end}]`);
+    }
+    lines.push(entry.summary);
+    lines.push(""); // blank line between entries
+  }
+
+  return lines.join("\n").trim();
+}
+
+/**
+ * Count how many user turns have been summarized.
+ * Counts inclusively across all entry turn ranges.
+ */
+export function countSummarizedUserTurns(memory: SessionMemory): number {
+  let total = 0;
+  for (const entry of memory.entries) {
+    const [start, end] = entry.turnRange;
+    total += end - start + 1;
+  }
+  return total;
+}
+
+/**
+ * Check if session memory needs epoch compaction and prepare the operation.
+ *
+ * When total memory exceeds `maxTokens`, the oldest 50% of entries are
+ * selected for compaction into a single epoch summary. The caller must
+ * provide the epoch summary text (generated by the companion LLM or
+ * deterministic fallback) and call `replaceWithEpoch()`.
+ *
+ * Compaction parameters (evidence-based from Phase -1 Step 2):
+ *   - Max 4 entries per compaction batch (avoids 16x over-compression)
+ *   - Epoch token cap: 800 tokens (~3,200 chars)
+ */
+export function compactSessionMemory(memory: SessionMemory, maxTokens: number): CompactionResult {
+  // Estimate total tokens across all entries
+  const totalTokens = memory.entries.reduce((sum, e) => sum + estimateTokens(e.summary), 0);
+
+  if (totalTokens <= maxTokens) {
+    return {
+      needsCompaction: false,
+      memory,
+      entriesToCompact: [],
+      recentEntries: memory.entries,
+      replaceWithEpoch: () => {
+        throw new Error("No compaction needed");
+      },
+    };
+  }
+
+  // Select oldest 50% for compaction
+  const halfCount = Math.floor(memory.entries.length / 2);
+  const entriesToCompact = memory.entries.slice(0, halfCount);
+  const recentEntries = memory.entries.slice(halfCount);
+
+  return {
+    needsCompaction: true,
+    memory,
+    entriesToCompact,
+    recentEntries,
+    replaceWithEpoch: (epochSummary: string): SessionMemoryEntry => {
+      const firstStart = entriesToCompact[0].turnRange[0];
+      const lastEnd = entriesToCompact[entriesToCompact.length - 1].turnRange[1];
+
+      return {
+        turnRange: [firstStart, lastEnd],
+        summary: epochSummary,
+        generatedBy: "epoch-compaction",
+        generatedAt: Date.now(),
+        quality: "epoch",
+      };
+    },
+  };
+}
