@@ -213,7 +213,7 @@ export function buildAgentSystemPrompt(params: {
   memoryCitationsMode?: MemoryCitationsMode;
 }) {
   const coreToolSummaries: Record<string, string> = {
-    read: "Read file contents",
+    read: "Read file contents. Use offset (1-indexed line number) and limit (max lines) for efficient partial reads of large files instead of reading the entire file.",
     write: "Create or overwrite files",
     edit: "Make precise edits to files",
     apply_patch: "Apply multi-file patches",

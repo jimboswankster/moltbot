@@ -69,6 +69,30 @@ describe("workspace path resolution", () => {
     });
   });
 
+  it("reads with offset and limit for partial file reads", async () => {
+    await withTempDir("openclaw-ws-", async (workspaceDir) => {
+      const testFile = "multiline.txt";
+      const lines = Array.from({ length: 20 }, (_, i) => `line ${i + 1}`).join("\n");
+      await fs.writeFile(path.join(workspaceDir, testFile), lines, "utf8");
+
+      const tools = createOpenClawCodingTools({ workspaceDir });
+      const readTool = tools.find((tool) => tool.name === "read");
+      expect(readTool).toBeDefined();
+
+      // Read lines 5-9 (offset=5, limit=5)
+      const result = await readTool?.execute("ws-partial-read", {
+        path: testFile,
+        offset: 5,
+        limit: 5,
+      });
+      const text = getTextContent(result);
+      expect(text).toContain("line 5");
+      expect(text).toContain("line 9");
+      expect(text).not.toContain("line 1\n");
+      expect(text).not.toContain("line 10");
+    });
+  });
+
   it("edits relative paths against workspaceDir even after cwd changes", async () => {
     await withTempDir("openclaw-ws-", async (workspaceDir) => {
       await withTempDir("openclaw-cwd-", async (otherDir) => {
