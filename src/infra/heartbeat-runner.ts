@@ -35,7 +35,7 @@ import {
   updateSessionStore,
 } from "../config/sessions.js";
 import { formatErrorMessage } from "../infra/errors.js";
-import { peekSystemEvents } from "../infra/system-events.js";
+import { hasSystemEvents, peekSystemEvents } from "../infra/system-events.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { getQueueSize } from "../process/command-queue.js";
 import { CommandLane } from "../process/lanes.js";
@@ -65,8 +65,17 @@ type HeartbeatDeps = OutboundSendDeps &
 const log = createSubsystemLogger("gateway/heartbeat");
 let heartbeatsEnabled = true;
 
+/** Cooldown between cron-triggered heartbeat LLM calls (prevents spam). */
+const DEFAULT_CRON_HEARTBEAT_COOLDOWN_MS = 5 * 60_000; // 5 minutes
+let lastCronTriggeredHeartbeatAtMs = 0;
+
 export function setHeartbeatsEnabled(enabled: boolean) {
   heartbeatsEnabled = enabled;
+}
+
+/** Reset cron heartbeat cooldown state (test-only). */
+export function resetCronHeartbeatCooldownForTest() {
+  lastCronTriggeredHeartbeatAtMs = 0;
 }
 
 type HeartbeatConfig = AgentDefaultsConfig["heartbeat"];
@@ -503,33 +512,8 @@ export async function runHeartbeatOnce(opts: {
     return { status: "skipped", reason: "requests-in-flight" };
   }
 
-  // Skip heartbeat if HEARTBEAT.md exists but has no actionable content.
-  // This saves API calls/costs when the file is effectively empty (only comments/headers).
-  // EXCEPTION: Don't skip for exec events or cron-initiated heartbeats - they have
-  // pending system events to process regardless of HEARTBEAT.md content.
-  const isExecEventReason = opts.reason === "exec-event";
-  const isCronReason = typeof opts.reason === "string" && opts.reason.startsWith("cron:");
-  const workspaceDir = resolveAgentWorkspaceDir(cfg, agentId);
-  const heartbeatFilePath = path.join(workspaceDir, DEFAULT_HEARTBEAT_FILENAME);
-  try {
-    const heartbeatFileContent = await fs.readFile(heartbeatFilePath, "utf-8");
-    if (
-      isHeartbeatContentEffectivelyEmpty(heartbeatFileContent) &&
-      !isExecEventReason &&
-      !isCronReason
-    ) {
-      emitHeartbeatEvent({
-        status: "skipped",
-        reason: "empty-heartbeat-file",
-        durationMs: Date.now() - startedAt,
-      });
-      return { status: "skipped", reason: "empty-heartbeat-file" };
-    }
-  } catch {
-    // File doesn't exist or can't be read - proceed with heartbeat.
-    // The LLM prompt says "if it exists" so this is expected behavior.
-  }
-
+  // Resolve session early so we can check for pending system events before the file gate.
+  // resolveHeartbeatSession is side-effect-free (reads config + session store only).
   const { entry, sessionKey, storePath } = resolveHeartbeatSession(cfg, agentId, heartbeat);
   const previousUpdatedAt = entry?.updatedAt;
   const delivery = resolveHeartbeatDeliveryTarget({ cfg, entry, heartbeat });
@@ -543,6 +527,48 @@ export async function runHeartbeatOnce(opts: {
       : { showOk: false, showAlerts: true, useIndicator: true };
   const { sender } = resolveHeartbeatSenderContext({ cfg, entry, delivery });
   const responsePrefix = resolveEffectiveMessagesConfig(cfg, agentId).responsePrefix;
+
+  // Skip heartbeat if HEARTBEAT.md exists but has no actionable content.
+  // This saves API calls/costs when the file is effectively empty (only comments/headers).
+  //
+  // EXCEPTIONS that bypass the file gate:
+  // 1. exec-event: Always bypasses (has pending system events to process).
+  // 2. cron-initiated (reason starts with "cron:"): Bypasses ONLY when there are pending
+  //    system events AND the cooldown has elapsed. This batches cron events (~5min)
+  //    into fewer heartbeat LLM turns, preventing spam while ensuring delivery.
+  const isExecEventReason = opts.reason === "exec-event";
+  const isCronReason = typeof opts.reason === "string" && opts.reason.startsWith("cron:");
+
+  // For cron-initiated heartbeats: only bypass file gate when events are pending AND cooldown elapsed.
+  let cronBypassFileGate = false;
+  if (isCronReason && hasSystemEvents(sessionKey)) {
+    const now = opts.deps?.nowMs?.() ?? Date.now();
+    if (now - lastCronTriggeredHeartbeatAtMs < DEFAULT_CRON_HEARTBEAT_COOLDOWN_MS) {
+      return { status: "skipped", reason: "cron-cooldown" };
+    }
+    cronBypassFileGate = true;
+  }
+
+  const workspaceDir = resolveAgentWorkspaceDir(cfg, agentId);
+  const heartbeatFilePath = path.join(workspaceDir, DEFAULT_HEARTBEAT_FILENAME);
+  try {
+    const heartbeatFileContent = await fs.readFile(heartbeatFilePath, "utf-8");
+    if (
+      isHeartbeatContentEffectivelyEmpty(heartbeatFileContent) &&
+      !isExecEventReason &&
+      !cronBypassFileGate
+    ) {
+      emitHeartbeatEvent({
+        status: "skipped",
+        reason: "empty-heartbeat-file",
+        durationMs: Date.now() - startedAt,
+      });
+      return { status: "skipped", reason: "empty-heartbeat-file" };
+    }
+  } catch {
+    // File doesn't exist or can't be read - proceed with heartbeat.
+    // The LLM prompt says "if it exists" so this is expected behavior.
+  }
 
   // Check if this is an exec event with pending exec completion system events.
   // If so, use a specialized prompt that instructs the model to relay the result
@@ -601,6 +627,12 @@ export async function runHeartbeatOnce(opts: {
 
   try {
     const replyResult = await getReplyFromConfig(ctx, { isHeartbeat: true }, cfg);
+
+    // Update cron cooldown timestamp after successful LLM call to prevent spam.
+    if (isCronReason) {
+      lastCronTriggeredHeartbeatAtMs = opts.deps?.nowMs?.() ?? Date.now();
+    }
+
     const replyPayload = resolveHeartbeatReplyPayload(replyResult);
     const includeReasoning = heartbeat?.includeReasoning === true;
     const reasoningPayloads = includeReasoning

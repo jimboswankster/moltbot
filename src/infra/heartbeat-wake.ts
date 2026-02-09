@@ -13,6 +13,7 @@ let timer: NodeJS.Timeout | null = null;
 
 const DEFAULT_COALESCE_MS = 250;
 const DEFAULT_RETRY_MS = 1_000;
+const DEFAULT_CRON_COOLDOWN_RETRY_MS = 30_000;
 
 function schedule(coalesceMs: number) {
   if (timer) {
@@ -40,6 +41,10 @@ function schedule(coalesceMs: number) {
         // The main lane is busy; retry soon.
         pendingReason = reason ?? "retry";
         schedule(DEFAULT_RETRY_MS);
+      } else if (res.status === "skipped" && res.reason === "cron-cooldown") {
+        // Cron events are pending but cooldown hasn't elapsed; retry with longer delay.
+        pendingReason = reason ?? "retry";
+        schedule(DEFAULT_CRON_COOLDOWN_RETRY_MS);
       }
     } catch {
       // Error is already logged by the heartbeat runner; schedule a retry.
