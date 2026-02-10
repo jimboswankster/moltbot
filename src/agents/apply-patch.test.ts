@@ -14,6 +14,42 @@ async function withTempDir<T>(fn: (dir: string) => Promise<T>) {
 }
 
 describe("applyPatch", () => {
+  // ── Phase 0A: H3 Max Hunk Count (V9 contract + regression) ──────────────
+
+  it.skip("[C] rejects patch exceeding MAX_PATCH_HUNKS (21 hunks)", async () => {
+    await withTempDir(async (dir) => {
+      // Build a patch with 21 add-file hunks — should exceed the limit of 20
+      const hunks = Array.from(
+        { length: 21 },
+        (_, i) => `*** Add File: file${i}.txt\n+content${i}`,
+      ).join("\n");
+      const patch = `*** Begin Patch\n${hunks}\n*** End Patch`;
+
+      await expect(applyPatch(patch, { cwd: dir })).rejects.toThrow(/exceeds maximum/i);
+
+      // Verify NO files were created (guard fires before any writes)
+      const files = await fs.readdir(dir);
+      expect(files).toHaveLength(0);
+    });
+  });
+
+  it.skip("[R] accepts patch at MAX_PATCH_HUNKS limit (20 hunks)", async () => {
+    await withTempDir(async (dir) => {
+      // Build a patch with exactly 20 add-file hunks — at the limit, should succeed
+      const hunks = Array.from(
+        { length: 20 },
+        (_, i) => `*** Add File: file${i}.txt\n+content${i}`,
+      ).join("\n");
+      const patch = `*** Begin Patch\n${hunks}\n*** End Patch`;
+
+      const result = await applyPatch(patch, { cwd: dir });
+
+      expect(result.summary.added).toHaveLength(20);
+      const files = await fs.readdir(dir);
+      expect(files).toHaveLength(20);
+    });
+  });
+
   it("adds a file", async () => {
     await withTempDir(async (dir) => {
       const patch = `*** Begin Patch
