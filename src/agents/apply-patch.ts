@@ -61,6 +61,7 @@ export type ApplyPatchToolDetails = {
 
 type ApplyPatchOptions = {
   cwd: string;
+  workspaceRoot?: string;
   sandboxRoot?: string;
   signal?: AbortSignal;
 };
@@ -236,10 +237,60 @@ async function resolvePatchPath(
   }
 
   const resolved = resolvePathFromCwd(filePath, options.cwd);
+
+  if (options.workspaceRoot) {
+    await assertWorkspacePath(resolved, options.workspaceRoot);
+  }
+
   return {
     resolved,
     display: toDisplayPath(resolved, options.cwd),
   };
+}
+
+async function assertWorkspacePath(resolved: string, workspaceRoot: string): Promise<void> {
+  const normalizedRoot = path.resolve(workspaceRoot) + path.sep;
+  const normalizedResolved = path.resolve(resolved);
+
+  // Lexical check: resolved path must start with workspace root
+  if (
+    !normalizedResolved.startsWith(normalizedRoot) &&
+    normalizedResolved !== path.resolve(workspaceRoot)
+  ) {
+    throw new Error(`Path "${resolved}" escapes workspace root "${workspaceRoot}".`);
+  }
+
+  // Physical check: resolve symlinks and verify the real path is still inside workspace
+  try {
+    // Walk up from the resolved path to find the deepest existing ancestor
+    let checkPath = normalizedResolved;
+    while (checkPath !== path.dirname(checkPath)) {
+      try {
+        const realPath = await fs.realpath(checkPath);
+        const realRoot = await fs.realpath(workspaceRoot);
+        const realRootPrefix = realRoot + path.sep;
+        if (!realPath.startsWith(realRootPrefix) && realPath !== realRoot) {
+          throw new Error(
+            `Path "${resolved}" resolves outside workspace root (symlink). Real path: "${realPath}".`,
+          );
+        }
+        return; // Passed both checks
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+          // Path doesn't exist yet (e.g., Add File), walk up to parent
+          checkPath = path.dirname(checkPath);
+          continue;
+        }
+        throw err; // Re-throw non-ENOENT errors (including our own workspace errors)
+      }
+    }
+  } catch (err) {
+    if ((err as Error).message.includes("resolves outside workspace root")) {
+      throw err;
+    }
+    // If we can't resolve symlinks at all (e.g., workspace root doesn't exist),
+    // the lexical check already passed, so allow it
+  }
 }
 
 function normalizeUnicodeSpaces(value: string): string {
