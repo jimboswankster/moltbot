@@ -175,7 +175,7 @@ describe("applyPatch", () => {
 
   // ── Phase 0C: Refactor applyUpdateHunk (prerequisite for H1) ──────────────
 
-  it.skip("[R] applyUpdateHunk uses pre-read content instead of disk read", async () => {
+  it("[R] applyUpdateHunk uses pre-read content instead of disk read", async () => {
     await withTempDir(async (dir) => {
       const filePath = path.join(dir, "target.txt");
       // Write one version to disk

@@ -10,10 +10,13 @@ type UpdateFileChunk = {
 export async function applyUpdateHunk(
   filePath: string,
   chunks: UpdateFileChunk[],
+  content?: string,
 ): Promise<string> {
-  const originalContents = await fs.readFile(filePath, "utf8").catch((err) => {
-    throw new Error(`Failed to read file to update ${filePath}: ${err}`);
-  });
+  const originalContents =
+    content ??
+    (await fs.readFile(filePath, "utf8").catch((err) => {
+      throw new Error(`Failed to read file to update ${filePath}: ${err}`);
+    }));
 
   const originalLines = originalContents.split("\n");
   if (originalLines.length > 0 && originalLines[originalLines.length - 1] === "") {
