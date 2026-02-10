@@ -651,6 +651,153 @@ describe("applyPatch", () => {
     });
   });
 
+  // ── Phase 2: Provider Gating + Schema Backward Compat ────────────────────
+
+  it.skip("[C] enabled: false → tool is null regardless of provider", () => {
+    const { createOpenClawCodingTools } = require("./pi-tools.js");
+    const tools = createOpenClawCodingTools({
+      config: {
+        tools: {
+          allow: ["read", "exec"],
+          exec: { applyPatch: { enabled: false } },
+        },
+      },
+      sessionKey: "agent:main:main",
+      workspaceDir: "/tmp/test",
+      agentDir: "/tmp/agent",
+      modelProvider: "google",
+    });
+    const names = tools.map((t: { name: string }) => t.name);
+    expect(names).not.toContain("apply_patch");
+  });
+
+  it.skip("[R] enabled: true, no allowProviders → tool created for any provider (backward compat)", () => {
+    const { createOpenClawCodingTools } = require("./pi-tools.js");
+    const tools = createOpenClawCodingTools({
+      config: {
+        tools: {
+          allow: ["read", "exec"],
+          exec: { applyPatch: { enabled: true } },
+        },
+      },
+      sessionKey: "agent:main:main",
+      workspaceDir: "/tmp/test",
+      agentDir: "/tmp/agent",
+      modelProvider: "google",
+      modelId: "gemini-2.5-pro",
+    });
+    const names = tools.map((t: { name: string }) => t.name);
+    expect(names).toContain("apply_patch");
+  });
+
+  it.skip("[C] allowProviders: ['google'] → tool created for Google, null for OpenAI", () => {
+    const { createOpenClawCodingTools } = require("./pi-tools.js");
+    const googleTools = createOpenClawCodingTools({
+      config: {
+        tools: {
+          allow: ["read", "exec"],
+          exec: { applyPatch: { enabled: true, allowProviders: ["google"] } },
+        },
+      },
+      sessionKey: "agent:main:main",
+      workspaceDir: "/tmp/test",
+      agentDir: "/tmp/agent",
+      modelProvider: "google",
+      modelId: "gemini-2.5-pro",
+    });
+    expect(googleTools.map((t: { name: string }) => t.name)).toContain("apply_patch");
+
+    const openaiTools = createOpenClawCodingTools({
+      config: {
+        tools: {
+          allow: ["read", "exec"],
+          exec: { applyPatch: { enabled: true, allowProviders: ["google"] } },
+        },
+      },
+      sessionKey: "agent:main:main",
+      workspaceDir: "/tmp/test",
+      agentDir: "/tmp/agent",
+      modelProvider: "openai",
+      modelId: "gpt-5.2",
+    });
+    expect(openaiTools.map((t: { name: string }) => t.name)).not.toContain("apply_patch");
+  });
+
+  it.skip("[R] allowProviders: ['openai'] → tool created for OpenAI (regression: OpenAI still works)", () => {
+    const { createOpenClawCodingTools } = require("./pi-tools.js");
+    const tools = createOpenClawCodingTools({
+      config: {
+        tools: {
+          allow: ["read", "exec"],
+          exec: { applyPatch: { enabled: true, allowProviders: ["openai"] } },
+        },
+      },
+      sessionKey: "agent:main:main",
+      workspaceDir: "/tmp/test",
+      agentDir: "/tmp/agent",
+      modelProvider: "openai",
+      modelId: "gpt-5.2",
+    });
+    const names = tools.map((t: { name: string }) => t.name);
+    expect(names).toContain("apply_patch");
+  });
+
+  it.skip("[C] sandbox workspaceAccess: 'ro' → tool is null even when enabled", () => {
+    const { createOpenClawCodingTools } = require("./pi-tools.js");
+    const tools = createOpenClawCodingTools({
+      config: {
+        tools: {
+          allow: ["read", "exec"],
+          exec: { applyPatch: { enabled: true, allowProviders: ["google"] } },
+        },
+      },
+      sessionKey: "agent:main:main",
+      workspaceDir: "/tmp/test",
+      agentDir: "/tmp/agent",
+      modelProvider: "google",
+      sandbox: { workspaceDir: "/tmp/sandbox", workspaceAccess: "ro" },
+    });
+    const names = tools.map((t: { name: string }) => t.name);
+    expect(names).not.toContain("apply_patch");
+  });
+
+  it.skip("[C] sandbox workspaceAccess: 'rw' → tool created with sandboxRoot", () => {
+    const { createOpenClawCodingTools } = require("./pi-tools.js");
+    const tools = createOpenClawCodingTools({
+      config: {
+        tools: {
+          allow: ["read", "exec"],
+          exec: { applyPatch: { enabled: true, allowProviders: ["google"] } },
+        },
+      },
+      sessionKey: "agent:main:main",
+      workspaceDir: "/tmp/test",
+      agentDir: "/tmp/agent",
+      modelProvider: "google",
+      sandbox: { workspaceDir: "/tmp/sandbox", workspaceAccess: "rw" },
+    });
+    const names = tools.map((t: { name: string }) => t.name);
+    expect(names).toContain("apply_patch");
+  });
+
+  it.skip("[R] config schema backward compat: config without allowProviders parses (G2)", () => {
+    // Verify that the existing config shape (no allowProviders field) still parses
+    // through the Zod schema without errors
+    const { z } = require("zod");
+    // Minimal reproduction of the applyPatch schema portion
+    const existingConfig = {
+      enabled: true,
+      allowModels: ["gpt-5.2"],
+    };
+
+    // The schema must accept configs without allowProviders
+    // (This tests backward compatibility of the Zod schema change)
+    expect(existingConfig).toHaveProperty("enabled", true);
+    expect(existingConfig).toHaveProperty("allowModels");
+    expect(existingConfig).not.toHaveProperty("allowProviders");
+    // After GREEN implementation, this will use the actual Zod schema
+  });
+
   // ── Original tests (regression baseline) ────────────────────────────────
 
   it("adds a file", async () => {
