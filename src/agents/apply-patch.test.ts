@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { applyUpdateHunk } from "./apply-patch-update.js";
 import { applyPatch } from "./apply-patch.js";
 
 async function withTempDir<T>(fn: (dir: string) => Promise<T>) {
@@ -169,6 +170,34 @@ describe("applyPatch", () => {
       await expect(applyPatch(patch, { cwd: subdir, workspaceRoot: workspaceDir })).rejects.toThrow(
         /escapes workspace root/i,
       );
+    });
+  });
+
+  // ── Phase 0C: Refactor applyUpdateHunk (prerequisite for H1) ──────────────
+
+  it.skip("[R] applyUpdateHunk uses pre-read content instead of disk read", async () => {
+    await withTempDir(async (dir) => {
+      const filePath = path.join(dir, "target.txt");
+      // Write one version to disk
+      await fs.writeFile(filePath, "disk-line1\ndisk-line2\n", "utf8");
+
+      // Pass a DIFFERENT version as pre-read content
+      const preReadContent = "cached-line1\ncached-line2\n";
+
+      const chunks = [
+        {
+          oldLines: ["cached-line1"],
+          newLines: ["replaced-line1"],
+          isEndOfFile: false,
+        },
+      ];
+
+      // Should use the pre-read content, not what's on disk
+      const result = await applyUpdateHunk(filePath, chunks, preReadContent);
+      expect(result).toContain("replaced-line1");
+      expect(result).toContain("cached-line2");
+      // Should NOT contain disk content
+      expect(result).not.toContain("disk-line1");
     });
   });
 
