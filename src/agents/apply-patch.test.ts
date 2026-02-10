@@ -519,6 +519,138 @@ describe("applyPatch", () => {
     });
   });
 
+  // ── Phase 1C: Sandbox + Error Cases ──────────────────────────────────────
+
+  it("[R] sandbox rejects traversal path", async () => {
+    await withTempDir(async (dir) => {
+      const patch = `*** Begin Patch
+*** Add File: ../../etc/passwd
++malicious
+*** End Patch`;
+
+      await expect(applyPatch(patch, { cwd: dir, sandboxRoot: dir })).rejects.toThrow(
+        /escapes sandbox root/i,
+      );
+    });
+  });
+
+  it("[R] sandbox rejects symlink in path chain", async () => {
+    await withTempDir(async (dir) => {
+      const outsideDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-outside-"));
+      try {
+        const link = path.join(dir, "link");
+        await fs.symlink(outsideDir, link);
+
+        const patch = `*** Begin Patch
+*** Add File: link/file.txt
++escape via symlink
+*** End Patch`;
+
+        await expect(applyPatch(patch, { cwd: dir, sandboxRoot: dir })).rejects.toThrow(
+          /symlink not allowed/i,
+        );
+      } finally {
+        await fs.rm(outsideDir, { recursive: true, force: true });
+      }
+    });
+  });
+
+  it("[R] sandbox allows normal patch within root", async () => {
+    await withTempDir(async (dir) => {
+      const patch = `*** Begin Patch
+*** Add File: safe/inside.txt
++safe content
+*** End Patch`;
+
+      const result = await applyPatch(patch, { cwd: dir, sandboxRoot: dir });
+      expect(result.summary.added).toContain("safe/inside.txt");
+
+      const contents = await fs.readFile(path.join(dir, "safe", "inside.txt"), "utf8");
+      expect(contents).toBe("safe content\n");
+    });
+  });
+
+  it("[R] sandbox rejects absolute path outside root", async () => {
+    await withTempDir(async (dir) => {
+      const patch = `*** Begin Patch
+*** Add File: /tmp/outside.txt
++escape
+*** End Patch`;
+
+      await expect(applyPatch(patch, { cwd: dir, sandboxRoot: dir })).rejects.toThrow(
+        /escapes sandbox root/i,
+      );
+    });
+  });
+
+  it("[C] cross-contamination: sandbox patch cannot reach workspace files", async () => {
+    await withTempDir(async (workspaceDir) => {
+      await withTempDir(async (sandboxDir) => {
+        // Place a file in the workspace
+        await fs.writeFile(path.join(workspaceDir, "secret.txt"), "secret\n", "utf8");
+
+        // Try to reach workspace file from sandbox via traversal
+        const relative = path.relative(sandboxDir, workspaceDir);
+        const patch = `*** Begin Patch
+*** Update File: ${relative}/secret.txt
+@@
+-secret
++compromised
+*** End Patch`;
+
+        await expect(
+          applyPatch(patch, { cwd: sandboxDir, sandboxRoot: sandboxDir }),
+        ).rejects.toThrow(/escapes sandbox root/i);
+
+        // Verify workspace file is untouched
+        const content = await fs.readFile(path.join(workspaceDir, "secret.txt"), "utf8");
+        expect(content).toBe("secret\n");
+      });
+    });
+  });
+
+  it("[R] throws on empty input", async () => {
+    await withTempDir(async (dir) => {
+      await expect(applyPatch("", { cwd: dir })).rejects.toThrow(/empty/i);
+    });
+  });
+
+  it("[R] throws on missing Begin Patch marker", async () => {
+    await withTempDir(async (dir) => {
+      await expect(
+        applyPatch("*** Add File: test.txt\n+content\n*** End Patch", {
+          cwd: dir,
+        }),
+      ).rejects.toThrow(/Begin Patch/i);
+    });
+  });
+
+  it("[R] throws on missing context in update hunk", async () => {
+    await withTempDir(async (dir) => {
+      await fs.writeFile(path.join(dir, "target.txt"), "content\n", "utf8");
+      const patch = `*** Begin Patch
+*** Update File: target.txt
+*** End Patch`;
+
+      await expect(applyPatch(patch, { cwd: dir })).rejects.toThrow(/empty/i);
+    });
+  });
+
+  it("[R] throws on whitespace-only input", async () => {
+    await withTempDir(async (dir) => {
+      await expect(applyPatch("   \n  \n  ", { cwd: dir })).rejects.toThrow(/empty/i);
+    });
+  });
+
+  it("[R] throws when patch has no file hunks", async () => {
+    await withTempDir(async (dir) => {
+      const patch = `*** Begin Patch
+*** End Patch`;
+
+      await expect(applyPatch(patch, { cwd: dir })).rejects.toThrow(/No files were modified/i);
+    });
+  });
+
   // ── Original tests (regression baseline) ────────────────────────────────
 
   it("adds a file", async () => {
