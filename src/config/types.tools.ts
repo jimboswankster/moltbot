@@ -185,8 +185,14 @@ export type ExecToolConfig = {
   notifyOnExit?: boolean;
   /** apply_patch subtool configuration (experimental). */
   applyPatch?: {
-    /** Enable apply_patch for OpenAI models (default: false). */
+    /** Enable apply_patch (default: false). */
     enabled?: boolean;
+    /**
+     * Optional allowlist of provider ids that can use apply_patch.
+     * When empty or omitted, all providers are allowed (if enabled).
+     * Examples: ["openai"], ["google"], ["openai", "google"]
+     */
+    allowProviders?: string[];
     /**
      * Optional allowlist of model ids that can use apply_patch.
      * Accepts either raw ids (e.g. "gpt-5.2") or full ids (e.g. "openai/gpt-5.2").

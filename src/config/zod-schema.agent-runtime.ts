@@ -279,6 +279,7 @@ export const AgentToolsSchema = z
         applyPatch: z
           .object({
             enabled: z.boolean().optional(),
+            allowProviders: z.array(z.string()).optional(),
             allowModels: z.array(z.string()).optional(),
           })
           .strict()
@@ -527,6 +528,7 @@ export const ToolsSchema = z
         applyPatch: z
           .object({
             enabled: z.boolean().optional(),
+            allowProviders: z.array(z.string()).optional(),
             allowModels: z.array(z.string()).optional(),
           })
           .strict()

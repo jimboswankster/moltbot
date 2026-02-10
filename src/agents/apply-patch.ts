@@ -73,10 +73,11 @@ const applyPatchSchema = Type.Object({
 });
 
 export function createApplyPatchTool(
-  options: { cwd?: string; sandboxRoot?: string } = {},
+  options: { cwd?: string; workspaceRoot?: string; sandboxRoot?: string } = {},
   // oxlint-disable-next-line typescript/no-explicit-any
 ): AgentTool<any, ApplyPatchToolDetails> {
   const cwd = options.cwd ?? process.cwd();
+  const workspaceRoot = options.workspaceRoot;
   const sandboxRoot = options.sandboxRoot;
 
   return {
@@ -99,6 +100,7 @@ export function createApplyPatchTool(
 
       const result = await applyPatch(input, {
         cwd,
+        workspaceRoot,
         sandboxRoot,
         signal,
       });

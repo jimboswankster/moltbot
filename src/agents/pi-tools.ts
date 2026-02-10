@@ -52,9 +52,16 @@ import {
   stripPluginOnlyAllowlist,
 } from "./tool-policy.js";
 
-function isOpenAIProvider(provider?: string) {
+function isProviderAllowed(provider?: string, allowProviders?: string[]) {
+  // When allowProviders is empty or not set, all providers are allowed
+  if (!allowProviders || allowProviders.length === 0) {
+    return true;
+  }
   const normalized = provider?.trim().toLowerCase();
-  return normalized === "openai" || normalized === "openai-codex";
+  if (!normalized) {
+    return false;
+  }
+  return allowProviders.some((allowed) => allowed.trim().toLowerCase() === normalized);
 }
 
 function isApplyPatchAllowedForModel(params: {
@@ -230,7 +237,7 @@ export function createOpenClawCodingTools(options?: {
   const applyPatchConfig = options?.config?.tools?.exec?.applyPatch;
   const applyPatchEnabled =
     !!applyPatchConfig?.enabled &&
-    isOpenAIProvider(options?.modelProvider) &&
+    isProviderAllowed(options?.modelProvider, applyPatchConfig?.allowProviders) &&
     isApplyPatchAllowedForModel({
       modelProvider: options?.modelProvider,
       modelId: options?.modelId,
@@ -304,6 +311,7 @@ export function createOpenClawCodingTools(options?: {
       ? null
       : createApplyPatchTool({
           cwd: sandboxRoot ?? workspaceRoot,
+          workspaceRoot: sandboxRoot ? undefined : workspaceRoot,
           sandboxRoot: sandboxRoot && allowWorkspaceWrites ? sandboxRoot : undefined,
         });
   const tools: AnyAgentTool[] = [

@@ -4,6 +4,8 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { applyUpdateHunk } from "./apply-patch-update.js";
 import { applyPatch } from "./apply-patch.js";
+import "./test-helpers/fast-coding-tools.js";
+import { createOpenClawCodingTools } from "./pi-tools.js";
 
 async function withTempDir<T>(fn: (dir: string) => Promise<T>) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-patch-"));
@@ -653,8 +655,7 @@ describe("applyPatch", () => {
 
   // ── Phase 2: Provider Gating + Schema Backward Compat ────────────────────
 
-  it.skip("[C] enabled: false → tool is null regardless of provider", () => {
-    const { createOpenClawCodingTools } = require("./pi-tools.js");
+  it("[C] enabled: false → tool is null regardless of provider", () => {
     const tools = createOpenClawCodingTools({
       config: {
         tools: {
@@ -671,8 +672,7 @@ describe("applyPatch", () => {
     expect(names).not.toContain("apply_patch");
   });
 
-  it.skip("[R] enabled: true, no allowProviders → tool created for any provider (backward compat)", () => {
-    const { createOpenClawCodingTools } = require("./pi-tools.js");
+  it("[R] enabled: true, no allowProviders → tool created for any provider (backward compat)", () => {
     const tools = createOpenClawCodingTools({
       config: {
         tools: {
@@ -690,8 +690,7 @@ describe("applyPatch", () => {
     expect(names).toContain("apply_patch");
   });
 
-  it.skip("[C] allowProviders: ['google'] → tool created for Google, null for OpenAI", () => {
-    const { createOpenClawCodingTools } = require("./pi-tools.js");
+  it("[C] allowProviders: ['google'] → tool created for Google, null for OpenAI", () => {
     const googleTools = createOpenClawCodingTools({
       config: {
         tools: {
@@ -723,8 +722,7 @@ describe("applyPatch", () => {
     expect(openaiTools.map((t: { name: string }) => t.name)).not.toContain("apply_patch");
   });
 
-  it.skip("[R] allowProviders: ['openai'] → tool created for OpenAI (regression: OpenAI still works)", () => {
-    const { createOpenClawCodingTools } = require("./pi-tools.js");
+  it("[R] allowProviders: ['openai'] → tool created for OpenAI (regression: OpenAI still works)", () => {
     const tools = createOpenClawCodingTools({
       config: {
         tools: {
@@ -742,8 +740,23 @@ describe("applyPatch", () => {
     expect(names).toContain("apply_patch");
   });
 
-  it.skip("[C] sandbox workspaceAccess: 'ro' → tool is null even when enabled", () => {
-    const { createOpenClawCodingTools } = require("./pi-tools.js");
+  it("[C] sandbox workspaceAccess: 'ro' → tool is null even when enabled", () => {
+    const sandboxCtx = {
+      enabled: true,
+      sessionKey: "agent:main:main",
+      workspaceDir: "/tmp/sandbox",
+      agentWorkspaceDir: "/tmp/test",
+      workspaceAccess: "ro" as const,
+      containerName: "test-container",
+      containerWorkdir: "/workspace",
+      docker: {
+        image: "test-image",
+        containerPrefix: "test-",
+        workdir: "/workspace",
+        readOnlyRoot: true,
+        tmpfs: [],
+      },
+    };
     const tools = createOpenClawCodingTools({
       config: {
         tools: {
@@ -755,14 +768,29 @@ describe("applyPatch", () => {
       workspaceDir: "/tmp/test",
       agentDir: "/tmp/agent",
       modelProvider: "google",
-      sandbox: { workspaceDir: "/tmp/sandbox", workspaceAccess: "ro" },
+      sandbox: sandboxCtx,
     });
     const names = tools.map((t: { name: string }) => t.name);
     expect(names).not.toContain("apply_patch");
   });
 
-  it.skip("[C] sandbox workspaceAccess: 'rw' → tool created with sandboxRoot", () => {
-    const { createOpenClawCodingTools } = require("./pi-tools.js");
+  it("[C] sandbox workspaceAccess: 'rw' → tool created with sandboxRoot", () => {
+    const sandboxCtx = {
+      enabled: true,
+      sessionKey: "agent:main:main",
+      workspaceDir: "/tmp/sandbox",
+      agentWorkspaceDir: "/tmp/test",
+      workspaceAccess: "rw" as const,
+      containerName: "test-container",
+      containerWorkdir: "/workspace",
+      docker: {
+        image: "test-image",
+        containerPrefix: "test-",
+        workdir: "/workspace",
+        readOnlyRoot: true,
+        tmpfs: [],
+      },
+    };
     const tools = createOpenClawCodingTools({
       config: {
         tools: {
@@ -774,28 +802,37 @@ describe("applyPatch", () => {
       workspaceDir: "/tmp/test",
       agentDir: "/tmp/agent",
       modelProvider: "google",
-      sandbox: { workspaceDir: "/tmp/sandbox", workspaceAccess: "rw" },
+      sandbox: sandboxCtx,
     });
     const names = tools.map((t: { name: string }) => t.name);
     expect(names).toContain("apply_patch");
   });
 
-  it.skip("[R] config schema backward compat: config without allowProviders parses (G2)", () => {
-    // Verify that the existing config shape (no allowProviders field) still parses
-    // through the Zod schema without errors
-    const { z } = require("zod");
-    // Minimal reproduction of the applyPatch schema portion
-    const existingConfig = {
-      enabled: true,
-      allowModels: ["gpt-5.2"],
-    };
-
-    // The schema must accept configs without allowProviders
-    // (This tests backward compatibility of the Zod schema change)
-    expect(existingConfig).toHaveProperty("enabled", true);
-    expect(existingConfig).toHaveProperty("allowModels");
-    expect(existingConfig).not.toHaveProperty("allowProviders");
-    // After GREEN implementation, this will use the actual Zod schema
+  it("[R] config schema backward compat: config without allowProviders parses (G2)", () => {
+    // Verify that existing config (no allowProviders) still works
+    // by creating tools with the old config shape
+    const tools = createOpenClawCodingTools({
+      config: {
+        tools: {
+          allow: ["read", "exec"],
+          exec: {
+            applyPatch: {
+              enabled: true,
+              allowModels: ["gpt-5.2"],
+              // NO allowProviders field — backward compat
+            },
+          },
+        },
+      },
+      sessionKey: "agent:main:main",
+      workspaceDir: "/tmp/test",
+      agentDir: "/tmp/agent",
+      modelProvider: "openai",
+      modelId: "gpt-5.2",
+    });
+    const names = tools.map((t: { name: string }) => t.name);
+    // With no allowProviders, all providers should be allowed
+    expect(names).toContain("apply_patch");
   });
 
   // ── Original tests (regression baseline) ────────────────────────────────
