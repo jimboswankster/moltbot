@@ -304,6 +304,90 @@ describe("applyPatch", () => {
     });
   });
 
+  // ── Phase 1A: Core Operations (regression harness) ───────────────────────
+
+  it("[R] deletes a single file", async () => {
+    await withTempDir(async (dir) => {
+      const target = path.join(dir, "doomed.txt");
+      await fs.writeFile(target, "goodbye\n", "utf8");
+
+      const patch = `*** Begin Patch
+*** Delete File: doomed.txt
+*** End Patch`;
+
+      const result = await applyPatch(patch, { cwd: dir });
+      expect(result.summary.deleted).toEqual(["doomed.txt"]);
+      await expect(fs.stat(target)).rejects.toBeDefined();
+    });
+  });
+
+  it("[C] delete nonexistent file throws ENOENT", async () => {
+    await withTempDir(async (dir) => {
+      const patch = `*** Begin Patch
+*** Delete File: ghost.txt
+*** End Patch`;
+
+      await expect(applyPatch(patch, { cwd: dir })).rejects.toThrow();
+    });
+  });
+
+  it("[R] multi-file add + update + delete in one patch", async () => {
+    await withTempDir(async (dir) => {
+      await fs.writeFile(path.join(dir, "existing.txt"), "old\n", "utf8");
+      await fs.writeFile(path.join(dir, "removeme.txt"), "bye\n", "utf8");
+
+      const patch = `*** Begin Patch
+*** Add File: new.txt
++brand new
+*** Update File: existing.txt
+@@
+-old
++updated
+*** Delete File: removeme.txt
+*** End Patch`;
+
+      const result = await applyPatch(patch, { cwd: dir });
+      expect(result.summary.added).toEqual(["new.txt"]);
+      expect(result.summary.modified).toEqual(["existing.txt"]);
+      expect(result.summary.deleted).toEqual(["removeme.txt"]);
+
+      const newFile = await fs.readFile(path.join(dir, "new.txt"), "utf8");
+      expect(newFile).toBe("brand new\n");
+      const updated = await fs.readFile(path.join(dir, "existing.txt"), "utf8");
+      expect(updated).toContain("updated");
+      await expect(fs.stat(path.join(dir, "removeme.txt"))).rejects.toBeDefined();
+    });
+  });
+
+  it("[R] multiple updates to different files are independent", async () => {
+    await withTempDir(async (dir) => {
+      await fs.writeFile(path.join(dir, "a.txt"), "alpha\n", "utf8");
+      await fs.writeFile(path.join(dir, "b.txt"), "beta\n", "utf8");
+
+      const patch = `*** Begin Patch
+*** Update File: a.txt
+@@
+-alpha
++alpha-changed
+*** Update File: b.txt
+@@
+-beta
++beta-changed
+*** End Patch`;
+
+      const result = await applyPatch(patch, { cwd: dir });
+      expect(result.summary.modified).toContain("a.txt");
+      expect(result.summary.modified).toContain("b.txt");
+
+      const a = await fs.readFile(path.join(dir, "a.txt"), "utf8");
+      const b = await fs.readFile(path.join(dir, "b.txt"), "utf8");
+      expect(a).toContain("alpha-changed");
+      expect(b).toContain("beta-changed");
+    });
+  });
+
+  // ── Original tests (regression baseline) ────────────────────────────────
+
   it("adds a file", async () => {
     await withTempDir(async (dir) => {
       const patch = `*** Begin Patch
