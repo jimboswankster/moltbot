@@ -50,6 +50,128 @@ describe("applyPatch", () => {
     });
   });
 
+  // ── Phase 0B: H2 Path Containment + Symlink Resolution (V2/V3/V7/V14) ────
+
+  it.skip("[C] rejects absolute path outside workspace (V2)", async () => {
+    await withTempDir(async (dir) => {
+      const patch = `*** Begin Patch
+*** Add File: /tmp/outside/file.txt
++malicious
+*** End Patch`;
+
+      await expect(applyPatch(patch, { cwd: dir, workspaceRoot: dir })).rejects.toThrow(
+        /escapes workspace root/i,
+      );
+    });
+  });
+
+  it.skip("[C] rejects tilde path outside workspace (V3)", async () => {
+    await withTempDir(async (dir) => {
+      const patch = `*** Begin Patch
+*** Add File: ~/escape.txt
++malicious
+*** End Patch`;
+
+      await expect(applyPatch(patch, { cwd: dir, workspaceRoot: dir })).rejects.toThrow(
+        /escapes workspace root/i,
+      );
+    });
+  });
+
+  it.skip("[C] rejects traversal path via delete (V7)", async () => {
+    await withTempDir(async (dir) => {
+      const patch = `*** Begin Patch
+*** Delete File: ../../etc/passwd
+*** End Patch`;
+
+      await expect(applyPatch(patch, { cwd: dir, workspaceRoot: dir })).rejects.toThrow(
+        /escapes workspace root/i,
+      );
+    });
+  });
+
+  it.skip("[C] rejects absolute path via update (V2)", async () => {
+    await withTempDir(async (dir) => {
+      const patch = `*** Begin Patch
+*** Update File: /etc/hosts
+@@
+-old
++new
+*** End Patch`;
+
+      await expect(applyPatch(patch, { cwd: dir, workspaceRoot: dir })).rejects.toThrow(
+        /escapes workspace root/i,
+      );
+    });
+  });
+
+  it.skip("[R] allows relative safe path within workspace", async () => {
+    await withTempDir(async (dir) => {
+      const patch = `*** Begin Patch
+*** Add File: subdir/safe.txt
++safe content
+*** End Patch`;
+
+      const result = await applyPatch(patch, { cwd: dir, workspaceRoot: dir });
+      expect(result.summary.added).toEqual(["subdir/safe.txt"]);
+
+      const contents = await fs.readFile(path.join(dir, "subdir", "safe.txt"), "utf8");
+      expect(contents).toBe("safe content\n");
+    });
+  });
+
+  it.skip("[R] allows dot-prefixed relative path within workspace", async () => {
+    await withTempDir(async (dir) => {
+      const patch = `*** Begin Patch
+*** Add File: ./also-safe.txt
++also safe
+*** End Patch`;
+
+      const result = await applyPatch(patch, { cwd: dir, workspaceRoot: dir });
+      expect(result.summary.added).toEqual(["also-safe.txt"]);
+    });
+  });
+
+  it.skip("[C] rejects symlink escape outside workspace (V14)", async () => {
+    await withTempDir(async (dir) => {
+      // Create a symlink inside the workspace that points outside
+      const outsideDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-outside-"));
+      try {
+        const escapeLink = path.join(dir, "escape");
+        await fs.symlink(outsideDir, escapeLink);
+
+        const patch = `*** Begin Patch
+*** Add File: escape/file.txt
++symlink escape
+*** End Patch`;
+
+        await expect(applyPatch(patch, { cwd: dir, workspaceRoot: dir })).rejects.toThrow(
+          /resolves outside workspace root/i,
+        );
+      } finally {
+        await fs.rm(outsideDir, { recursive: true, force: true });
+      }
+    });
+  });
+
+  it.skip("[C] uses workspaceRoot not cwd for containment (CVE-2025-59532)", async () => {
+    await withTempDir(async (workspaceDir) => {
+      // cwd is a subdirectory of workspace — traversal relative to cwd
+      // should still be caught if it escapes workspaceRoot
+      const subdir = path.join(workspaceDir, "deep", "sub");
+      await fs.mkdir(subdir, { recursive: true });
+
+      const patch = `*** Begin Patch
+*** Add File: ../../../tmp/escape.txt
++escape
+*** End Patch`;
+
+      await expect(applyPatch(patch, { cwd: subdir, workspaceRoot: workspaceDir })).rejects.toThrow(
+        /escapes workspace root/i,
+      );
+    });
+  });
+
   it("adds a file", async () => {
     await withTempDir(async (dir) => {
       const patch = `*** Begin Patch
