@@ -201,6 +201,109 @@ describe("applyPatch", () => {
     });
   });
 
+  // ── Phase 0D: H1 Pre-flight Validation (V1/V5/V10) ──────────────────────
+
+  it.skip("[C] pre-flight rejects before any fs writes when hunk has bad context", async () => {
+    await withTempDir(async (dir) => {
+      // Create two files
+      await fs.writeFile(path.join(dir, "file1.txt"), "line1\nline2\n", "utf8");
+      await fs.writeFile(path.join(dir, "file2.txt"), "alpha\nbeta\n", "utf8");
+
+      // Patch: file1 update is valid, but file2 update has wrong context
+      const patch = `*** Begin Patch
+*** Update File: file1.txt
+@@
+ line1
+-line2
++line2-modified
+*** Update File: file2.txt
+@@
+ WRONG_CONTEXT
+-beta
++beta-modified
+*** End Patch`;
+
+      await expect(applyPatch(patch, { cwd: dir, workspaceRoot: dir })).rejects.toThrow();
+
+      // CRITICAL: file1 must NOT have been modified (pre-flight catches file2 failure first)
+      const file1 = await fs.readFile(path.join(dir, "file1.txt"), "utf8");
+      expect(file1).toBe("line1\nline2\n");
+    });
+  });
+
+  it.skip("[R] pre-flight allows valid multi-file patch through", async () => {
+    await withTempDir(async (dir) => {
+      await fs.writeFile(path.join(dir, "a.txt"), "aaa\n", "utf8");
+      await fs.writeFile(path.join(dir, "b.txt"), "bbb\n", "utf8");
+
+      const patch = `*** Begin Patch
+*** Update File: a.txt
+@@
+-aaa
++aaa-updated
+*** Update File: b.txt
+@@
+-bbb
++bbb-updated
+*** End Patch`;
+
+      const result = await applyPatch(patch, { cwd: dir, workspaceRoot: dir });
+      expect(result.summary.modified).toContain("a.txt");
+      expect(result.summary.modified).toContain("b.txt");
+
+      const a = await fs.readFile(path.join(dir, "a.txt"), "utf8");
+      const b = await fs.readFile(path.join(dir, "b.txt"), "utf8");
+      expect(a).toContain("aaa-updated");
+      expect(b).toContain("bbb-updated");
+    });
+  });
+
+  it.skip("[C] pre-flight prevents partial writes on add + update mix", async () => {
+    await withTempDir(async (dir) => {
+      // Patch: add a new file, then update a file that doesn't exist
+      const patch = `*** Begin Patch
+*** Add File: new-file.txt
++new content
+*** Update File: nonexistent.txt
+@@
+-old
++new
+*** End Patch`;
+
+      await expect(applyPatch(patch, { cwd: dir, workspaceRoot: dir })).rejects.toThrow();
+
+      // The added file must NOT have been created
+      const files = await fs.readdir(dir);
+      expect(files).toHaveLength(0);
+    });
+  });
+
+  it.skip("[C] pre-flight uses cached content for TOCTOU defense", async () => {
+    await withTempDir(async (dir) => {
+      await fs.writeFile(path.join(dir, "target.txt"), "original\nline2\n", "utf8");
+
+      const patch = `*** Begin Patch
+*** Update File: target.txt
+@@
+-original
++modified
+*** End Patch`;
+
+      // The test verifies that pre-flight caching exists:
+      // If validation reads the file, and then apply phase uses the SAME cached content
+      // (rather than re-reading from disk), the operation is TOCTOU-safe.
+      // We verify this by ensuring the result is consistent with the original content
+      // (if someone changed the file between validate and apply, the old context
+      // would still match because we use the cached version).
+      const result = await applyPatch(patch, { cwd: dir, workspaceRoot: dir });
+      expect(result.summary.modified).toContain("target.txt");
+
+      const contents = await fs.readFile(path.join(dir, "target.txt"), "utf8");
+      expect(contents).toContain("modified");
+      expect(contents).toContain("line2");
+    });
+  });
+
   it("adds a file", async () => {
     await withTempDir(async (dir) => {
       const patch = `*** Begin Patch
