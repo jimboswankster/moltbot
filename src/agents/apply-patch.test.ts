@@ -16,7 +16,7 @@ async function withTempDir<T>(fn: (dir: string) => Promise<T>) {
 describe("applyPatch", () => {
   // ── Phase 0A: H3 Max Hunk Count (V9 contract + regression) ──────────────
 
-  it.skip("[C] rejects patch exceeding MAX_PATCH_HUNKS (21 hunks)", async () => {
+  it("[C] rejects patch exceeding MAX_PATCH_HUNKS (21 hunks)", async () => {
     await withTempDir(async (dir) => {
       // Build a patch with 21 add-file hunks — should exceed the limit of 20
       const hunks = Array.from(
@@ -33,7 +33,7 @@ describe("applyPatch", () => {
     });
   });
 
-  it.skip("[R] accepts patch at MAX_PATCH_HUNKS limit (20 hunks)", async () => {
+  it("[R] accepts patch at MAX_PATCH_HUNKS limit (20 hunks)", async () => {
     await withTempDir(async (dir) => {
       // Build a patch with exactly 20 add-file hunks — at the limit, should succeed
       const hunks = Array.from(

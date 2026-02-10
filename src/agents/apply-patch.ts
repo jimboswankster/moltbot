@@ -110,6 +110,8 @@ export function createApplyPatchTool(
   };
 }
 
+const MAX_PATCH_HUNKS = 20;
+
 export async function applyPatch(
   input: string,
   options: ApplyPatchOptions,
@@ -117,6 +119,11 @@ export async function applyPatch(
   const parsed = parsePatchText(input);
   if (parsed.hunks.length === 0) {
     throw new Error("No files were modified.");
+  }
+  if (parsed.hunks.length > MAX_PATCH_HUNKS) {
+    throw new Error(
+      `Patch contains ${parsed.hunks.length} hunks which exceeds maximum of ${MAX_PATCH_HUNKS}. Split into smaller patches.`,
+    );
   }
 
   const summary: ApplyPatchSummary = {
