@@ -203,7 +203,7 @@ describe("applyPatch", () => {
 
   // ── Phase 0D: H1 Pre-flight Validation (V1/V5/V10) ──────────────────────
 
-  it.skip("[C] pre-flight rejects before any fs writes when hunk has bad context", async () => {
+  it("[C] pre-flight rejects before any fs writes when hunk has bad context", async () => {
     await withTempDir(async (dir) => {
       // Create two files
       await fs.writeFile(path.join(dir, "file1.txt"), "line1\nline2\n", "utf8");
@@ -231,7 +231,7 @@ describe("applyPatch", () => {
     });
   });
 
-  it.skip("[R] pre-flight allows valid multi-file patch through", async () => {
+  it("[R] pre-flight allows valid multi-file patch through", async () => {
     await withTempDir(async (dir) => {
       await fs.writeFile(path.join(dir, "a.txt"), "aaa\n", "utf8");
       await fs.writeFile(path.join(dir, "b.txt"), "bbb\n", "utf8");
@@ -258,7 +258,7 @@ describe("applyPatch", () => {
     });
   });
 
-  it.skip("[C] pre-flight prevents partial writes on add + update mix", async () => {
+  it("[C] pre-flight prevents partial writes on add + update mix", async () => {
     await withTempDir(async (dir) => {
       // Patch: add a new file, then update a file that doesn't exist
       const patch = `*** Begin Patch
@@ -278,7 +278,7 @@ describe("applyPatch", () => {
     });
   });
 
-  it.skip("[C] pre-flight uses cached content for TOCTOU defense", async () => {
+  it("[C] pre-flight uses cached content for TOCTOU defense", async () => {
     await withTempDir(async (dir) => {
       await fs.writeFile(path.join(dir, "target.txt"), "original\nline2\n", "utf8");
 

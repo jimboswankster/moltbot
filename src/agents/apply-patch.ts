@@ -127,6 +127,78 @@ export async function applyPatch(
     );
   }
 
+  // ── Phase 1: Pre-flight validation (read + validate, no writes) ──────────
+  // Resolves all paths, reads all files needed for updates, and validates
+  // all hunk context matches. If ANY hunk fails validation, NO files are
+  // modified. Cached content is reused in the apply phase (TOCTOU defense).
+
+  type ValidatedHunk =
+    | { kind: "add"; resolved: string; display: string; contents: string }
+    | { kind: "delete"; resolved: string; display: string }
+    | {
+        kind: "update";
+        resolved: string;
+        display: string;
+        applied: string;
+        movePath?: { resolved: string; display: string };
+      };
+
+  const validated: ValidatedHunk[] = [];
+
+  for (const hunk of parsed.hunks) {
+    if (options.signal?.aborted) {
+      const err = new Error("Aborted");
+      err.name = "AbortError";
+      throw err;
+    }
+
+    if (hunk.kind === "add") {
+      const target = await resolvePatchPath(hunk.path, options);
+      validated.push({
+        kind: "add",
+        resolved: target.resolved,
+        display: target.display,
+        contents: hunk.contents,
+      });
+      continue;
+    }
+
+    if (hunk.kind === "delete") {
+      const target = await resolvePatchPath(hunk.path, options);
+      // Validate the file exists before committing to the apply phase
+      await fs.stat(target.resolved);
+      validated.push({
+        kind: "delete",
+        resolved: target.resolved,
+        display: target.display,
+      });
+      continue;
+    }
+
+    // Update: read file, validate context, cache the applied result
+    const target = await resolvePatchPath(hunk.path, options);
+    const content = await fs.readFile(target.resolved, "utf8").catch((err) => {
+      throw new Error(`Failed to read file to update ${target.resolved}: ${err}`);
+    });
+    // Use cached content (not re-read) — TOCTOU defense
+    const applied = await applyUpdateHunk(target.resolved, hunk.chunks, content);
+
+    let movePath: { resolved: string; display: string } | undefined;
+    if (hunk.movePath) {
+      movePath = await resolvePatchPath(hunk.movePath, options);
+    }
+
+    validated.push({
+      kind: "update",
+      resolved: target.resolved,
+      display: target.display,
+      applied,
+      movePath,
+    });
+  }
+
+  // ── Phase 2: Apply (write only — all validation already passed) ─────────
+
   const summary: ApplyPatchSummary = {
     added: [],
     modified: [],
@@ -138,40 +210,34 @@ export async function applyPatch(
     deleted: new Set<string>(),
   };
 
-  for (const hunk of parsed.hunks) {
+  for (const v of validated) {
     if (options.signal?.aborted) {
       const err = new Error("Aborted");
       err.name = "AbortError";
       throw err;
     }
 
-    if (hunk.kind === "add") {
-      const target = await resolvePatchPath(hunk.path, options);
-      await ensureDir(target.resolved);
-      await fs.writeFile(target.resolved, hunk.contents, "utf8");
-      recordSummary(summary, seen, "added", target.display);
+    if (v.kind === "add") {
+      await ensureDir(v.resolved);
+      await fs.writeFile(v.resolved, v.contents, "utf8");
+      recordSummary(summary, seen, "added", v.display);
       continue;
     }
 
-    if (hunk.kind === "delete") {
-      const target = await resolvePatchPath(hunk.path, options);
-      await fs.rm(target.resolved);
-      recordSummary(summary, seen, "deleted", target.display);
+    if (v.kind === "delete") {
+      await fs.rm(v.resolved);
+      recordSummary(summary, seen, "deleted", v.display);
       continue;
     }
 
-    const target = await resolvePatchPath(hunk.path, options);
-    const applied = await applyUpdateHunk(target.resolved, hunk.chunks);
-
-    if (hunk.movePath) {
-      const moveTarget = await resolvePatchPath(hunk.movePath, options);
-      await ensureDir(moveTarget.resolved);
-      await fs.writeFile(moveTarget.resolved, applied, "utf8");
-      await fs.rm(target.resolved);
-      recordSummary(summary, seen, "modified", moveTarget.display);
+    if (v.movePath) {
+      await ensureDir(v.movePath.resolved);
+      await fs.writeFile(v.movePath.resolved, v.applied, "utf8");
+      await fs.rm(v.resolved);
+      recordSummary(summary, seen, "modified", v.movePath.display);
     } else {
-      await fs.writeFile(target.resolved, applied, "utf8");
-      recordSummary(summary, seen, "modified", target.display);
+      await fs.writeFile(v.resolved, v.applied, "utf8");
+      recordSummary(summary, seen, "modified", v.display);
     }
   }
 
