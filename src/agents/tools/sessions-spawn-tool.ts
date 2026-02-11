@@ -36,6 +36,8 @@ import {
 
 const MODEL_ROLES = ["orchestrator", "primary", "premium", "memory"] as const;
 
+const ANNOUNCE_STRATEGIES = ["direct", "desk"] as const;
+
 const SessionsSpawnToolSchema = Type.Object({
   task: Type.String(),
   label: Type.String(),
@@ -49,6 +51,8 @@ const SessionsSpawnToolSchema = Type.Object({
   cleanup: optionalStringEnum(["delete", "keep"] as const),
   idempotencyKey: Type.Optional(Type.String({ minLength: 1 })),
   idempotencyKeySeed: Type.Optional(Type.String({ minLength: 1 })),
+  /** How to announce sub-agent results: "direct" (interrupt, default) or "desk" (async signal). */
+  announceStrategy: Type.Optional(optionalStringEnum(ANNOUNCE_STRATEGIES)),
 });
 
 function splitModelRef(ref?: string) {
@@ -121,7 +125,7 @@ export function createSessionsSpawnTool(opts?: {
     label: "Sessions",
     name: "sessions_spawn",
     description:
-      "Spawn a background sub-agent run in an isolated session and announce the result back to the requester chat.",
+      'Spawn a background sub-agent run in an isolated session and announce the result back to the requester. Set announceStrategy to "desk" to route the result to the State Desk (non-interrupting) instead of direct announce.',
     parameters: SessionsSpawnToolSchema,
     execute: async (_toolCallId, args) => {
       const params = args as Record<string, unknown>;
@@ -336,6 +340,13 @@ export function createSessionsSpawnTool(opts?: {
         });
       }
 
+      const announceStrategyParam =
+        params.announceStrategy === "desk"
+          ? ("desk" as const)
+          : params.announceStrategy === "direct"
+            ? ("direct" as const)
+            : undefined;
+
       registerSubagentRun({
         runId: childRunId,
         childSessionKey,
@@ -346,6 +357,7 @@ export function createSessionsSpawnTool(opts?: {
         cleanup,
         label: label || undefined,
         runTimeoutSeconds,
+        announceStrategy: announceStrategyParam,
       });
 
       return jsonResult({

@@ -25,6 +25,8 @@ export type SubagentRunRecord = {
   archiveAtMs?: number;
   cleanupCompletedAt?: number;
   cleanupHandled?: boolean;
+  /** Strategy for announcing sub-agent results: "direct" (interrupt) or "desk" (async signal). */
+  announceStrategy?: "direct" | "desk";
 };
 
 const subagentRuns = new Map<string, SubagentRunRecord>();
@@ -75,6 +77,7 @@ function resumeSubagentRun(runId: string) {
       endedAt: entry.endedAt,
       label: entry.label,
       outcome: entry.outcome,
+      announceStrategy: entry.announceStrategy,
     }).then((didAnnounce) => {
       finalizeSubagentCleanup(runId, entry.cleanup, didAnnounce);
     });
@@ -236,6 +239,7 @@ function ensureListener() {
       endedAt: entry.endedAt,
       label: entry.label,
       outcome: entry.outcome,
+      announceStrategy: entry.announceStrategy,
     }).then((didAnnounce) => {
       finalizeSubagentCleanup(evt.runId, entry.cleanup, didAnnounce);
     });
@@ -288,6 +292,7 @@ export function registerSubagentRun(params: {
   cleanup: "delete" | "keep";
   label?: string;
   runTimeoutSeconds?: number;
+  announceStrategy?: "direct" | "desk";
 }) {
   const now = Date.now();
   const cfg = loadConfig();
@@ -308,6 +313,7 @@ export function registerSubagentRun(params: {
     startedAt: now,
     archiveAtMs,
     cleanupHandled: false,
+    announceStrategy: params.announceStrategy,
   });
   ensureListener();
   persistSubagentRuns();
@@ -380,6 +386,7 @@ async function waitForSubagentCompletion(runId: string, waitTimeoutMs: number) {
       endedAt: entry.endedAt,
       label: entry.label,
       outcome: entry.outcome,
+      announceStrategy: entry.announceStrategy,
     }).then((didAnnounce) => {
       finalizeSubagentCleanup(runId, entry.cleanup, didAnnounce);
     });

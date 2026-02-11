@@ -51,6 +51,12 @@ export type CronIsolation = {
   postToMainMode?: "summary" | "full";
   /** Max chars when postToMainMode="full". Default: 8000. */
   postToMainMaxChars?: number;
+  /**
+   * How to post results back to the main agent after an isolated run.
+   * - "direct" (default): inject system event + heartbeat (interrupts main agent)
+   * - "desk": write to State Desk via fireDeskAnnounce (non-interrupting)
+   */
+  postbackStrategy?: "direct" | "desk";
 };
 
 export type CronJobState = {

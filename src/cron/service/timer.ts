@@ -325,6 +325,30 @@ async function runJobCore(
     }
   }
   const statusPrefix = outcome.status === "ok" ? prefix : `${prefix} (${outcome.status})`;
+
+  // Desk postback strategy: route result to State Desk instead of direct interrupt
+  if (job.isolation?.postbackStrategy === "desk") {
+    try {
+      const { fireDeskAnnounce } = await import("../../agents/subagent-announce.js");
+      const triggerMessage = `${statusPrefix}: ${body}`;
+      const handled = await fireDeskAnnounce({
+        childSessionKey: `cron:${job.id}`,
+        childRunId: job.id,
+        requesterSessionKey: `agent:${job.agentId}:main`,
+        task: job.name ?? job.id,
+        label: job.name ?? job.id,
+        triggerMessage,
+        outcome: { status: outcome.status, error: outcome.err },
+      });
+      if (handled) {
+        return outcome;
+      }
+      // H2 Fail-to-Direct: desk handler failed, fall through to direct postback
+    } catch {
+      // fireDeskAnnounce not available or threw — fall through to direct
+    }
+  }
+
   state.deps.enqueueSystemEvent(`${statusPrefix}: ${body}`, {
     agentId: job.agentId,
   });

@@ -210,6 +210,8 @@ export type AgentDefaultsConfig = {
     model?: string | { primary?: string; fallbacks?: string[] };
     /** Default thinking level for spawned sub-agents (e.g. "off", "low", "medium", "high"). */
     thinking?: string;
+    /** Default announce strategy: "direct" (interrupt, default) or "desk" (async signal via State Desk). */
+    announceStrategy?: "direct" | "desk";
   };
   /** Optional sandbox settings for non-main sessions. */
   sandbox?: {

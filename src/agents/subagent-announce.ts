@@ -21,6 +21,95 @@ import { isEmbeddedPiRunActive, queueEmbeddedPiMessage } from "./pi-embedded.js"
 import { type AnnounceQueueItem, enqueueAnnounce } from "./subagent-announce-queue.js";
 import { readLatestAssistantReply } from "./tools/agent-step.js";
 
+// ---------------------------------------------------------------------------
+// Desk Announce Handler — pluggable hook for non-interrupting desk routing
+// ---------------------------------------------------------------------------
+
+/**
+ * Handler that writes a sub-agent result to the State Desk (state_signals)
+ * instead of interrupting the main agent via direct announce.
+ *
+ * Registered by the switchboard-daemon plugin at activation time (H3).
+ * Returns true if the signal was successfully written, false otherwise.
+ */
+export type DeskAnnounceHandler = (params: {
+  childSessionKey: string;
+  childRunId: string;
+  requesterSessionKey: string;
+  task: string;
+  label?: string;
+  triggerMessage: string;
+  outcome?: { status: string; error?: string };
+}) => Promise<boolean>;
+
+let deskAnnounceHandler: DeskAnnounceHandler | null = null;
+
+// H6 Circuit Breaker — if too many desk failures in a window, stop trying
+let deskFailureCount = 0;
+let deskFailureWindowStart = 0;
+const DESK_FAILURE_THRESHOLD = 3;
+const DESK_FAILURE_WINDOW_MS = 60_000;
+
+/**
+ * Register a handler for desk-routed sub-agent announcements.
+ * Called by the switchboard-daemon plugin during `activate()` (H3).
+ */
+export function registerDeskAnnounceHandler(handler: DeskAnnounceHandler): void {
+  deskAnnounceHandler = handler;
+}
+
+/**
+ * Reset desk announce state for tests. Not for production use.
+ */
+export function resetDeskAnnounceStateForTests(): void {
+  deskAnnounceHandler = null;
+  deskFailureCount = 0;
+  deskFailureWindowStart = 0;
+}
+
+/**
+ * Fire a desk announce via the registered handler.
+ *
+ * H2: If no handler registered or handler fails, returns false (caller falls back to direct).
+ * H6: Circuit breaker — after 3 failures in 60s, returns false immediately.
+ */
+export async function fireDeskAnnounce(params: {
+  childSessionKey: string;
+  childRunId: string;
+  requesterSessionKey: string;
+  task: string;
+  label?: string;
+  triggerMessage: string;
+  outcome?: { status: string; error?: string };
+}): Promise<boolean> {
+  if (!deskAnnounceHandler) {
+    return false;
+  }
+
+  // H6 Circuit Breaker — check failure rate
+  const now = Date.now();
+  if (now - deskFailureWindowStart > DESK_FAILURE_WINDOW_MS) {
+    // Reset window
+    deskFailureCount = 0;
+    deskFailureWindowStart = now;
+  }
+  if (deskFailureCount >= DESK_FAILURE_THRESHOLD) {
+    return false;
+  }
+
+  try {
+    const result = await deskAnnounceHandler(params);
+    if (!result) {
+      deskFailureCount++;
+      return false;
+    }
+    return true;
+  } catch {
+    deskFailureCount++;
+    return false;
+  }
+}
+
 function formatDurationShort(valueMs?: number) {
   if (!valueMs || !Number.isFinite(valueMs) || valueMs <= 0) {
     return undefined;
@@ -362,6 +451,8 @@ export async function runSubagentAnnounceFlow(params: {
   outcome?: SubagentRunOutcome;
   /** Optional label for the announce type (e.g. "cron job"). */
   announceType?: string;
+  /** Strategy for announcing results: "direct" (default, interrupt) or "desk" (async signal). */
+  announceStrategy?: "direct" | "desk";
 }): Promise<boolean> {
   let didAnnounce = false;
   try {
@@ -453,6 +544,24 @@ export async function runSubagentAnnounceFlow(params: {
       "Do not mention technical details like tokens, stats, or that this was a background task.",
       "You can respond with NO_REPLY if no announcement is needed (e.g., internal task with no user-facing result).",
     ].join("\n");
+
+    // Desk strategy branch — route to State Desk instead of direct announce (H1/H2)
+    if (params.announceStrategy === "desk") {
+      const handled = await fireDeskAnnounce({
+        childSessionKey: params.childSessionKey,
+        childRunId: params.childRunId,
+        requesterSessionKey: params.requesterSessionKey,
+        task: params.task,
+        label: params.label,
+        triggerMessage,
+        outcome: outcome ? { status: outcome.status, error: outcome.error } : undefined,
+      });
+      if (handled) {
+        didAnnounce = true;
+        return true;
+      }
+      // H2 Fail-to-Direct: desk handler failed or not registered — fall through to direct announce
+    }
 
     const queued = await maybeQueueSubagentAnnounce({
       requesterSessionKey: params.requesterSessionKey,
