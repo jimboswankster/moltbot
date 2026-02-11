@@ -337,8 +337,12 @@ export async function resolveMessagingTarget(params: {
   runtime?: RuntimeEnv;
   resolveAmbiguous?: ResolveAmbiguousMode;
 }): Promise<ResolveMessagingTargetResult> {
+  const started = Date.now();
   const raw = normalizeChannelTargetInput(params.input);
   if (!raw) {
+    console.warn(
+      `[target-resolver] FAIL channel=${params.channel} input=${JSON.stringify(params.input)} reason=empty_target`,
+    );
     return { ok: false, error: new Error("Target is required") };
   }
   const plugin = getChannelPlugin(params.channel);
@@ -346,6 +350,9 @@ export async function resolveMessagingTarget(params: {
   const hint = plugin?.messaging?.targetResolver?.hint;
   const kind = detectTargetKind(params.channel, raw, params.preferredKind);
   const normalized = normalizeTargetForProvider(params.channel, raw) ?? raw;
+  console.log(
+    `[target-resolver] resolving: channel=${params.channel} input=${JSON.stringify(raw)} kind=${kind} normalized=${JSON.stringify(normalized)}`,
+  );
   const looksLikeTargetId = (): boolean => {
     const trimmed = raw.trim();
     if (!trimmed) {
@@ -379,6 +386,9 @@ export async function resolveMessagingTarget(params: {
   };
   if (looksLikeTargetId()) {
     const directTarget = preserveTargetCase(params.channel, raw, normalized);
+    console.log(
+      `[target-resolver] ✓ resolved via direct-id: channel=${params.channel} input=${JSON.stringify(raw)} → to=${JSON.stringify(directTarget)} kind=${kind} durationMs=${Date.now() - started}`,
+    );
     return {
       ok: true,
       target: {
@@ -389,6 +399,9 @@ export async function resolveMessagingTarget(params: {
       },
     };
   }
+  console.log(
+    `[target-resolver] input is not a direct ID, querying directory: channel=${params.channel} query=${JSON.stringify(raw)} kind=${kind}`,
+  );
   const query = stripTargetPrefixes(raw);
   const entries = await getDirectoryEntries({
     cfg: params.cfg,
@@ -399,28 +412,43 @@ export async function resolveMessagingTarget(params: {
     runtime: params.runtime,
     preferLiveOnMiss: true,
   });
+  console.log(
+    `[target-resolver] directory returned ${entries.length} entries for channel=${params.channel} query=${JSON.stringify(query)}`,
+  );
   const match = resolveMatch({ channel: params.channel, entries, query });
   if (match.kind === "single") {
     const entry = match.entry;
+    const resolvedTo = normalizeDirectoryEntryId(params.channel, entry);
+    const display = entry.name ?? entry.handle ?? stripTargetPrefixes(entry.id);
+    console.log(
+      `[target-resolver] ✓ resolved via directory (name match): channel=${params.channel} input=${JSON.stringify(raw)} → to=${JSON.stringify(resolvedTo)} display=${JSON.stringify(display)} entryId=${entry.id} entryName=${entry.name ?? "(none)"} durationMs=${Date.now() - started}`,
+    );
     return {
       ok: true,
       target: {
-        to: normalizeDirectoryEntryId(params.channel, entry),
+        to: resolvedTo,
         kind,
-        display: entry.name ?? entry.handle ?? stripTargetPrefixes(entry.id),
+        display,
         source: "directory",
       },
     };
   }
   if (match.kind === "ambiguous") {
     const mode = params.resolveAmbiguous ?? "error";
+    console.warn(
+      `[target-resolver] AMBIGUOUS: channel=${params.channel} input=${JSON.stringify(raw)} matches=${match.entries.length} mode=${mode} candidates=[${match.entries.map((e) => `${e.id}(${e.name ?? "?"})`).join(", ")}]`,
+    );
     if (mode !== "error") {
       const best = pickAmbiguousMatch(match.entries, mode);
       if (best) {
+        const resolvedTo = normalizeDirectoryEntryId(params.channel, best);
+        console.log(
+          `[target-resolver] ✓ resolved ambiguous via ${mode}: channel=${params.channel} → to=${JSON.stringify(resolvedTo)} durationMs=${Date.now() - started}`,
+        );
         return {
           ok: true,
           target: {
-            to: normalizeDirectoryEntryId(params.channel, best),
+            to: resolvedTo,
             kind,
             display: best.name ?? best.handle ?? stripTargetPrefixes(best.id),
             source: "directory",
@@ -441,6 +469,9 @@ export async function resolveMessagingTarget(params: {
     /^\+?\d{6,}$/.test(query)
   ) {
     const directTarget = preserveTargetCase(params.channel, raw, normalized);
+    console.log(
+      `[target-resolver] ✓ resolved via iMessage direct-handle: channel=${params.channel} → to=${JSON.stringify(directTarget)} durationMs=${Date.now() - started}`,
+    );
     return {
       ok: true,
       target: {
@@ -452,6 +483,9 @@ export async function resolveMessagingTarget(params: {
     };
   }
 
+  console.error(
+    `[target-resolver] ✗ FAILED: channel=${params.channel} input=${JSON.stringify(raw)} reason=unknown_target directoryEntries=${entries.length} hint=${hint ?? "none"} durationMs=${Date.now() - started}`,
+  );
   return {
     ok: false,
     error: unknownTargetError(providerLabel, raw, hint),

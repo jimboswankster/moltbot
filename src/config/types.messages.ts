@@ -8,6 +8,8 @@ export type GroupChatConfig = {
 
 export type DmConfig = {
   historyLimit?: number;
+  /** Human-readable display name for this DM peer (enables name-based target resolution). */
+  name?: string;
 };
 
 export type QueueConfig = {

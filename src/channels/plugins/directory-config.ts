@@ -168,33 +168,72 @@ export async function listTelegramDirectoryPeersFromConfig(
 ): Promise<ChannelDirectoryEntry[]> {
   const account = resolveTelegramAccount({ cfg: params.cfg, accountId: params.accountId });
   const q = params.query?.trim().toLowerCase() || "";
+
+  // Build a map of chatId/username → name from the dms config.
+  // This enables name-based target resolution (e.g., "James" → "8538705539").
+  const dmsConfig = account.config.dms ?? {};
+  const nameMap = new Map<string, string>();
+  for (const [id, dmCfg] of Object.entries(dmsConfig)) {
+    const trimmedId = id.trim().replace(/^(telegram|tg):/i, "");
+    const name = (dmCfg as { name?: string })?.name?.trim();
+    if (trimmedId && name) {
+      nameMap.set(trimmedId, name);
+    }
+  }
+
+  if (nameMap.size > 0) {
+    console.log(
+      `[telegram-directory] loaded ${nameMap.size} named contact(s): ${[...nameMap.entries()].map(([id, name]) => `${name}→${id}`).join(", ")}`,
+    );
+  }
+
   const raw = [
     ...(account.config.allowFrom ?? []).map((entry) => String(entry)),
-    ...Object.keys(account.config.dms ?? {}),
+    ...Object.keys(dmsConfig),
   ];
-  return Array.from(
+  const uniqueIds = Array.from(
     new Set(
       raw
         .map((entry) => entry.trim())
         .filter(Boolean)
         .map((entry) => entry.replace(/^(telegram|tg):/i, "")),
     ),
-  )
+  );
+
+  const results = uniqueIds
     .map((entry) => {
       const trimmed = entry.trim();
       if (!trimmed) {
         return null;
       }
+      let id: string;
       if (/^-?\d+$/.test(trimmed)) {
-        return trimmed;
+        id = trimmed;
+      } else {
+        id = trimmed.startsWith("@") ? trimmed : `@${trimmed}`;
       }
-      const withAt = trimmed.startsWith("@") ? trimmed : `@${trimmed}`;
-      return withAt;
+      const name = nameMap.get(trimmed);
+      return { kind: "user" as const, id, ...(name ? { name } : {}) };
     })
-    .filter((id): id is string => Boolean(id))
-    .filter((id) => (q ? id.toLowerCase().includes(q) : true))
-    .slice(0, params.limit && params.limit > 0 ? params.limit : undefined)
-    .map((id) => ({ kind: "user", id }) as const);
+    .filter((entry): entry is ChannelDirectoryEntry => Boolean(entry))
+    .filter((entry) => {
+      if (!q) {
+        return true;
+      }
+      const candidates = [entry.id, entry.name, entry.handle]
+        .filter(Boolean)
+        .map((v) => v!.toLowerCase());
+      return candidates.some((v) => v.includes(q));
+    })
+    .slice(0, params.limit && params.limit > 0 ? params.limit : undefined);
+
+  if (q) {
+    console.log(
+      `[telegram-directory] query=${JSON.stringify(q)} totalPeers=${uniqueIds.length} matched=${results.length}${results.length > 0 ? ` → [${results.map((e) => `${e.id}(${e.name ?? "?"})`).join(", ")}]` : " (no matches)"}`,
+    );
+  }
+
+  return results;
 }
 
 export async function listTelegramDirectoryGroupsFromConfig(
