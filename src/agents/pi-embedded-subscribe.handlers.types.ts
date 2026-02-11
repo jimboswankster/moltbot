@@ -39,6 +39,7 @@ export type EmbeddedPiSubscribeState = {
   partialBlockState: { thinking: boolean; final: boolean; inlineCode: InlineCodeState };
   lastStreamedAssistant?: string;
   lastStreamedAssistantCleaned?: string;
+  emittedAssistantUpdate?: boolean;
   lastStreamedReasoning?: string;
   lastBlockReplyText?: string;
   assistantMessageIndex: number;
@@ -99,6 +100,12 @@ export type EmbeddedPiSubscribeContext = {
   noteCompactionRetry: () => void;
   resolveCompactionRetry: () => void;
   maybeResolveCompactionWait: () => void;
+  recordAssistantUsage?: (usageLike: unknown) => void;
+  incrementCompactionCount?: () => void;
+  getUsageTotals?: () =>
+    | { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; total?: number }
+    | undefined;
+  getCompactionCount?: () => number;
 };
 
 export type EmbeddedPiSubscribeEvent =

@@ -1,4 +1,4 @@
-import type { TelegramMessage } from "./bot/types.js";
+import type { TelegramContext, TelegramMessage } from "./bot/types.js";
 import { resolveDefaultAgentId } from "../agents/agent-scope.js";
 // @ts-nocheck
 import { hasControlCommand } from "../auto-reply/command-detection.js";
@@ -84,7 +84,7 @@ export const registerTelegramHandlers = ({
         return;
       }
       if (entries.length === 1) {
-        await processMessage(last.ctx, last.allMedia, last.storeAllowFrom);
+        await processMessage(last.ctx as TelegramContext, last.allMedia, last.storeAllowFrom);
         return;
       }
       const combinedText = entries
@@ -108,7 +108,11 @@ export const registerTelegramHandlers = ({
       };
       const messageIdOverride = last.msg.message_id ? String(last.msg.message_id) : undefined;
       await processMessage(
-        { message: syntheticMessage, me: baseCtx.me, getFile },
+        {
+          message: syntheticMessage,
+          me: baseCtx.me as { id?: number; username?: string } | undefined,
+          getFile,
+        } as TelegramContext,
         [],
         first.storeAllowFrom,
         messageIdOverride ? { messageIdOverride } : undefined,
@@ -143,7 +147,7 @@ export const registerTelegramHandlers = ({
       }
 
       const storeAllowFrom = await readChannelAllowFromStore("telegram").catch(() => []);
-      await processMessage(primaryEntry.ctx, allMedia, storeAllowFrom);
+      await processMessage(primaryEntry.ctx as TelegramContext, allMedia, storeAllowFrom);
     } catch (err) {
       runtime.error?.(danger(`media group handler failed: ${String(err)}`));
     }
@@ -179,7 +183,11 @@ export const registerTelegramHandlers = ({
         typeof baseCtx.getFile === "function" ? baseCtx.getFile.bind(baseCtx) : async () => ({});
 
       await processMessage(
-        { message: syntheticMessage, me: baseCtx.me, getFile },
+        {
+          message: syntheticMessage,
+          me: baseCtx.me as { id?: number; username?: string } | undefined,
+          getFile,
+        } as TelegramContext,
         [],
         storeAllowFrom,
         { messageIdOverride: String(last.msg.message_id) },

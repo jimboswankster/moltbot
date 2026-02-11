@@ -20,6 +20,7 @@ export type ClientToolDefinition = {
 export type RunEmbeddedPiAgentParams = {
   sessionId: string;
   sessionKey?: string;
+  agentId?: string;
   messageChannel?: string;
   messageProvider?: string;
   agentAccountId?: string;
@@ -47,6 +48,7 @@ export type RunEmbeddedPiAgentParams = {
   replyToMode?: "off" | "first" | "all";
   /** Mutable ref to track if a reply was sent (for "first" mode). */
   hasRepliedRef?: { value: boolean };
+  senderIsOwner?: boolean;
   sessionFile: string;
   workspaceDir: string;
   agentDir?: string;

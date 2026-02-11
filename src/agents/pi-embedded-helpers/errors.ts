@@ -379,7 +379,7 @@ export function formatAssistantErrorText(
   return raw.length > 600 ? `${raw.slice(0, 600)}…` : raw;
 }
 
-export function sanitizeUserFacingText(text: string): string {
+export function sanitizeUserFacingText(text: string, _opts?: { errorContext?: boolean }): string {
   if (!text) {
     return text;
   }

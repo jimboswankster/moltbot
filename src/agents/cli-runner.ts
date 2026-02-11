@@ -35,6 +35,7 @@ const log = createSubsystemLogger("agent/claude-cli");
 export async function runCliAgent(params: {
   sessionId: string;
   sessionKey?: string;
+  agentId?: string;
   sessionFile: string;
   workspaceDir: string;
   config?: OpenClawConfig;

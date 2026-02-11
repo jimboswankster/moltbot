@@ -1,3 +1,8 @@
+/** Client capability flags (e.g. for hello caps array). */
+export const GATEWAY_CLIENT_CAPS = {
+  TOOL_EVENTS: "tool_events",
+} as const;
+
 export const GATEWAY_CLIENT_IDS = {
   WEBCHAT_UI: "webchat-ui",
   CONTROL_UI: "openclaw-control-ui",

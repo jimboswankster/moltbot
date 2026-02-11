@@ -10,7 +10,7 @@ import {
   sanitizeAgentId,
 } from "./session-key.js";
 
-export type RoutePeerKind = "dm" | "group" | "channel";
+export type RoutePeerKind = "dm" | "direct" | "group" | "channel";
 
 export type RoutePeer = {
   kind: RoutePeerKind;

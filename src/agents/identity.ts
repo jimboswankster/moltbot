@@ -67,7 +67,12 @@ export function resolveResponsePrefix(cfg: OpenClawConfig, agentId: string): str
 export function resolveEffectiveMessagesConfig(
   cfg: OpenClawConfig,
   agentId: string,
-  opts?: { hasAllowFrom?: boolean; fallbackMessagePrefix?: string },
+  opts?: {
+    hasAllowFrom?: boolean;
+    fallbackMessagePrefix?: string;
+    channel?: string;
+    accountId?: string;
+  },
 ): { messagePrefix: string; responsePrefix?: string } {
   return {
     messagePrefix: resolveMessagePrefix(cfg, agentId, {

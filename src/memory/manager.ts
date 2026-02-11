@@ -2207,13 +2207,13 @@ export class MemoryIndexManager implements MemorySearchManager {
       ),
     );
     if (options.source === "sessions" && "lineMap" in entry) {
-      remapChunkLines(chunks, entry.lineMap);
+      remapChunkLines(chunks, entry.lineMap as number[] | undefined);
     }
     const embeddings = this.batch.enabled
       ? await this.embedChunksWithBatch(chunks, entry, options.source)
       : await this.embedChunksInBatches(chunks);
     const sample = embeddings.find((embedding) => embedding.length > 0);
-    const vectorReady = sample ? await this.ensureVectorReady(sample.length) : false;
+    const vectorReady = sample ? await this.ensureVectorReady((sample as number[]).length) : false;
     const now = Date.now();
     if (vectorReady) {
       try {

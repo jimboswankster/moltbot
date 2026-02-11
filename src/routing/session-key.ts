@@ -128,13 +128,13 @@ export function buildAgentPeerSessionKey(params: {
   mainKey?: string | undefined;
   channel: string;
   accountId?: string | null;
-  peerKind?: "dm" | "group" | "channel" | null;
+  peerKind?: "dm" | "direct" | "group" | "channel" | null;
   peerId?: string | null;
   identityLinks?: Record<string, string[]>;
   /** DM session scope. */
   dmScope?: "main" | "per-peer" | "per-channel-peer" | "per-account-channel-peer";
 }): string {
-  const peerKind = params.peerKind ?? "dm";
+  const peerKind = params.peerKind === "direct" ? "dm" : (params.peerKind ?? "dm");
   if (peerKind === "dm") {
     const dmScope = params.dmScope ?? "main";
     let peerId = (params.peerId ?? "").trim();

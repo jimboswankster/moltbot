@@ -205,6 +205,8 @@ import {
   WizardStepSchema,
 } from "./schema.js";
 
+export type { SessionsPatchResult } from "../session-utils.types.js";
+
 const ajv = new (AjvPkg as unknown as new (opts?: object) => import("ajv").default)({
   allErrors: true,
   strict: false,

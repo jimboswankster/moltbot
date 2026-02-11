@@ -232,6 +232,10 @@ export async function executePluginCommand(params: {
   isAuthorizedSender: boolean;
   commandBody: string;
   config: OpenClawConfig;
+  from?: string;
+  to?: string;
+  accountId?: string;
+  messageThreadId?: string | number;
 }): Promise<PluginCommandResult> {
   const { command, args, senderId, channel, isAuthorizedSender, commandBody, config } = params;
 
