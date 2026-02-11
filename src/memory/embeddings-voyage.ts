@@ -1,49 +1,57 @@
 import type { EmbeddingProvider, EmbeddingProviderOptions } from "./embeddings.js";
 import { requireApiKey, resolveApiKeyForProvider } from "../agents/model-auth.js";
 
-export type OpenAiEmbeddingClient = {
+export type VoyageEmbeddingClient = {
   baseUrl: string;
   headers: Record<string, string>;
   model: string;
 };
 
-export const DEFAULT_OPENAI_EMBEDDING_MODEL = "text-embedding-3-small";
-const DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1";
-const OPENAI_MAX_INPUT_TOKENS: Record<string, number> = {
-  "text-embedding-3-small": 8192,
-  "text-embedding-3-large": 8192,
-  "text-embedding-ada-002": 8191,
+export const DEFAULT_VOYAGE_EMBEDDING_MODEL = "voyage-4-large";
+const DEFAULT_VOYAGE_BASE_URL = "https://api.voyageai.com/v1";
+const VOYAGE_MAX_INPUT_TOKENS: Record<string, number> = {
+  "voyage-3": 32000,
+  "voyage-3-lite": 16000,
+  "voyage-code-3": 32000,
 };
 
-export function normalizeOpenAiModel(model: string): string {
+export function normalizeVoyageModel(model: string): string {
   const trimmed = model.trim();
   if (!trimmed) {
-    return DEFAULT_OPENAI_EMBEDDING_MODEL;
+    return DEFAULT_VOYAGE_EMBEDDING_MODEL;
   }
-  if (trimmed.startsWith("openai/")) {
-    return trimmed.slice("openai/".length);
+  if (trimmed.startsWith("voyage/")) {
+    return trimmed.slice("voyage/".length);
   }
   return trimmed;
 }
 
-export async function createOpenAiEmbeddingProvider(
+export async function createVoyageEmbeddingProvider(
   options: EmbeddingProviderOptions,
-): Promise<{ provider: EmbeddingProvider; client: OpenAiEmbeddingClient }> {
-  const client = await resolveOpenAiEmbeddingClient(options);
+): Promise<{ provider: EmbeddingProvider; client: VoyageEmbeddingClient }> {
+  const client = await resolveVoyageEmbeddingClient(options);
   const url = `${client.baseUrl.replace(/\/$/, "")}/embeddings`;
 
-  const embed = async (input: string[]): Promise<number[][]> => {
+  const embed = async (input: string[], input_type?: "query" | "document"): Promise<number[][]> => {
     if (input.length === 0) {
       return [];
     }
+    const body: { model: string; input: string[]; input_type?: "query" | "document" } = {
+      model: client.model,
+      input,
+    };
+    if (input_type) {
+      body.input_type = input_type;
+    }
+
     const res = await fetch(url, {
       method: "POST",
       headers: client.headers,
-      body: JSON.stringify({ model: client.model, input }),
+      body: JSON.stringify(body),
     });
     if (!res.ok) {
       const text = await res.text();
-      throw new Error(`openai embeddings failed: ${res.status} ${text}`);
+      throw new Error(`voyage embeddings failed: ${res.status} ${text}`);
     }
     const payload = (await res.json()) as {
       data?: Array<{ embedding?: number[] }>;
@@ -54,22 +62,22 @@ export async function createOpenAiEmbeddingProvider(
 
   return {
     provider: {
-      id: "openai",
+      id: "voyage",
       model: client.model,
-      maxInputTokens: OPENAI_MAX_INPUT_TOKENS[client.model],
+      maxInputTokens: VOYAGE_MAX_INPUT_TOKENS[client.model],
       embedQuery: async (text) => {
-        const [vec] = await embed([text]);
+        const [vec] = await embed([text], "query");
         return vec ?? [];
       },
-      embedBatch: embed,
+      embedBatch: async (texts) => embed(texts, "document"),
     },
     client,
   };
 }
 
-export async function resolveOpenAiEmbeddingClient(
+export async function resolveVoyageEmbeddingClient(
   options: EmbeddingProviderOptions,
-): Promise<OpenAiEmbeddingClient> {
+): Promise<VoyageEmbeddingClient> {
   const remote = options.remote;
   const remoteApiKey = remote?.apiKey?.trim();
   const remoteBaseUrl = remote?.baseUrl?.trim();
@@ -78,21 +86,21 @@ export async function resolveOpenAiEmbeddingClient(
     ? remoteApiKey
     : requireApiKey(
         await resolveApiKeyForProvider({
-          provider: "openai",
+          provider: "voyage",
           cfg: options.config,
           agentDir: options.agentDir,
         }),
-        "openai",
+        "voyage",
       );
 
-  const providerConfig = options.config.models?.providers?.openai;
-  const baseUrl = remoteBaseUrl || providerConfig?.baseUrl?.trim() || DEFAULT_OPENAI_BASE_URL;
+  const providerConfig = options.config.models?.providers?.voyage;
+  const baseUrl = remoteBaseUrl || providerConfig?.baseUrl?.trim() || DEFAULT_VOYAGE_BASE_URL;
   const headerOverrides = Object.assign({}, providerConfig?.headers, remote?.headers);
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     Authorization: `Bearer ${apiKey}`,
     ...headerOverrides,
   };
-  const model = normalizeOpenAiModel(options.model);
+  const model = normalizeVoyageModel(options.model);
   return { baseUrl, headers, model };
 }
