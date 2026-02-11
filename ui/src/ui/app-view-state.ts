@@ -30,6 +30,19 @@ import type {
 import type { ChatAttachment, ChatQueueItem, CronFormState } from "./ui-types";
 import type { NostrProfileFormState } from "./views/channels.nostr-profile-form";
 
+export type IntelligenceMenuItem = {
+  label: string;
+  path: string;
+  icon: string;
+  description?: string;
+};
+
+export type IntelligenceMenu = {
+  status: "loading" | "online" | "offline";
+  baseUrl: string;
+  items: IntelligenceMenuItem[];
+};
+
 export type AppViewState = {
   settings: UiSettings;
   password: string;
@@ -168,6 +181,7 @@ export type AppViewState = {
   logsLevelFilters: Record<LogLevel, boolean>;
   logsAutoFollow: boolean;
   logsTruncated: boolean;
+  intelligenceMenu: IntelligenceMenu;
   client: GatewayBrowserClient | null;
   connect: () => void;
   setTab: (tab: Tab) => void;

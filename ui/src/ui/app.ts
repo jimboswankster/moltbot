@@ -277,6 +277,7 @@ export class OpenClawApp extends LitElement {
   };
   @state() logsAutoFollow = true;
   @state() logsTruncated = false;
+  @state() intelligenceMenu: import("./app-view-state").IntelligenceMenu = { status: "loading", baseUrl: "", items: [] };
   @state() logsCursor: number | null = null;
   @state() logsLastFetchAt: number | null = null;
   @state() logsLimit = 500;

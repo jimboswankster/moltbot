@@ -50,6 +50,7 @@ import {
   updateSkillEnabled,
 } from "./controllers/skills";
 import { icons } from "./icons";
+import type { IntelligenceMenuItem } from "./app-view-state";
 import { TAB_GROUPS, subtitleForTab, titleForTab } from "./navigation";
 import { renderAgentActivityHud } from "./views/agent-activity-hud";
 import { renderAgents } from "./views/agents";
@@ -84,6 +85,80 @@ function resolveAssistantAvatarUrl(state: AppViewState): string | undefined {
     return candidate;
   }
   return identity?.avatarUrl;
+}
+
+// ─── Intelligence Bridge Menu ─────────────────────────────────────────────
+
+/** Map of icon names used by the intelligence-bridge plugin to SVG templates. */
+const INTELLIGENCE_ICONS: Record<string, ReturnType<typeof html>> = {
+  home: html`<svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>`,
+  heartPulse: html`<svg viewBox="0 0 24 24"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/><path d="M3.22 12H9.5l.5-1 2 4.5 2-7 1.5 3.5h5.27"/></svg>`,
+  target: html`<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>`,
+  brain: html`<svg viewBox="0 0 24 24"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/><path d="M17.599 6.5a3 3 0 0 0 .399-1.375"/><path d="M6.003 5.125A3 3 0 0 0 6.401 6.5"/><path d="M3.477 10.896a4 4 0 0 1 .585-.396"/><path d="M19.938 10.5a4 4 0 0 1 .585.396"/><path d="M6 18a4 4 0 0 1-1.967-.516"/><path d="M19.967 17.484A4 4 0 0 1 18 18"/></svg>`,
+  book: icons.book,
+  calendar: html`<svg viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="4" rx="2" ry="2"/><line x1="16" x2="16" y1="2" y2="6"/><line x1="8" x2="8" y1="2" y2="6"/><line x1="3" x2="21" y1="10" y2="10"/></svg>`,
+  folder: icons.folder,
+  checkSquare: html`<svg viewBox="0 0 24 24"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>`,
+  database: html`<svg viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5V19A9 3 0 0 0 21 19V5"/><path d="M3 12A9 3 0 0 0 21 12"/></svg>`,
+  trendingUp: html`<svg viewBox="0 0 24 24"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>`,
+};
+
+function resolveIntelligenceIcon(iconName: string) {
+  return INTELLIGENCE_ICONS[iconName] ?? icons.folder;
+}
+
+function renderIntelligenceMenu(state: AppViewState) {
+  const menu = state.intelligenceMenu;
+  const isOnline = menu.status === "online";
+  const isLoading = menu.status === "loading";
+  const isCollapsed = state.settings.navGroupsCollapsed["Intelligence"] ?? !isOnline;
+
+  return html`
+    <div class="nav-group ${isCollapsed ? "nav-group--collapsed" : ""}">
+      <button
+        class="nav-label"
+        @click=${() => {
+          const next = { ...state.settings.navGroupsCollapsed };
+          next["Intelligence"] = !isCollapsed;
+          state.applySettings({
+            ...state.settings,
+            navGroupsCollapsed: next,
+          });
+        }}
+        aria-expanded=${!isCollapsed}
+      >
+        <span class="nav-label__text" style="display:flex;align-items:center;gap:6px;">
+          Intelligence Bridge
+          <span class="statusDot ${isOnline ? "ok" : ""}" style="width:6px;height:6px;${isLoading ? "opacity:0.4;" : ""}"></span>
+        </span>
+        <span class="nav-label__chevron">${isCollapsed ? "+" : "−"}</span>
+      </button>
+      <div class="nav-group__items">
+        ${isOnline
+          ? menu.items.map((item: IntelligenceMenuItem) => {
+              const href = `${menu.baseUrl}${item.path === "/" ? "" : item.path}`;
+              return html`
+                <a
+                  class="nav-item nav-item--external"
+                  href=${href}
+                  target="_blank"
+                  rel="noreferrer"
+                  title="${item.description ?? item.label} (opens Second Brain)"
+                >
+                  <span class="nav-item__icon" aria-hidden="true">${resolveIntelligenceIcon(item.icon)}</span>
+                  <span class="nav-item__text">${item.label}</span>
+                </a>
+              `;
+            })
+          : html`
+              <div class="nav-item" style="opacity:0.5;cursor:default;font-size:0.8em;">
+                <span class="nav-item__text">${isLoading ? "Connecting..." : "Bridge Offline"}</span>
+              </div>
+            `
+        }
+      </div>
+    </div>
+  `;
 }
 
 export function renderApp(state: AppViewState) {
@@ -140,7 +215,7 @@ export function renderApp(state: AppViewState) {
         </div>
       </header>
       <aside class="nav ${state.settings.navCollapsed ? "nav--collapsed" : ""}">
-        ${TAB_GROUPS.map((group) => {
+        ${TAB_GROUPS.map((group, index) => {
           const isGroupCollapsed = state.settings.navGroupsCollapsed[group.label] ?? false;
           const hasActiveTab = group.tabs.some((tab) => tab === state.tab);
           return html`
@@ -164,6 +239,7 @@ export function renderApp(state: AppViewState) {
                 ${group.tabs.map((tab) => renderTab(state, tab))}
               </div>
             </div>
+            ${index === 0 ? renderIntelligenceMenu(state) : nothing}
           `;
         })}
         <div class="nav-group nav-group--links">

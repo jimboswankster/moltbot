@@ -1,4 +1,5 @@
 import type { OpenClawApp } from "./app";
+import type { IntelligenceMenu } from "./app-view-state";
 import type { Tab } from "./navigation";
 import { syncSubagentsFromSessionsList } from "./activity-hud-state";
 import { connectGateway } from "./app-gateway";
@@ -35,6 +36,8 @@ type LifecycleHost = {
   logsAutoFollow: boolean;
   logsAtBottom: boolean;
   logsEntries: unknown[];
+  intelligenceMenu: IntelligenceMenu;
+  settings: { gatewayUrl: string; [key: string]: unknown };
   startActivityTicker: () => void;
   stopActivityTicker: () => void;
   popStateHandler: () => void;
@@ -62,6 +65,41 @@ export function handleConnected(host: LifecycleHost) {
     startActivityHudSessionsPolling(
       host as unknown as Parameters<typeof startActivityHudSessionsPolling>[0],
     );
+  }
+  // Fetch Intelligence Bridge menu items (non-blocking, best-effort)
+  void fetchIntelligenceMenu(host);
+}
+
+/** Derive the gateway HTTP base URL from the WebSocket URL in settings. */
+function resolveGatewayHttpUrl(wsUrl: string): string {
+  try {
+    const url = new URL(wsUrl);
+    url.protocol = url.protocol === "wss:" ? "https:" : "http:";
+    // Strip trailing slash
+    return url.origin + (url.pathname === "/" ? "" : url.pathname.replace(/\/$/, ""));
+  } catch {
+    // Fallback: same origin (works when UI is served directly from gateway)
+    return "";
+  }
+}
+
+async function fetchIntelligenceMenu(host: LifecycleHost) {
+  const gatewayBase = resolveGatewayHttpUrl(host.settings.gatewayUrl);
+  const menuUrl = `${gatewayBase}/intelligence/menu`;
+  try {
+    const res = await fetch(menuUrl, { signal: AbortSignal.timeout(3000) });
+    if (!res.ok) {
+      host.intelligenceMenu = { status: "offline", baseUrl: "", items: [] };
+      return;
+    }
+    const data = await res.json();
+    if (data && typeof data.baseUrl === "string" && Array.isArray(data.items)) {
+      host.intelligenceMenu = { status: "online", baseUrl: data.baseUrl, items: data.items };
+    } else {
+      host.intelligenceMenu = { status: "offline", baseUrl: "", items: [] };
+    }
+  } catch {
+    host.intelligenceMenu = { status: "offline", baseUrl: "", items: [] };
   }
 }
 
