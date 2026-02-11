@@ -1,4 +1,4 @@
-import type { TelegramContext, TelegramMessage } from "./bot/types.js";
+import type { TelegramMessage } from "./bot/types.js";
 import { resolveDefaultAgentId } from "../agents/agent-scope.js";
 // @ts-nocheck
 import { hasControlCommand } from "../auto-reply/command-detection.js";
@@ -7,6 +7,7 @@ import {
   resolveInboundDebounceMs,
 } from "../auto-reply/inbound-debounce.js";
 import { buildCommandsPaginationKeyboard } from "../auto-reply/reply/commands-info.js";
+import { buildModelsProviderData } from "../auto-reply/reply/commands-models.js";
 import { listSkillCommandsForAgents } from "../auto-reply/skill-commands.js";
 import { buildCommandsMessagePaginated } from "../auto-reply/status.js";
 import { resolveChannelConfigWrites } from "../channels/plugins/config-writes.js";
@@ -22,6 +23,14 @@ import { resolveMedia } from "./bot/delivery.js";
 import { resolveTelegramForumThreadId } from "./bot/helpers.js";
 import { migrateTelegramGroupConfig } from "./group-migration.js";
 import { resolveTelegramInlineButtonsScope } from "./inline-buttons.js";
+import {
+  buildModelsKeyboard,
+  buildProviderKeyboard,
+  calculateTotalPages,
+  getModelsPageSize,
+  parseModelCallbackData,
+  type ProviderInfo,
+} from "./model-buttons.js";
 import { buildInlineKeyboard } from "./send.js";
 
 export const registerTelegramHandlers = ({
@@ -84,7 +93,7 @@ export const registerTelegramHandlers = ({
         return;
       }
       if (entries.length === 1) {
-        await processMessage(last.ctx as TelegramContext, last.allMedia, last.storeAllowFrom);
+        await processMessage(last.ctx, last.allMedia, last.storeAllowFrom);
         return;
       }
       const combinedText = entries
@@ -108,11 +117,7 @@ export const registerTelegramHandlers = ({
       };
       const messageIdOverride = last.msg.message_id ? String(last.msg.message_id) : undefined;
       await processMessage(
-        {
-          message: syntheticMessage,
-          me: baseCtx.me as { id?: number; username?: string } | undefined,
-          getFile,
-        } as TelegramContext,
+        { message: syntheticMessage, me: baseCtx.me, getFile },
         [],
         first.storeAllowFrom,
         messageIdOverride ? { messageIdOverride } : undefined,
@@ -147,7 +152,7 @@ export const registerTelegramHandlers = ({
       }
 
       const storeAllowFrom = await readChannelAllowFromStore("telegram").catch(() => []);
-      await processMessage(primaryEntry.ctx as TelegramContext, allMedia, storeAllowFrom);
+      await processMessage(primaryEntry.ctx, allMedia, storeAllowFrom);
     } catch (err) {
       runtime.error?.(danger(`media group handler failed: ${String(err)}`));
     }
@@ -183,11 +188,7 @@ export const registerTelegramHandlers = ({
         typeof baseCtx.getFile === "function" ? baseCtx.getFile.bind(baseCtx) : async () => ({});
 
       await processMessage(
-        {
-          message: syntheticMessage,
-          me: baseCtx.me as { id?: number; username?: string } | undefined,
-          getFile,
-        } as TelegramContext,
+        { message: syntheticMessage, me: baseCtx.me, getFile },
         [],
         storeAllowFrom,
         { messageIdOverride: String(last.msg.message_id) },
@@ -409,6 +410,107 @@ export const registerTelegramHandlers = ({
             throw editErr;
           }
         }
+        return;
+      }
+
+      // Model selection callback handler (mdl_prov, mdl_list_*, mdl_sel_*, mdl_back)
+      const modelCallback = parseModelCallbackData(data);
+      if (modelCallback) {
+        const modelData = await buildModelsProviderData(cfg);
+        const { byProvider, providers } = modelData;
+
+        const editMessageWithButtons = async (
+          text: string,
+          buttons: ReturnType<typeof buildProviderKeyboard>,
+        ) => {
+          const keyboard = buildInlineKeyboard(buttons);
+          try {
+            await bot.api.editMessageText(
+              callbackMessage.chat.id,
+              callbackMessage.message_id,
+              text,
+              keyboard ? { reply_markup: keyboard } : undefined,
+            );
+          } catch (editErr) {
+            const errStr = String(editErr);
+            if (!errStr.includes("message is not modified")) {
+              throw editErr;
+            }
+          }
+        };
+
+        if (modelCallback.type === "providers" || modelCallback.type === "back") {
+          if (providers.length === 0) {
+            await editMessageWithButtons("No providers available.", []);
+            return;
+          }
+          const providerInfos: ProviderInfo[] = providers.map((p) => ({
+            id: p,
+            count: byProvider.get(p)?.size ?? 0,
+          }));
+          const buttons = buildProviderKeyboard(providerInfos);
+          await editMessageWithButtons("Select a provider:", buttons);
+          return;
+        }
+
+        if (modelCallback.type === "list") {
+          const { provider, page } = modelCallback;
+          const modelSet = byProvider.get(provider);
+          if (!modelSet || modelSet.size === 0) {
+            // Provider not found or no models - show providers list
+            const providerInfos: ProviderInfo[] = providers.map((p) => ({
+              id: p,
+              count: byProvider.get(p)?.size ?? 0,
+            }));
+            const buttons = buildProviderKeyboard(providerInfos);
+            await editMessageWithButtons(
+              `Unknown provider: ${provider}\n\nSelect a provider:`,
+              buttons,
+            );
+            return;
+          }
+          const models = [...modelSet].toSorted();
+          const pageSize = getModelsPageSize();
+          const totalPages = calculateTotalPages(models.length, pageSize);
+          const safePage = Math.max(1, Math.min(page, totalPages));
+
+          const buttons = buildModelsKeyboard({
+            provider,
+            models,
+            currentPage: safePage,
+            totalPages,
+            pageSize,
+          });
+          const text = `Models (${provider}) — ${models.length} available`;
+          await editMessageWithButtons(text, buttons);
+          return;
+        }
+
+        if (modelCallback.type === "select") {
+          const { provider, model } = modelCallback;
+          // Process model selection as a synthetic message with /model command
+          const syntheticMessage: TelegramMessage = {
+            ...callbackMessage,
+            from: callback.from,
+            text: `/model ${provider}/${model}`,
+            caption: undefined,
+            caption_entities: undefined,
+            entities: undefined,
+          };
+          const getFile =
+            typeof ctx.getFile === "function" ? ctx.getFile.bind(ctx) : async () => ({});
+          await processMessage(
+            { message: syntheticMessage, me: ctx.me, getFile },
+            [],
+            storeAllowFrom,
+            {
+              forceWasMentioned: true,
+              messageIdOverride: callback.id,
+            },
+          );
+          return;
+        }
+
         return;
       }
 
