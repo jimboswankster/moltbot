@@ -1,5 +1,8 @@
 import type { Message, UserFromGetMe } from "@grammyjs/types";
 
+/** Re-export Message as TelegramMessage for convenience. */
+export type TelegramMessage = Message;
+
 /** App-specific stream mode for Telegram draft streaming. */
 export type TelegramStreamMode = "off" | "partial" | "block";
 
