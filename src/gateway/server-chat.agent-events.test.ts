@@ -1,22 +1,31 @@
 import { describe, expect, it, vi } from "vitest";
-import { createAgentEventHandler, createChatRunState } from "./server-chat.js";
+import { registerAgentRunContext, resetAgentRunContextForTest } from "../infra/agent-events.js";
+import {
+  createAgentEventHandler,
+  createChatRunState,
+  createToolEventRecipientRegistry,
+} from "./server-chat.js";
 
 describe("agent event handler", () => {
   it("emits chat delta for assistant text-only events", () => {
     const nowSpy = vi.spyOn(Date, "now").mockReturnValue(1_000);
     const broadcast = vi.fn();
+    const broadcastToConnIds = vi.fn();
     const nodeSendToSession = vi.fn();
     const agentRunSeq = new Map<string, number>();
     const chatRunState = createChatRunState();
+    const toolEventRecipients = createToolEventRecipientRegistry();
     chatRunState.registry.add("run-1", { sessionKey: "session-1", clientRunId: "client-1" });
 
     const handler = createAgentEventHandler({
       broadcast,
+      broadcastToConnIds,
       nodeSendToSession,
       agentRunSeq,
       chatRunState,
       resolveSessionKeyForRun: () => undefined,
       clearAgentRunContext: vi.fn(),
+      toolEventRecipients,
     });
 
     handler({
@@ -40,214 +49,161 @@ describe("agent event handler", () => {
     nowSpy.mockRestore();
   });
 
-  it("appends deltaText instead of re-sending accumulated text", () => {
-    let now = 1_000;
-    const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => {
-      const current = now;
-      now += 200;
-      return current;
-    });
+  it("routes tool events only to registered recipients when verbose is enabled", () => {
     const broadcast = vi.fn();
+    const broadcastToConnIds = vi.fn();
     const nodeSendToSession = vi.fn();
     const agentRunSeq = new Map<string, number>();
     const chatRunState = createChatRunState();
-    chatRunState.registry.add("run-1", { sessionKey: "session-1", clientRunId: "client-1" });
+    const toolEventRecipients = createToolEventRecipientRegistry();
+
+    registerAgentRunContext("run-tool", { sessionKey: "session-1", verboseLevel: "on" });
+    toolEventRecipients.add("run-tool", "conn-1");
 
     const handler = createAgentEventHandler({
       broadcast,
+      broadcastToConnIds,
       nodeSendToSession,
       agentRunSeq,
       chatRunState,
-      resolveSessionKeyForRun: () => undefined,
+      resolveSessionKeyForRun: () => "session-1",
       clearAgentRunContext: vi.fn(),
+      toolEventRecipients,
     });
 
     handler({
-      runId: "run-1",
+      runId: "run-tool",
       seq: 1,
-      stream: "assistant",
+      stream: "tool",
       ts: Date.now(),
-      data: { text: "I", delta: "I" },
+      data: { phase: "start", name: "read", toolCallId: "t1" },
     });
 
-    handler({
-      runId: "run-1",
-      seq: 2,
-      stream: "assistant",
-      ts: Date.now(),
-      data: { text: "I will", delta: " will" },
-    });
-
-    const chatCalls = broadcast.mock.calls.filter(([event]) => event === "chat");
-    expect(chatCalls).toHaveLength(2);
-    const firstPayload = chatCalls[0]?.[1] as {
-      deltaText?: string;
-      message?: { content?: Array<{ text?: string }> };
-    };
-    const secondPayload = chatCalls[1]?.[1] as {
-      deltaText?: string;
-      message?: { content?: Array<{ text?: string }> };
-    };
-    expect(firstPayload.deltaText).toBe("I");
-    expect(firstPayload.message?.content?.[0]?.text).toBe("I");
-    expect(secondPayload.deltaText).toBe(" will");
-    expect(secondPayload.message?.content?.[0]?.text).toBe("I will");
-    nowSpy.mockRestore();
+    expect(broadcast).not.toHaveBeenCalled();
+    expect(broadcastToConnIds).toHaveBeenCalledTimes(1);
+    resetAgentRunContextForTest();
   });
 
-  it("drops duplicate accumulated text without delta", () => {
-    let now = 1_000;
-    const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => {
-      const current = now;
-      now += 200;
-      return current;
-    });
+  it("broadcasts tool events to WS recipients even when verbose is off, but skips node send", () => {
     const broadcast = vi.fn();
+    const broadcastToConnIds = vi.fn();
     const nodeSendToSession = vi.fn();
     const agentRunSeq = new Map<string, number>();
     const chatRunState = createChatRunState();
-    chatRunState.registry.add("run-1", { sessionKey: "session-1", clientRunId: "client-1" });
+    const toolEventRecipients = createToolEventRecipientRegistry();
+
+    registerAgentRunContext("run-tool-off", { sessionKey: "session-1", verboseLevel: "off" });
+    toolEventRecipients.add("run-tool-off", "conn-1");
 
     const handler = createAgentEventHandler({
       broadcast,
+      broadcastToConnIds,
       nodeSendToSession,
       agentRunSeq,
       chatRunState,
-      resolveSessionKeyForRun: () => undefined,
+      resolveSessionKeyForRun: () => "session-1",
       clearAgentRunContext: vi.fn(),
+      toolEventRecipients,
     });
 
     handler({
-      runId: "run-1",
+      runId: "run-tool-off",
       seq: 1,
-      stream: "assistant",
+      stream: "tool",
       ts: Date.now(),
-      data: { text: "I", delta: "I" },
+      data: { phase: "start", name: "read", toolCallId: "t2" },
     });
 
-    handler({
-      runId: "run-1",
-      seq: 2,
-      stream: "assistant",
-      ts: Date.now(),
-      data: { text: "I", delta: "" },
-    });
-
-    const chatCalls = broadcast.mock.calls.filter(([event]) => event === "chat");
-    expect(chatCalls).toHaveLength(1);
-    nowSpy.mockRestore();
+    // Tool events always broadcast to registered WS recipients
+    expect(broadcastToConnIds).toHaveBeenCalledTimes(1);
+    // But node/channel subscribers should NOT receive when verbose is off
+    const nodeToolCalls = nodeSendToSession.mock.calls.filter(([, event]) => event === "agent");
+    expect(nodeToolCalls).toHaveLength(0);
+    resetAgentRunContextForTest();
   });
 
-  it("drops duplicate deltas when full text does not advance", () => {
-    let now = 1_000;
-    const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => {
-      const current = now;
-      now += 200;
-      return current;
-    });
+  it("strips tool output when verbose is on", () => {
     const broadcast = vi.fn();
+    const broadcastToConnIds = vi.fn();
     const nodeSendToSession = vi.fn();
     const agentRunSeq = new Map<string, number>();
     const chatRunState = createChatRunState();
-    chatRunState.registry.add("run-1", { sessionKey: "session-1", clientRunId: "client-1" });
+    const toolEventRecipients = createToolEventRecipientRegistry();
+
+    registerAgentRunContext("run-tool-on", { sessionKey: "session-1", verboseLevel: "on" });
+    toolEventRecipients.add("run-tool-on", "conn-1");
 
     const handler = createAgentEventHandler({
       broadcast,
+      broadcastToConnIds,
       nodeSendToSession,
       agentRunSeq,
       chatRunState,
-      resolveSessionKeyForRun: () => undefined,
+      resolveSessionKeyForRun: () => "session-1",
       clearAgentRunContext: vi.fn(),
+      toolEventRecipients,
     });
 
     handler({
-      runId: "run-1",
+      runId: "run-tool-on",
       seq: 1,
-      stream: "assistant",
+      stream: "tool",
       ts: Date.now(),
-      data: { text: "I", delta: "I" },
+      data: {
+        phase: "result",
+        name: "exec",
+        toolCallId: "t3",
+        result: { content: [{ type: "text", text: "secret" }] },
+        partialResult: { content: [{ type: "text", text: "partial" }] },
+      },
     });
 
-    handler({
-      runId: "run-1",
-      seq: 2,
-      stream: "assistant",
-      ts: Date.now(),
-      data: { text: "I will", delta: " will" },
-    });
-
-    handler({
-      runId: "run-1",
-      seq: 3,
-      stream: "assistant",
-      ts: Date.now(),
-      data: { text: "I will", delta: " will" },
-    });
-
-    const chatCalls = broadcast.mock.calls.filter(([event]) => event === "chat");
-    expect(chatCalls).toHaveLength(2);
-    nowSpy.mockRestore();
+    expect(broadcastToConnIds).toHaveBeenCalledTimes(1);
+    const payload = broadcastToConnIds.mock.calls[0]?.[1] as { data?: Record<string, unknown> };
+    expect(payload.data?.result).toBeUndefined();
+    expect(payload.data?.partialResult).toBeUndefined();
+    resetAgentRunContextForTest();
   });
 
-  it("respects stream buffer adapter decisions", () => {
-    let now = 1_000;
-    const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => {
-      const current = now;
-      now += 200;
-      return current;
-    });
+  it("keeps tool output when verbose is full", () => {
     const broadcast = vi.fn();
+    const broadcastToConnIds = vi.fn();
     const nodeSendToSession = vi.fn();
     const agentRunSeq = new Map<string, number>();
     const chatRunState = createChatRunState();
-    chatRunState.registry.add("run-1", { sessionKey: "session-1", clientRunId: "client-1" });
+    const toolEventRecipients = createToolEventRecipientRegistry();
 
-    const streamBufferAdapter = vi.fn(({ seq }: { seq: number }) => {
-      if (seq === 1) {
-        return { allow: true };
-      }
-      if (seq === 2) {
-        return { allow: true, coalesceMs: 500 };
-      }
-      return { allow: false };
-    });
+    registerAgentRunContext("run-tool-full", { sessionKey: "session-1", verboseLevel: "full" });
+    toolEventRecipients.add("run-tool-full", "conn-1");
 
     const handler = createAgentEventHandler({
       broadcast,
+      broadcastToConnIds,
       nodeSendToSession,
       agentRunSeq,
       chatRunState,
-      resolveSessionKeyForRun: () => undefined,
+      resolveSessionKeyForRun: () => "session-1",
       clearAgentRunContext: vi.fn(),
-      streamBufferAdapter,
+      toolEventRecipients,
     });
 
+    const result = { content: [{ type: "text", text: "secret" }] };
     handler({
-      runId: "run-1",
+      runId: "run-tool-full",
       seq: 1,
-      stream: "assistant",
+      stream: "tool",
       ts: Date.now(),
-      data: { text: "Hello", delta: "Hello" },
+      data: {
+        phase: "result",
+        name: "exec",
+        toolCallId: "t4",
+        result,
+      },
     });
 
-    handler({
-      runId: "run-1",
-      seq: 2,
-      stream: "assistant",
-      ts: Date.now(),
-      data: { text: "Hello again", delta: " again" },
-    });
-
-    handler({
-      runId: "run-1",
-      seq: 3,
-      stream: "assistant",
-      ts: Date.now(),
-      data: { text: "Hello again!", delta: "!" },
-    });
-
-    const chatCalls = broadcast.mock.calls.filter(([event]) => event === "chat");
-    expect(chatCalls).toHaveLength(1);
-    nowSpy.mockRestore();
+    expect(broadcastToConnIds).toHaveBeenCalledTimes(1);
+    const payload = broadcastToConnIds.mock.calls[0]?.[1] as { data?: Record<string, unknown> };
+    expect(payload.data?.result).toEqual(result);
+    resetAgentRunContextForTest();
   });
 });

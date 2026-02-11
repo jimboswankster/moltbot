@@ -28,6 +28,7 @@ import {
 import { resolveAssistantIdentity } from "../assistant-identity.js";
 import { parseMessageWithAttachments } from "../chat-attachments.js";
 import { resolveAssistantAvatarUrl } from "../control-ui-shared.js";
+import { GATEWAY_CLIENT_CAPS, hasGatewayClientCap } from "../protocol/client-info.js";
 import {
   ErrorCodes,
   errorShape,
@@ -42,8 +43,7 @@ import { waitForAgentJob } from "./agent-job.js";
 import { injectTimestamp, timestampOptsFromConfig } from "./agent-timestamp.js";
 
 export const agentHandlers: GatewayRequestHandlers = {
-  agent: async ({ params, respond, context }) => {
-    const log = context.logGateway;
+  agent: async ({ params, respond, context, client }) => {
     const p = params;
     if (!validateAgentParams(p)) {
       respond(
@@ -81,11 +81,6 @@ export const agentHandlers: GatewayRequestHandlers = {
       groupSpace?: string;
       lane?: string;
       extraSystemPrompt?: string;
-      inputSource?: {
-        type: string;
-        sessionKey?: string;
-        runId?: string;
-      };
       idempotencyKey: string;
       timeout?: number;
       label?: string;
@@ -93,17 +88,6 @@ export const agentHandlers: GatewayRequestHandlers = {
     };
     const cfg = loadConfig();
     const idem = request.idempotencyKey;
-
-    log.debug("gateway agent handler received request", {
-      idempotencyKey: idem,
-      sessionKey: request.sessionKey ?? "(not set)",
-      lane: request.lane ?? "(not set)",
-      channel: request.channel ?? "(not set)",
-      deliver: request.deliver ?? false,
-      hasExtraSystemPrompt: !!request.extraSystemPrompt,
-      inputSourceType: request.inputSource?.type ?? "(none)",
-      messageLength: request.message?.length ?? 0,
-    });
     const groupIdRaw = typeof request.groupId === "string" ? request.groupId.trim() : "";
     const groupChannelRaw =
       typeof request.groupChannel === "string" ? request.groupChannel.trim() : "";
@@ -313,6 +297,22 @@ export const agentHandlers: GatewayRequestHandlers = {
     }
 
     const runId = idem;
+    const connId = typeof client?.connId === "string" ? client.connId : undefined;
+    const wantsToolEvents = hasGatewayClientCap(
+      client?.connect?.caps,
+      GATEWAY_CLIENT_CAPS.TOOL_EVENTS,
+    );
+    if (connId && wantsToolEvents) {
+      context.registerToolEventRecipient(runId, connId);
+      // Register for any other active runs *in the same session* so
+      // late-joining clients (e.g. page refresh mid-response) receive
+      // in-progress tool events without leaking cross-session data.
+      for (const [activeRunId, active] of context.chatAbortControllers) {
+        if (activeRunId !== runId && active.sessionKey === requestedSessionKey) {
+          context.registerToolEventRecipient(activeRunId, connId);
+        }
+      }
+    }
 
     const wantsDelivery = request.deliver === true;
     const explicitTo =
@@ -369,19 +369,6 @@ export const agentHandlers: GatewayRequestHandlers = {
 
     const resolvedThreadId = explicitThreadId ?? deliveryPlan.resolvedThreadId;
 
-    log.debug("gateway agent handler calling agentCommand", {
-      runId,
-      sessionKey: requestedSessionKey ?? "(not set)",
-      lane: request.lane ?? "(not set)",
-      resolvedChannel,
-      deliver,
-      isNestedLane: request.lane === "nested",
-    });
-
-    console.log(
-      `[gateway/agent] calling agentCommand: runId=${runId} sessionKey=${requestedSessionKey ?? "(not set)"} lane=${request.lane ?? "(not set)"}`,
-    );
-
     void agentCommand(
       {
         message,
@@ -413,18 +400,11 @@ export const agentHandlers: GatewayRequestHandlers = {
         runId,
         lane: request.lane,
         extraSystemPrompt: request.extraSystemPrompt,
-        inputSource: request.inputSource,
       },
       defaultRuntime,
       context.deps,
     )
       .then((result) => {
-        log.debug("gateway agent handler agentCommand completed", {
-          runId,
-          sessionKey: requestedSessionKey ?? "(not set)",
-          lane: request.lane ?? "(not set)",
-          status: "ok",
-        });
         const payload = {
           runId,
           status: "ok" as const,
@@ -441,12 +421,6 @@ export const agentHandlers: GatewayRequestHandlers = {
         respond(true, payload, undefined, { runId });
       })
       .catch((err) => {
-        log.error("gateway agent handler agentCommand failed", {
-          runId,
-          sessionKey: requestedSessionKey ?? "(not set)",
-          lane: request.lane ?? "(not set)",
-          error: formatForLog(err),
-        });
         const error = errorShape(ErrorCodes.UNAVAILABLE, String(err));
         const payload = {
           runId,
