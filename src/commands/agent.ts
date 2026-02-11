@@ -66,9 +66,6 @@ export async function agentCommand(
   runtime: RuntimeEnv = defaultRuntime,
   deps: CliDeps = createDefaultDeps(),
 ) {
-  console.log(
-    `[agentCommand] start: runId=${opts.runId ?? "(none)"} sessionKey=${opts.sessionKey ?? "(none)"} lane=${opts.lane ?? "(none)"}`,
-  );
   const body = (opts.message ?? "").trim();
   if (!body) {
     throw new Error("Message (--message) is required");
@@ -225,11 +222,7 @@ export async function agentCommand(
         sessionEntry ?? { sessionId, updatedAt: Date.now() };
       const next: SessionEntry = { ...entry, sessionId, updatedAt: Date.now() };
       if (thinkOverride) {
-        if (thinkOverride === "off") {
-          delete next.thinkingLevel;
-        } else {
-          next.thinkingLevel = thinkOverride;
-        }
+        next.thinkingLevel = thinkOverride;
       }
       applyVerboseOverride(next, verboseOverride);
       sessionStore[sessionKey] = next;
@@ -401,6 +394,7 @@ export async function agentCommand(
             return runCliAgent({
               sessionId,
               sessionKey,
+              agentId: sessionAgentId,
               sessionFile,
               workspaceDir,
               config: cfg,
@@ -421,6 +415,7 @@ export async function agentCommand(
           return runEmbeddedPiAgent({
             sessionId,
             sessionKey,
+            agentId: sessionAgentId,
             messageChannel,
             agentAccountId: runContext.accountId,
             messageTo: opts.replyTo ?? opts.to,
@@ -433,6 +428,7 @@ export async function agentCommand(
             currentThreadTs: runContext.currentThreadTs,
             replyToMode: runContext.replyToMode,
             hasRepliedRef: runContext.hasRepliedRef,
+            senderIsOwner: true,
             sessionFile,
             workspaceDir,
             config: cfg,
@@ -454,7 +450,6 @@ export async function agentCommand(
             abortSignal: opts.abortSignal,
             extraSystemPrompt: opts.extraSystemPrompt,
             streamParams: opts.streamParams,
-            inputSource: opts.inputSource,
             agentDir,
             onAgentEvent: (evt) => {
               // Track lifecycle end for fallback emission below.
