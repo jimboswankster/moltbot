@@ -252,6 +252,7 @@ Core parameters:
 Notes:
 
 - Enable via `tools.web.fetch.enabled`.
+- `maxChars` is clamped by `tools.web.fetch.maxCharsCap` (default 50000).
 - Responses are cached (default 15 min).
 - For JS-heavy sites, prefer the browser tool.
 - See [Web tools](/tools/web) for setup.
@@ -433,7 +434,7 @@ Core parameters:
 - `sessions_list`: `kinds?`, `limit?`, `activeMinutes?`, `messageLimit?` (0 = none)
 - `sessions_history`: `sessionKey` (or `sessionId`), `limit?`, `includeTools?`
 - `sessions_send`: `sessionKey` (or `sessionId`), `message`, `timeoutSeconds?` (0 = fire-and-forget)
-- `sessions_spawn`: `task`, `label`, `agentId?`, `model?`, `runTimeoutSeconds?`, `cleanup?`
+- `sessions_spawn`: `task`, `label?`, `agentId?`, `model?`, `runTimeoutSeconds?`, `cleanup?`
 - `session_status`: `sessionKey?` (default current; accepts `sessionId`), `model?` (`default` clears override)
 
 Notes:
@@ -442,13 +443,10 @@ Notes:
 - `messageLimit > 0` fetches last N messages per session (tool messages filtered).
 - `sessions_send` waits for final completion when `timeoutSeconds > 0`.
 - Delivery/announce happens after completion and is best-effort; `status: "ok"` confirms the agent run finished, not that the announce was delivered.
-- `sessions_spawn` starts a sub-agent run and posts an announce reply back to the requester chat (label is required).
+- `sessions_spawn` starts a sub-agent run and posts an announce reply back to the requester chat.
 - `sessions_spawn` is non-blocking and returns `status: "accepted"` immediately.
 - `sessions_send` runs a reply‑back ping‑pong (reply `REPLY_SKIP` to stop; max turns via `session.agentToAgent.maxPingPongTurns`, 0–5).
 - After the ping‑pong, the target agent runs an **announce step**; reply `ANNOUNCE_SKIP` to suppress the announcement.
-- A2A inbox display naming follows `tools.agentToAgent.namingMode` (`contract` default, `legacy` prefers provided displayKey).
-- A2A inbox ack mode follows `tools.agentToAgent.inboxAckMode` (`mark` default keeps delivered events, `clear` removes them after injection).
-- Delivered inbox retention (days) uses `tools.agentToAgent.inboxRetentionDays` when in `mark` mode.
 
 ### `agents_list`
 
@@ -466,6 +464,9 @@ Gateway-backed tools (`canvas`, `nodes`, `cron`):
 - `gatewayUrl` (default `ws://127.0.0.1:18789`)
 - `gatewayToken` (if auth enabled)
 - `timeoutMs`
+
+Note: when `gatewayUrl` is set, include `gatewayToken` explicitly. Tools do not inherit config
+or environment credentials for overrides, and missing explicit credentials is an error.
 
 Browser tool:
 
