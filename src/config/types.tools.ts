@@ -183,23 +183,10 @@ export type ExecToolConfig = {
   cleanupMs?: number;
   /** Emit a system event and heartbeat when a backgrounded exec exits. */
   notifyOnExit?: boolean;
-  /**
-   * Default memory limit (MB) for spawned processes.
-   * Sets `ulimit -v` (virtual memory) on the child shell to prevent runaway
-   * processes from exhausting host RAM. The OS kills the process immediately
-   * when the limit is exceeded. Set to 0 to disable. Default: 0 (off).
-   */
-  memoryLimitMB?: number;
   /** apply_patch subtool configuration (experimental). */
   applyPatch?: {
-    /** Enable apply_patch (default: false). */
+    /** Enable apply_patch for OpenAI models (default: false). */
     enabled?: boolean;
-    /**
-     * Optional allowlist of provider ids that can use apply_patch.
-     * When empty or omitted, all providers are allowed (if enabled).
-     * Examples: ["openai"], ["google"], ["openai", "google"]
-     */
-    allowProviders?: string[];
     /**
      * Optional allowlist of model ids that can use apply_patch.
      * Accepts either raw ids (e.g. "gpt-5.2") or full ids (e.g. "openai/gpt-5.2").
@@ -374,6 +361,8 @@ export type ToolsConfig = {
       enabled?: boolean;
       /** Max characters to return from fetched content. */
       maxChars?: number;
+      /** Hard cap for maxChars (tool or config), defaults to 50000. */
+      maxCharsCap?: number;
       /** Timeout in seconds for fetch requests. */
       timeoutSeconds?: number;
       /** Cache TTL in minutes for fetched content. */
@@ -434,14 +423,6 @@ export type ToolsConfig = {
     enabled?: boolean;
     /** Allowlist of agent ids or patterns (implementation-defined). */
     allow?: string[];
-    /** Delivery mode for A2A results (default: "inject"). */
-    deliveryMode?: "inject" | "inbox";
-    /** Inbox ack mode: "mark" keeps delivered events; "clear" removes them after injection. */
-    inboxAckMode?: "mark" | "clear";
-    /** Inbox retention in days for delivered events when using mark mode. */
-    inboxRetentionDays?: number;
-    /** Naming contract mode for A2A display keys (default: "contract"). */
-    namingMode?: "contract" | "legacy";
   };
   /** Elevated exec permissions for the host machine. */
   elevated?: {

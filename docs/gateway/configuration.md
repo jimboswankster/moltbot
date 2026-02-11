@@ -921,15 +921,6 @@ Agent-to-agent messaging is opt-in:
     agentToAgent: {
       enabled: false,
       allow: ["home", "work"],
-      // Optional: naming fallback behavior for A2A inbox display keys.
-      // "contract" (default) prefers session displayName/label/origin over provided displayKey.
-      // "legacy" prefers provided displayKey first.
-      namingMode: "contract",
-      // Optional: inbox ack mode for delivered events.
-      // "mark" (default) keeps delivered events; "clear" removes them after injection.
-      inboxAckMode: "mark",
-      // Optional: retention in days for delivered events when using mark mode.
-      inboxRetentionDays: 7,
     },
   },
 }
@@ -2048,6 +2039,7 @@ of `every`, keep `HEARTBEAT.md` tiny, and/or choose a cheaper `model`.
 - `tools.web.search.cacheTtlMinutes` (default 15)
 - `tools.web.fetch.enabled` (default true)
 - `tools.web.fetch.maxChars` (default 50000)
+- `tools.web.fetch.maxCharsCap` (default 50000; clamps maxChars from config/tool calls)
 - `tools.web.fetch.timeoutSeconds` (default 30)
 - `tools.web.fetch.cacheTtlMinutes` (default 15)
 - `tools.web.fetch.userAgent` (optional override)
@@ -2782,9 +2774,6 @@ Fields:
   - If you only set legacy `session.idleMinutes` without any `reset`/`resetByType`, OpenClaw stays in idle-only mode for backward compatibility.
 - `heartbeatIdleMinutes`: optional idle override for heartbeat checks (daily reset still applies when enabled).
 - `agentToAgent.maxPingPongTurns`: max reply-back turns between requester/target (0–5, default 5).
-- `tools.agentToAgent.namingMode`: naming contract for A2A display keys (`contract` default, `legacy` prefers provided displayKey).
-- `tools.agentToAgent.inboxAckMode`: inbox delivery ack mode (`mark` default keeps delivered events, `clear` removes them after injection).
-- `tools.agentToAgent.inboxRetentionDays`: retention (days) for delivered inbox events when using mark mode.
 - `sendPolicy.default`: `allow` or `deny` fallback when no rule matches.
 - `sendPolicy.rules[]`: match by `channel`, `chatType` (`direct|group|room`), or `keyPrefix` (e.g. `cron:`). First deny wins; otherwise allow.
 
@@ -2964,6 +2953,7 @@ Control UI base path:
 - `gateway.controlUi.basePath` sets the URL prefix where the Control UI is served.
 - Examples: `"/ui"`, `"/openclaw"`, `"/apps/openclaw"`.
 - Default: root (`/`) (unchanged).
+- `gateway.controlUi.root` sets the filesystem root for Control UI assets (default: `dist/control-ui`).
 - `gateway.controlUi.allowInsecureAuth` allows token-only auth for the Control UI when
   device identity is omitted (typically over HTTP). Default: `false`. Prefer HTTPS
   (Tailscale Serve) or `127.0.0.1`.
@@ -3391,13 +3381,9 @@ Cron is a Gateway-owned scheduler for wakeups and scheduled jobs. See [Cron jobs
   cron: {
     enabled: true,
     maxConcurrentRuns: 2,
-    agentTurnModel: "ollama/llama3.1:8b",
   },
 }
 ```
-
-Use `cron.agentTurnModel` to set the default model for isolated cron `agentTurn` jobs when
-`payload.model` is omitted or set to `"default"`. Choose a cheap model for background work.
 
 ---
 
