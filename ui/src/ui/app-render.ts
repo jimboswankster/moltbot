@@ -134,6 +134,7 @@ function renderIntelligenceMenu(state: AppViewState) {
         <span class="nav-label__chevron">${isCollapsed ? "+" : "−"}</span>
       </button>
       <div class="nav-group__items">
+        ${renderTab(state, "activity-hud")}
         ${isOnline
           ? menu.items.map((item: IntelligenceMenuItem) => {
               const href = `${menu.baseUrl}${item.path === "/" ? "" : item.path}`;
@@ -197,11 +198,11 @@ export function renderApp(state: AppViewState) {
           </button>
           <div class="brand">
             <div class="brand-logo">
-              <img src="/favicon.svg" alt="OpenClaw" />
+              <img src="/prismscape-logo.png" alt="PrismScape" />
             </div>
             <div class="brand-text">
-              <div class="brand-title">OPENCLAW</div>
-              <div class="brand-sub">Gateway Dashboard</div>
+              <div class="brand-title"><img src="/prismscape-wordmark.png" alt="PrismScape" style="height:12px;vertical-align:middle;" /></div>
+              <div class="brand-sub">A2A Control</div>
             </div>
           </div>
         </div>

@@ -79,12 +79,13 @@
   z-index: 40;
   display: flex;
   justify-content: space-between;
+  /* Match Second Brain header background */
   align-items: center;
   gap: 16px;
   padding: 0 20px;
   height: var(--shell-topbar-height);
   border-bottom: 1px solid var(--border);
-  background: var(--bg);
+  background: #1E2A3B;
 }
 
 .topbar-left {
