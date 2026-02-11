@@ -183,6 +183,13 @@ export type ExecToolConfig = {
   cleanupMs?: number;
   /** Emit a system event and heartbeat when a backgrounded exec exits. */
   notifyOnExit?: boolean;
+  /**
+   * Default memory limit (MB) for spawned processes.
+   * Sets `ulimit -v` (virtual memory) on the child shell to prevent runaway
+   * processes from exhausting host RAM. The OS kills the process immediately
+   * when the limit is exceeded. Set to 0 to disable. Default: 0 (off).
+   */
+  memoryLimitMB?: number;
   /** apply_patch subtool configuration (experimental). */
   applyPatch?: {
     /** Enable apply_patch (default: false). */

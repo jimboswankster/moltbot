@@ -106,6 +106,7 @@ function resolveExecConfig(cfg: OpenClawConfig | undefined) {
     approvalRunningNoticeMs: globalExec?.approvalRunningNoticeMs,
     cleanupMs: globalExec?.cleanupMs,
     notifyOnExit: globalExec?.notifyOnExit,
+    memoryLimitMB: globalExec?.memoryLimitMB,
     applyPatch: globalExec?.applyPatch,
   };
 }
@@ -293,6 +294,7 @@ export function createOpenClawCodingTools(options?: {
     approvalRunningNoticeMs:
       options?.exec?.approvalRunningNoticeMs ?? execConfig.approvalRunningNoticeMs,
     notifyOnExit: options?.exec?.notifyOnExit ?? execConfig.notifyOnExit,
+    memoryLimitMB: options?.exec?.memoryLimitMB ?? execConfig.memoryLimitMB,
     sandbox: sandbox
       ? {
           containerName: sandbox.containerName,

@@ -182,6 +182,8 @@ export type ExecToolDefaults = {
   messageProvider?: string;
   notifyOnExit?: boolean;
   cwd?: string;
+  /** Default memory limit (MB) for spawned processes. 0 = disabled. */
+  memoryLimitMB?: number;
 };
 
 export type { BashSandboxConfig } from "./bash-tools.shared.js";
@@ -236,6 +238,16 @@ const execSchema = Type.Object({
   node: Type.Optional(
     Type.String({
       description: "Node id/name for host=node.",
+    }),
+  ),
+  memoryLimitMB: Type.Optional(
+    Type.Number({
+      description:
+        "Override the default memory limit (MB) for this command. " +
+        "The OS kills the process if it exceeds this limit. " +
+        "Use for intentional heavy workloads (e.g., large builds, stress tests). " +
+        "Set to 0 to disable the limit. Default: use system config.",
+      minimum: 0,
     }),
   ),
 });
@@ -418,6 +430,25 @@ function emitExecSystemEvent(text: string, opts: { sessionKey?: string; contextK
   requestHeartbeatNow({ reason: "exec-event" });
 }
 
+/**
+ * Wrap a shell command with `ulimit -v <KB>` to cap virtual memory.
+ * When the child process exceeds the limit, the OS kills it (SIGKILL on
+ * allocation failure).  The agent receives a clear error with the limit.
+ *
+ * On macOS, `ulimit -v` restricts the virtual address space and is enforced
+ * by the kernel.  On Linux, it maps to RLIMIT_AS with the same effect.
+ *
+ * @param command  Original shell command.
+ * @param limitMB  Memory limit in megabytes. 0 or undefined = no limit.
+ * @returns The command string, potentially prefixed with `ulimit -v`.
+ */
+export function wrapWithMemoryLimit(command: string, limitMB: number | undefined): string {
+  if (!limitMB || limitMB <= 0) return command;
+  const limitKB = limitMB * 1024;
+  // Use subshell so ulimit only affects the child, not the parent shell.
+  return `ulimit -v ${limitKB} 2>/dev/null; ${command}`;
+}
+
 async function runExecProcess(opts: {
   command: string;
   workdir: string;
@@ -432,6 +463,7 @@ async function runExecProcess(opts: {
   scopeKey?: string;
   sessionKey?: string;
   timeoutSec: number;
+  memoryLimitMB?: number;
   onUpdate?: (partialResult: AgentToolResult<ExecToolDetails>) => void;
 }): Promise<ExecProcessHandle> {
   const startedAt = Date.now();
@@ -439,6 +471,11 @@ async function runExecProcess(opts: {
   let child: ChildProcessWithoutNullStreams | null = null;
   let pty: PtyHandle | null = null;
   let stdin: SessionStdin | undefined;
+
+  // Apply memory limit to non-sandbox commands (sandbox has its own cgroup limits).
+  const effectiveCommand = opts.sandbox
+    ? opts.command
+    : wrapWithMemoryLimit(opts.command, opts.memoryLimitMB);
 
   if (opts.sandbox) {
     const { child: spawned } = await spawnWithFallback({
@@ -485,7 +522,7 @@ async function runExecProcess(opts: {
       if (!spawnPty) {
         throw new Error("PTY support is unavailable (node-pty spawn not found).");
       }
-      pty = spawnPty(shell, [...shellArgs, opts.command], {
+      pty = spawnPty(shell, [...shellArgs, effectiveCommand], {
         cwd: opts.workdir,
         env: opts.env,
         name: process.env.TERM ?? "xterm-256color",
@@ -517,7 +554,7 @@ async function runExecProcess(opts: {
       logWarn(`exec: PTY spawn failed (${errText}); retrying without PTY for "${opts.command}".`);
       opts.warnings.push(warning);
       const { child: spawned } = await spawnWithFallback({
-        argv: [shell, ...shellArgs, opts.command],
+        argv: [shell, ...shellArgs, effectiveCommand],
         options: {
           cwd: opts.workdir,
           env: opts.env,
@@ -544,7 +581,7 @@ async function runExecProcess(opts: {
   } else {
     const { shell, args: shellArgs } = getShellConfig();
     const { child: spawned } = await spawnWithFallback({
-      argv: [shell, ...shellArgs, opts.command],
+      argv: [shell, ...shellArgs, effectiveCommand],
       options: {
         cwd: opts.workdir,
         env: opts.env,
@@ -724,13 +761,23 @@ async function runExecProcess(opts: {
       }
       const aggregated = session.aggregated.trim();
       if (!isSuccess) {
+        const memoryKillHint =
+          opts.memoryLimitMB &&
+          opts.memoryLimitMB > 0 &&
+          (exitSignal === "SIGKILL" || exitSignal === 9 || code === 137)
+            ? ` (likely exceeded memory limit of ${opts.memoryLimitMB}MB — ` +
+              `consider splitting work into smaller chunks or increasing the limit ` +
+              `via memoryLimitMB parameter)`
+            : "";
         const reason = timedOut
           ? `Command timed out after ${opts.timeoutSec} seconds`
           : wasSignal && exitSignal
-            ? `Command aborted by signal ${exitSignal}`
+            ? `Command killed by signal ${exitSignal}${memoryKillHint}`
             : code === null
               ? "Command aborted before exit code was captured"
-              : `Command exited with code ${code}`;
+              : code === 137
+                ? `Command killed (exit code 137)${memoryKillHint}`
+                : `Command exited with code ${code}`;
         const message = aggregated ? `${aggregated}\n\n${reason}` : reason;
         settle({
           status: "failed",
@@ -812,6 +859,10 @@ export function createExecTool(
     typeof defaults?.timeoutSec === "number" && defaults.timeoutSec > 0
       ? defaults.timeoutSec
       : 1800;
+  const defaultMemoryLimitMB =
+    typeof defaults?.memoryLimitMB === "number" && defaults.memoryLimitMB > 0
+      ? defaults.memoryLimitMB
+      : 0;
   const defaultPathPrepend = normalizePathPrepend(defaults?.pathPrepend);
   const safeBins = resolveSafeBins(defaults?.safeBins);
   const notifyOnExit = defaults?.notifyOnExit !== false;
@@ -843,11 +894,18 @@ export function createExecTool(
         security?: string;
         ask?: string;
         node?: string;
+        memoryLimitMB?: number;
       };
 
       if (!params.command) {
         throw new Error("Provide a command to start.");
       }
+
+      // Memory limit: explicit param overrides config default. 0 = disabled.
+      const effectiveMemoryLimitMB =
+        typeof params.memoryLimitMB === "number"
+          ? Math.max(0, params.memoryLimitMB)
+          : defaultMemoryLimitMB;
 
       const maxOutput = DEFAULT_MAX_OUTPUT;
       const pendingMaxOutput = DEFAULT_PENDING_MAX_OUTPUT;
@@ -1418,6 +1476,7 @@ export function createExecTool(
                 scopeKey: defaults?.scopeKey,
                 sessionKey: notifySessionKey,
                 timeoutSec: effectiveTimeout,
+                memoryLimitMB: effectiveMemoryLimitMB,
               });
             } catch {
               emitExecSystemEvent(
@@ -1514,6 +1573,7 @@ export function createExecTool(
         scopeKey: defaults?.scopeKey,
         sessionKey: notifySessionKey,
         timeoutSec: effectiveTimeout,
+        memoryLimitMB: effectiveMemoryLimitMB,
         onUpdate,
       });
 
