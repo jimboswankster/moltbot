@@ -13,6 +13,12 @@ import {
 import { applyPluginAutoEnable } from "../config/plugin-auto-enable.js";
 import { note } from "../terminal/note.js";
 import { resolveHomeDir } from "../utils.js";
+import { VERSION } from "../version.js";
+import {
+  appendDoctorChangelog,
+  buildStrippedKeysEntry,
+  buildGenericEntry,
+} from "./doctor-changelog.js";
 import { normalizeLegacyConfigValues } from "./doctor-legacy-config.js";
 import { autoMigrateLegacyStateDir } from "./doctor-state-migrations.js";
 
@@ -76,14 +82,16 @@ function resolvePathTarget(root: unknown, path: Array<string | number>): unknown
 function stripUnknownConfigKeys(config: OpenClawConfig): {
   config: OpenClawConfig;
   removed: string[];
+  removedValues: Array<{ path: string; value: unknown }>;
 } {
   const parsed = OpenClawSchema.safeParse(config);
   if (parsed.success) {
-    return { config, removed: [] };
+    return { config, removed: [], removedValues: [] };
   }
 
   const next = structuredClone(config);
   const removed: string[] = [];
+  const removedValues: Array<{ path: string; value: unknown }> = [];
   for (const issue of parsed.error.issues) {
     if (!isUnrecognizedKeysIssue(issue)) {
       continue;
@@ -101,12 +109,14 @@ function stripUnknownConfigKeys(config: OpenClawConfig): {
       if (!(key in record)) {
         continue;
       }
+      const keyPath = formatPath([...path, key]);
+      removedValues.push({ path: keyPath, value: structuredClone(record[key]) });
       delete record[key];
-      removed.push(formatPath([...path, key]));
+      removed.push(keyPath);
     }
   }
 
-  return { config: next, removed };
+  return { config: next, removed, removedValues };
 }
 
 function noteOpencodeProviderOverrides(cfg: OpenClawConfig) {
@@ -197,7 +207,13 @@ export async function loadAndMaybeMigrateDoctorConfig(params: {
   options: DoctorOptions;
   confirm: (p: { message: string; initialValue: boolean }) => Promise<boolean>;
 }) {
-  const shouldRepair = params.options.repair === true || params.options.yes === true;
+  const autoYes = params.options.yes === true;
+  const wantsRepair = params.options.repair === true;
+  // --yes auto-applies without prompting. --fix shows changes and prompts for confirmation.
+  const shouldRepair = autoYes || wantsRepair;
+  const trigger = autoYes ? "doctor --yes" : wantsRepair ? "doctor --fix" : "doctor (interactive)";
+  const version = VERSION;
+
   const stateDirResult = await autoMigrateLegacyStateDir({ env: process.env });
   if (stateDirResult.changes.length > 0) {
     note(stateDirResult.changes.map((entry) => `- ${entry}`).join("\n"), "Doctor changes");
@@ -213,6 +229,7 @@ export async function loadAndMaybeMigrateDoctorConfig(params: {
 
   let snapshot = await readConfigFileSnapshot();
   const baseCfg = snapshot.config ?? {};
+  const originalConfig = structuredClone(baseCfg);
   let cfg: OpenClawConfig = baseCfg;
   let candidate = structuredClone(baseCfg);
   let pendingChanges = false;
@@ -227,6 +244,9 @@ export async function loadAndMaybeMigrateDoctorConfig(params: {
     note(lines, "Config warnings");
   }
 
+  // Track all changes for the changelog
+  const changelogEntries: Array<{ action: string; descriptions: string[] }> = [];
+
   if (snapshot.legacyIssues.length > 0) {
     note(
       snapshot.legacyIssues.map((issue) => `- ${issue.path}: ${issue.message}`).join("\n"),
@@ -235,6 +255,7 @@ export async function loadAndMaybeMigrateDoctorConfig(params: {
     const { config: migrated, changes } = migrateLegacyConfig(snapshot.parsed);
     if (changes.length > 0) {
       note(changes.join("\n"), "Doctor changes");
+      changelogEntries.push({ action: "legacy_migration", descriptions: changes });
     }
     if (migrated) {
       candidate = migrated;
@@ -257,6 +278,7 @@ export async function loadAndMaybeMigrateDoctorConfig(params: {
     note(normalized.changes.join("\n"), "Doctor changes");
     candidate = normalized.config;
     pendingChanges = true;
+    changelogEntries.push({ action: "legacy_normalization", descriptions: normalized.changes });
     if (shouldRepair) {
       cfg = normalized.config;
     } else {
@@ -269,6 +291,7 @@ export async function loadAndMaybeMigrateDoctorConfig(params: {
     note(autoEnable.changes.join("\n"), "Doctor changes");
     candidate = autoEnable.config;
     pendingChanges = true;
+    changelogEntries.push({ action: "plugin_auto_enable", descriptions: autoEnable.changes });
     if (shouldRepair) {
       cfg = autoEnable.config;
     } else {
@@ -278,15 +301,43 @@ export async function loadAndMaybeMigrateDoctorConfig(params: {
 
   const unknown = stripUnknownConfigKeys(candidate);
   if (unknown.removed.length > 0) {
-    const lines = unknown.removed.map((path) => `- ${path}`).join("\n");
     candidate = unknown.config;
     pendingChanges = true;
-    if (shouldRepair) {
+
+    // === TRIP SWITCH: show exactly what will be removed with current values ===
+    const detailLines = unknown.removedValues.map(({ path: p, value }) => {
+      const valueStr = typeof value === "object" ? JSON.stringify(value) : String(value);
+      return `- ${p}: ${valueStr}`;
+    });
+    note(detailLines.join("\n"), "Keys to be REMOVED from config");
+    note(
+      "These keys are not recognized by the current engine schema.\n" +
+        "If you added them intentionally, declining will preserve them.\n" +
+        "All removals are logged to doctor-changelog.jsonl for recovery.",
+      "Warning",
+    );
+
+    if (autoYes) {
+      // --yes: auto-apply but still log
       cfg = unknown.config;
-      note(lines, "Doctor changes");
+    } else if (wantsRepair) {
+      // --fix: show and prompt (trip switch)
+      const shouldStrip = await params.confirm({
+        message: `Remove ${unknown.removed.length} unrecognized key(s) from config?`,
+        initialValue: false,
+      });
+      if (shouldStrip) {
+        cfg = unknown.config;
+      } else {
+        // User declined — revert the stripping by using pre-strip candidate
+        note("Kept unrecognized keys. Config will remain as-is.", "Skipped");
+        candidate = structuredClone(cfg);
+        pendingChanges = false;
+      }
     } else {
-      note(lines, "Unknown config keys");
-      fixHints.push('Run "openclaw doctor --fix" to remove these keys.');
+      // No flags: just show, don't apply
+      note(unknown.removed.map((p) => `- ${p}`).join("\n"), "Unknown config keys");
+      fixHints.push('Run "openclaw doctor --fix" to review and remove these keys.');
     }
   }
 
@@ -300,6 +351,36 @@ export async function loadAndMaybeMigrateDoctorConfig(params: {
       shouldWriteConfig = true;
     } else if (fixHints.length > 0) {
       note(fixHints.join("\n"), "Doctor");
+    }
+  }
+
+  // === CHANGELOG: log what was actually applied ===
+  const configWasModified = cfg !== baseCfg;
+  if (configWasModified) {
+    // Log stripped keys with full old values for recovery
+    if (unknown.removed.length > 0 && cfg === unknown.config) {
+      appendDoctorChangelog(
+        buildStrippedKeysEntry({
+          removedPaths: unknown.removed,
+          originalConfig: originalConfig as Record<string, unknown>,
+          trigger,
+          version,
+        }),
+      );
+    }
+    // Log other changes
+    for (const entry of changelogEntries) {
+      appendDoctorChangelog(
+        buildGenericEntry({
+          action: entry.action as
+            | "legacy_migration"
+            | "legacy_normalization"
+            | "plugin_auto_enable",
+          changeDescriptions: entry.descriptions,
+          trigger,
+          version,
+        }),
+      );
     }
   }
 
