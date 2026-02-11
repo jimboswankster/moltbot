@@ -1,11 +1,14 @@
 import type { OpenClawConfig } from "../../config/types.js";
 import type { ChannelDirectoryEntry } from "./types.js";
+import { resolveAgentWorkspaceDir } from "../../agents/agent-scope.js";
 import { resolveDiscordAccount } from "../../discord/accounts.js";
+import { DEFAULT_AGENT_ID } from "../../routing/session-key.js";
 import { resolveSlackAccount } from "../../slack/accounts.js";
 import { resolveTelegramAccount } from "../../telegram/accounts.js";
 import { resolveWhatsAppAccount } from "../../web/accounts.js";
 import { isWhatsAppGroupJid, normalizeWhatsAppTarget } from "../../whatsapp/normalize.js";
 import { normalizeSlackMessagingTarget } from "./normalize/slack.js";
+import { loadWorkspaceTelegramPeers } from "./workspace-identity.js";
 
 export type DirectoryConfigParams = {
   cfg: OpenClawConfig;
@@ -179,6 +182,23 @@ export async function listTelegramDirectoryPeersFromConfig(
     if (trimmedId && name) {
       nameMap.set(trimmedId, name);
     }
+  }
+
+  // Supplement with workspace identity peers (USER.md frontmatter).
+  // Config-level names take precedence (explicit override); workspace fills in the rest.
+  try {
+    const workspaceDir = resolveAgentWorkspaceDir(params.cfg, DEFAULT_AGENT_ID);
+    const workspacePeers = loadWorkspaceTelegramPeers(workspaceDir);
+    for (const [id, name] of workspacePeers) {
+      if (!nameMap.has(id)) {
+        nameMap.set(id, name);
+        console.log(`[telegram-directory] workspace identity added: ${name} → ${id}`);
+      }
+    }
+  } catch (err) {
+    console.warn(
+      `[telegram-directory] failed to load workspace identity peers: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 
   if (nameMap.size > 0) {

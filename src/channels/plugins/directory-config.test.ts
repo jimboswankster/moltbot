@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   listDiscordDirectoryGroupsFromConfig,
   listDiscordDirectoryPeersFromConfig,
@@ -114,6 +114,111 @@ describe("directory (config-backed)", () => {
       limit: null,
     });
     expect(groups?.map((e) => e.id)).toEqual(["-1001"]);
+  });
+
+  // Contract: workspace identity (USER.md frontmatter) supplements the Telegram
+  // directory nameMap. Config-level DM names take precedence over workspace names.
+  // Source: src/channels/plugins/directory-config.ts — listTelegramDirectoryPeersFromConfig
+  // Contract version: dynamic_identity_name_map plan (2026-02-11)
+
+  it("supplements Telegram peers with workspace identity names", async () => {
+    // Mock the workspace identity loader to provide a name for a peer
+    const workspaceIdentity = await import("./workspace-identity.js");
+    const spy = vi
+      .spyOn(workspaceIdentity, "loadWorkspaceTelegramPeers")
+      .mockReturnValue(new Map([["789", "WorkspaceUser"]]));
+
+    const cfg = {
+      channels: {
+        telegram: {
+          botToken: "telegram-test",
+          allowFrom: ["789"],
+          dms: {},
+        },
+      },
+      // oxlint-disable-next-line typescript/no-explicit-any
+    } as any;
+
+    const peers = await listTelegramDirectoryPeersFromConfig({
+      cfg,
+      accountId: "default",
+      query: null,
+      limit: null,
+    });
+    // Observable: peer should exist with workspace identity name
+    expect(peers.length).toBe(1);
+    expect(peers[0].id).toBe("789");
+    expect(peers[0].name).toBe("WorkspaceUser");
+
+    spy.mockRestore();
+  });
+
+  it("config-level DM names take precedence over workspace identity names", async () => {
+    const workspaceIdentity = await import("./workspace-identity.js");
+    const spy = vi
+      .spyOn(workspaceIdentity, "loadWorkspaceTelegramPeers")
+      .mockReturnValue(new Map([["789", "WorkspaceName"]]));
+
+    const cfg = {
+      channels: {
+        telegram: {
+          botToken: "telegram-test",
+          allowFrom: [],
+          dms: { "789": { name: "ConfigName" } },
+        },
+      },
+      // oxlint-disable-next-line typescript/no-explicit-any
+    } as any;
+
+    const peers = await listTelegramDirectoryPeersFromConfig({
+      cfg,
+      accountId: "default",
+      query: null,
+      limit: null,
+    });
+    // Observable: config name wins over workspace name
+    expect(peers.length).toBe(1);
+    expect(peers[0].id).toBe("789");
+    expect(peers[0].name).toBe("ConfigName");
+
+    spy.mockRestore();
+  });
+
+  it("workspace identity name resolves via query", async () => {
+    const workspaceIdentity = await import("./workspace-identity.js");
+    const spy = vi
+      .spyOn(workspaceIdentity, "loadWorkspaceTelegramPeers")
+      .mockReturnValue(new Map([["555", "Alice"]]));
+
+    const cfg = {
+      channels: {
+        telegram: {
+          botToken: "telegram-test",
+          allowFrom: ["555"],
+          dms: {},
+        },
+      },
+      // oxlint-disable-next-line typescript/no-explicit-any
+    } as any;
+
+    const byName = await listTelegramDirectoryPeersFromConfig({
+      cfg,
+      accountId: "default",
+      query: "alice",
+      limit: null,
+    });
+    expect(byName.length).toBe(1);
+    expect(byName[0].name).toBe("Alice");
+
+    const noMatch = await listTelegramDirectoryPeersFromConfig({
+      cfg,
+      accountId: "default",
+      query: "bob",
+      limit: null,
+    });
+    expect(noMatch.length).toBe(0);
+
+    spy.mockRestore();
   });
 
   it("lists WhatsApp peers/groups from config", async () => {

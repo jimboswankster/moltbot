@@ -72,11 +72,11 @@ async function ensureDevWorkspace(dir: string) {
     ),
     loadDevTemplate(
       "IDENTITY.dev.md",
-      `# IDENTITY.md - Agent Identity\n\n- Name: ${DEV_IDENTITY_NAME}\n- Creature: protocol droid\n- Vibe: ${DEV_IDENTITY_THEME}\n- Emoji: ${DEV_IDENTITY_EMOJI}\n`,
+      `---\n# These fields are programmatically consumed by gateway systems\n# (agent identity, Telegram directory, reply prefixes).\n# Changes here propagate automatically on next agent boot.\nname: ${DEV_IDENTITY_NAME}\n---\n\n# IDENTITY.md - Agent Identity\n\n- Name: ${DEV_IDENTITY_NAME}\n- Creature: protocol droid\n- Vibe: ${DEV_IDENTITY_THEME}\n- Emoji: ${DEV_IDENTITY_EMOJI}\n`,
     ),
     loadDevTemplate(
       "USER.dev.md",
-      `# USER.md - User Profile\n\n- Name:\n- Preferred address:\n- Notes:\n`,
+      `---\n# These fields are programmatically consumed by gateway systems\n# (Telegram DM directory, identity resolution, channel routing).\n# Changes here propagate automatically on next agent boot.\nname:\ncall_me:\ntimezone:\ntelegram_chat_id:\n---\n\n# USER.md - User Profile\n\n- Name:\n- Preferred address:\n- Notes:\n`,
     ),
   ]);
 

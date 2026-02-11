@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { parseFrontmatterBlock } from "../markdown/frontmatter.js";
 import { DEFAULT_IDENTITY_FILENAME } from "./workspace.js";
 
 export type AgentIdentityFile = {
@@ -37,6 +38,8 @@ function isIdentityPlaceholder(value: string): boolean {
 
 export function parseIdentityMarkdown(content: string): AgentIdentityFile {
   const identity: AgentIdentityFile = {};
+
+  // --- Phase 1: parse body (existing logic) ---
   const lines = content.split(/\r?\n/);
   for (const line of lines) {
     const cleaned = line.trim().replace(/^\s*-\s*/, "");
@@ -74,6 +77,29 @@ export function parseIdentityMarkdown(content: string): AgentIdentityFile {
       identity.avatar = value;
     }
   }
+
+  // --- Phase 2: YAML frontmatter overrides (canonical source) ---
+  // Frontmatter values take precedence over body-parsed values when present.
+  const fm = parseFrontmatterBlock(content);
+  if (fm.name?.trim()) {
+    identity.name = fm.name.trim();
+  }
+  if (fm.emoji?.trim()) {
+    identity.emoji = fm.emoji.trim();
+  }
+  if (fm.creature?.trim()) {
+    identity.creature = fm.creature.trim();
+  }
+  if (fm.vibe?.trim()) {
+    identity.vibe = fm.vibe.trim();
+  }
+  if (fm.theme?.trim()) {
+    identity.theme = fm.theme.trim();
+  }
+  if (fm.avatar?.trim()) {
+    identity.avatar = fm.avatar.trim();
+  }
+
   return identity;
 }
 
