@@ -423,3 +423,14 @@ export function extractTelegramLocation(msg: Message): NormalizedLocation | null
 
   return null;
 }
+
+export function buildTelegramParentPeer(params: {
+  isGroup: boolean;
+  resolvedThreadId?: number;
+  chatId: number | string;
+}): { kind: "group"; id: string } | undefined {
+  if (!params.isGroup || params.resolvedThreadId == null) {
+    return undefined;
+  }
+  return { kind: "group", id: String(params.chatId) };
+}
