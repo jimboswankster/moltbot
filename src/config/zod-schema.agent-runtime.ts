@@ -24,6 +24,7 @@ export const HeartbeatSchema = z
     includeReasoning: z.boolean().optional(),
     target: z.string().optional(),
     to: z.string().optional(),
+    accountId: z.string().optional(),
     prompt: z.string().optional(),
     ackMaxChars: z.number().int().nonnegative().optional(),
   })
@@ -191,6 +192,7 @@ export const ToolsWebFetchSchema = z
   .object({
     enabled: z.boolean().optional(),
     maxChars: z.number().int().positive().optional(),
+    maxCharsCap: z.number().int().positive().optional(),
     timeoutSeconds: z.number().int().positive().optional(),
     cacheTtlMinutes: z.number().nonnegative().optional(),
     maxRedirects: z.number().int().nonnegative().optional(),
@@ -276,11 +278,9 @@ export const AgentToolsSchema = z
         approvalRunningNoticeMs: z.number().int().nonnegative().optional(),
         cleanupMs: z.number().int().positive().optional(),
         notifyOnExit: z.boolean().optional(),
-        memoryLimitMB: z.number().int().nonnegative().optional(),
         applyPatch: z
           .object({
             enabled: z.boolean().optional(),
-            allowProviders: z.array(z.string()).optional(),
             allowModels: z.array(z.string()).optional(),
           })
           .strict()
@@ -429,7 +429,6 @@ export const AgentEntrySchema = z
     workspace: z.string().optional(),
     agentDir: z.string().optional(),
     model: AgentModelSchema.optional(),
-    modelRoles: z.record(z.string(), z.string()).optional(),
     skills: z.array(z.string()).optional(),
     memorySearch: MemorySearchSchema,
     humanDelay: HumanDelaySchema.optional(),
@@ -500,10 +499,6 @@ export const ToolsSchema = z
       .object({
         enabled: z.boolean().optional(),
         allow: z.array(z.string()).optional(),
-        deliveryMode: z.enum(["inject", "inbox"]).optional(),
-        inboxAckMode: z.enum(["mark", "clear"]).optional(),
-        inboxRetentionDays: z.number().int().min(1).optional(),
-        namingMode: z.enum(["contract", "legacy"]).optional(),
       })
       .strict()
       .optional(),
@@ -526,11 +521,9 @@ export const ToolsSchema = z
         timeoutSec: z.number().int().positive().optional(),
         cleanupMs: z.number().int().positive().optional(),
         notifyOnExit: z.boolean().optional(),
-        memoryLimitMB: z.number().int().nonnegative().optional(),
         applyPatch: z
           .object({
             enabled: z.boolean().optional(),
-            allowProviders: z.array(z.string()).optional(),
             allowModels: z.array(z.string()).optional(),
           })
           .strict()

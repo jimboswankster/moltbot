@@ -34,13 +34,12 @@ import {
   saveSessionStore,
   updateSessionStore,
 } from "../config/sessions.js";
-import { formatErrorMessage } from "../infra/errors.js";
-import { hasSystemEvents, peekSystemEvents } from "../infra/system-events.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { getQueueSize } from "../process/command-queue.js";
 import { CommandLane } from "../process/lanes.js";
 import { normalizeAgentId, toAgentStoreSessionKey } from "../routing/session-key.js";
 import { defaultRuntime, type RuntimeEnv } from "../runtime.js";
+import { formatErrorMessage } from "./errors.js";
 import { emitHeartbeatEvent, resolveIndicatorType } from "./heartbeat-events.js";
 import { resolveHeartbeatVisibility } from "./heartbeat-visibility.js";
 import {
@@ -54,6 +53,7 @@ import {
   resolveHeartbeatDeliveryTarget,
   resolveHeartbeatSenderContext,
 } from "./outbound/targets.js";
+import { peekSystemEvents } from "./system-events.js";
 
 type HeartbeatDeps = OutboundSendDeps &
   ChannelHeartbeatDeps & {
@@ -65,17 +65,8 @@ type HeartbeatDeps = OutboundSendDeps &
 const log = createSubsystemLogger("gateway/heartbeat");
 let heartbeatsEnabled = true;
 
-/** Cooldown between cron-triggered heartbeat LLM calls (prevents spam). */
-const DEFAULT_CRON_HEARTBEAT_COOLDOWN_MS = 5 * 60_000; // 5 minutes
-let lastCronTriggeredHeartbeatAtMs = 0;
-
 export function setHeartbeatsEnabled(enabled: boolean) {
   heartbeatsEnabled = enabled;
-}
-
-/** Reset cron heartbeat cooldown state (test-only). */
-export function resetCronHeartbeatCooldownForTest() {
-  lastCronTriggeredHeartbeatAtMs = 0;
 }
 
 type HeartbeatConfig = AgentDefaultsConfig["heartbeat"];
@@ -358,7 +349,9 @@ function resolveHeartbeatSession(
   const mainSessionKey =
     scope === "global" ? "global" : resolveAgentMainSessionKey({ cfg, agentId: resolvedAgentId });
   const storeAgentId = scope === "global" ? resolveDefaultAgentId(cfg) : resolvedAgentId;
-  const storePath = resolveStorePath(sessionCfg?.store, { agentId: storeAgentId });
+  const storePath = resolveStorePath(sessionCfg?.store, {
+    agentId: storeAgentId,
+  });
   const store = loadSessionStore(storePath);
   const mainEntry = store[mainSessionKey];
 
@@ -389,7 +382,12 @@ function resolveHeartbeatSession(
   if (canonical !== "global") {
     const sessionAgentId = resolveAgentIdFromSessionKey(canonical);
     if (sessionAgentId === normalizeAgentId(resolvedAgentId)) {
-      return { sessionKey: canonical, storePath, store, entry: store[canonical] };
+      return {
+        sessionKey: canonical,
+        storePath,
+        store,
+        entry: store[canonical],
+      };
     }
   }
 
@@ -512,52 +510,15 @@ export async function runHeartbeatOnce(opts: {
     return { status: "skipped", reason: "requests-in-flight" };
   }
 
-  // Resolve session early so we can check for pending system events before the file gate.
-  // resolveHeartbeatSession is side-effect-free (reads config + session store only).
-  const { entry, sessionKey, storePath } = resolveHeartbeatSession(cfg, agentId, heartbeat);
-  const previousUpdatedAt = entry?.updatedAt;
-  const delivery = resolveHeartbeatDeliveryTarget({ cfg, entry, heartbeat });
-  const visibility =
-    delivery.channel !== "none"
-      ? resolveHeartbeatVisibility({
-          cfg,
-          channel: delivery.channel,
-          accountId: delivery.accountId,
-        })
-      : { showOk: false, showAlerts: true, useIndicator: true };
-  const { sender } = resolveHeartbeatSenderContext({ cfg, entry, delivery });
-  const responsePrefix = resolveEffectiveMessagesConfig(cfg, agentId).responsePrefix;
-
   // Skip heartbeat if HEARTBEAT.md exists but has no actionable content.
   // This saves API calls/costs when the file is effectively empty (only comments/headers).
-  //
-  // EXCEPTIONS that bypass the file gate:
-  // 1. exec-event: Always bypasses (has pending system events to process).
-  // 2. cron-initiated (reason starts with "cron:"): Bypasses ONLY when there are pending
-  //    system events AND the cooldown has elapsed. This batches cron events (~5min)
-  //    into fewer heartbeat LLM turns, preventing spam while ensuring delivery.
+  // EXCEPTION: Don't skip for exec events - they have pending system events to process.
   const isExecEventReason = opts.reason === "exec-event";
-  const isCronReason = typeof opts.reason === "string" && opts.reason.startsWith("cron:");
-
-  // For cron-initiated heartbeats: only bypass file gate when events are pending AND cooldown elapsed.
-  let cronBypassFileGate = false;
-  if (isCronReason && hasSystemEvents(sessionKey)) {
-    const now = opts.deps?.nowMs?.() ?? Date.now();
-    if (now - lastCronTriggeredHeartbeatAtMs < DEFAULT_CRON_HEARTBEAT_COOLDOWN_MS) {
-      return { status: "skipped", reason: "cron-cooldown" };
-    }
-    cronBypassFileGate = true;
-  }
-
   const workspaceDir = resolveAgentWorkspaceDir(cfg, agentId);
   const heartbeatFilePath = path.join(workspaceDir, DEFAULT_HEARTBEAT_FILENAME);
   try {
     const heartbeatFileContent = await fs.readFile(heartbeatFilePath, "utf-8");
-    if (
-      isHeartbeatContentEffectivelyEmpty(heartbeatFileContent) &&
-      !isExecEventReason &&
-      !cronBypassFileGate
-    ) {
+    if (isHeartbeatContentEffectivelyEmpty(heartbeatFileContent) && !isExecEventReason) {
       emitHeartbeatEvent({
         status: "skipped",
         reason: "empty-heartbeat-file",
@@ -569,6 +530,36 @@ export async function runHeartbeatOnce(opts: {
     // File doesn't exist or can't be read - proceed with heartbeat.
     // The LLM prompt says "if it exists" so this is expected behavior.
   }
+
+  const { entry, sessionKey, storePath } = resolveHeartbeatSession(cfg, agentId, heartbeat);
+  const previousUpdatedAt = entry?.updatedAt;
+  const delivery = resolveHeartbeatDeliveryTarget({ cfg, entry, heartbeat });
+  const heartbeatAccountId = heartbeat?.accountId?.trim();
+  if (delivery.reason === "unknown-account") {
+    log.warn("heartbeat: unknown accountId", {
+      accountId: delivery.accountId ?? heartbeatAccountId ?? null,
+      target: heartbeat?.target ?? "last",
+    });
+  } else if (heartbeatAccountId) {
+    log.info("heartbeat: using explicit accountId", {
+      accountId: delivery.accountId ?? heartbeatAccountId,
+      target: heartbeat?.target ?? "last",
+      channel: delivery.channel,
+    });
+  }
+  const visibility =
+    delivery.channel !== "none"
+      ? resolveHeartbeatVisibility({
+          cfg,
+          channel: delivery.channel,
+          accountId: delivery.accountId,
+        })
+      : { showOk: false, showAlerts: true, useIndicator: true };
+  const { sender } = resolveHeartbeatSenderContext({ cfg, entry, delivery });
+  const responsePrefix = resolveEffectiveMessagesConfig(cfg, agentId, {
+    channel: delivery.channel !== "none" ? delivery.channel : undefined,
+    accountId: delivery.accountId,
+  }).responsePrefix;
 
   // Check if this is an exec event with pending exec completion system events.
   // If so, use a specialized prompt that instructs the model to relay the result
@@ -591,6 +582,7 @@ export async function runHeartbeatOnce(opts: {
       reason: "alerts-disabled",
       durationMs: Date.now() - startedAt,
       channel: delivery.channel !== "none" ? delivery.channel : undefined,
+      accountId: delivery.accountId,
     });
     return { status: "skipped", reason: "alerts-disabled" };
   }
@@ -627,12 +619,6 @@ export async function runHeartbeatOnce(opts: {
 
   try {
     const replyResult = await getReplyFromConfig(ctx, { isHeartbeat: true }, cfg);
-
-    // Update cron cooldown timestamp after successful LLM call to prevent spam.
-    if (isCronReason) {
-      lastCronTriggeredHeartbeatAtMs = opts.deps?.nowMs?.() ?? Date.now();
-    }
-
     const replyPayload = resolveHeartbeatReplyPayload(replyResult);
     const includeReasoning = heartbeat?.includeReasoning === true;
     const reasoningPayloads = includeReasoning
@@ -654,6 +640,7 @@ export async function runHeartbeatOnce(opts: {
         reason: opts.reason,
         durationMs: Date.now() - startedAt,
         channel: delivery.channel !== "none" ? delivery.channel : undefined,
+        accountId: delivery.accountId,
         silent: !okSent,
         indicatorType: visibility.useIndicator ? resolveIndicatorType("ok-empty") : undefined,
       });
@@ -687,6 +674,7 @@ export async function runHeartbeatOnce(opts: {
         reason: opts.reason,
         durationMs: Date.now() - startedAt,
         channel: delivery.channel !== "none" ? delivery.channel : undefined,
+        accountId: delivery.accountId,
         silent: !okSent,
         indicatorType: visibility.useIndicator ? resolveIndicatorType("ok-token") : undefined,
       });
@@ -723,6 +711,7 @@ export async function runHeartbeatOnce(opts: {
         durationMs: Date.now() - startedAt,
         hasMedia: false,
         channel: delivery.channel !== "none" ? delivery.channel : undefined,
+        accountId: delivery.accountId,
       });
       return { status: "ran", durationMs: Date.now() - startedAt };
     }
@@ -742,12 +731,17 @@ export async function runHeartbeatOnce(opts: {
         preview: previewText?.slice(0, 200),
         durationMs: Date.now() - startedAt,
         hasMedia: mediaUrls.length > 0,
+        accountId: delivery.accountId,
       });
       return { status: "ran", durationMs: Date.now() - startedAt };
     }
 
     if (!visibility.showAlerts) {
-      await restoreHeartbeatUpdatedAt({ storePath, sessionKey, updatedAt: previousUpdatedAt });
+      await restoreHeartbeatUpdatedAt({
+        storePath,
+        sessionKey,
+        updatedAt: previousUpdatedAt,
+      });
       emitHeartbeatEvent({
         status: "skipped",
         reason: "alerts-disabled",
@@ -755,6 +749,7 @@ export async function runHeartbeatOnce(opts: {
         durationMs: Date.now() - startedAt,
         channel: delivery.channel,
         hasMedia: mediaUrls.length > 0,
+        accountId: delivery.accountId,
         indicatorType: visibility.useIndicator ? resolveIndicatorType("sent") : undefined,
       });
       return { status: "ran", durationMs: Date.now() - startedAt };
@@ -776,6 +771,7 @@ export async function runHeartbeatOnce(opts: {
           durationMs: Date.now() - startedAt,
           hasMedia: mediaUrls.length > 0,
           channel: delivery.channel,
+          accountId: delivery.accountId,
         });
         log.info("heartbeat: channel not ready", {
           channel: delivery.channel,
@@ -825,6 +821,7 @@ export async function runHeartbeatOnce(opts: {
       durationMs: Date.now() - startedAt,
       hasMedia: mediaUrls.length > 0,
       channel: delivery.channel,
+      accountId: delivery.accountId,
       indicatorType: visibility.useIndicator ? resolveIndicatorType("sent") : undefined,
     });
     return { status: "ran", durationMs: Date.now() - startedAt };
@@ -835,6 +832,7 @@ export async function runHeartbeatOnce(opts: {
       reason,
       durationMs: Date.now() - startedAt,
       channel: delivery.channel !== "none" ? delivery.channel : undefined,
+      accountId: delivery.accountId,
       indicatorType: visibility.useIndicator ? resolveIndicatorType("failed") : undefined,
     });
     log.error(`heartbeat failed: ${reason}`, { error: reason });
@@ -946,10 +944,16 @@ export function startHeartbeatRunner(opts: {
 
   const run: HeartbeatWakeHandler = async (params) => {
     if (!heartbeatsEnabled) {
-      return { status: "skipped", reason: "disabled" } satisfies HeartbeatRunResult;
+      return {
+        status: "skipped",
+        reason: "disabled",
+      } satisfies HeartbeatRunResult;
     }
     if (state.agents.size === 0) {
-      return { status: "skipped", reason: "disabled" } satisfies HeartbeatRunResult;
+      return {
+        status: "skipped",
+        reason: "disabled",
+      } satisfies HeartbeatRunResult;
     }
 
     const reason = params?.reason;

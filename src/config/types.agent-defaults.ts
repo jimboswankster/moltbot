@@ -98,11 +98,6 @@ export type AgentDefaultsConfig = {
   imageModel?: AgentModelListConfig;
   /** Model catalog with optional aliases (full provider/model keys). */
   models?: Record<string, AgentModelEntryConfig>;
-  /**
-   * Logical model roles for subagent routing (e.g. orchestrator, primary, premium).
-   * Keys are role names; values are concrete provider/model ids (must be in models allowlist).
-   */
-  modelRoles?: Record<string, string>;
   /** Agent working directory (preferred). Used as the default cwd for agent runs. */
   workspace?: string;
   /** Optional repository root for system prompt runtime line (overrides auto-detect). */
@@ -187,6 +182,8 @@ export type AgentDefaultsConfig = {
     target?: "last" | "none" | ChannelId;
     /** Optional delivery override (E.164 for WhatsApp, chat id for Telegram). */
     to?: string;
+    /** Optional account id for multi-account channels. */
+    accountId?: string;
     /** Override the heartbeat prompt body (default: "Read HEARTBEAT.md if it exists (workspace context). Follow it strictly. Do not infer or repeat old tasks from prior chats. If nothing needs attention, reply HEARTBEAT_OK."). */
     prompt?: string;
     /** Max chars allowed after HEARTBEAT_OK before delivery (default: 30). */
@@ -260,8 +257,6 @@ export type AgentCompactionConfig = {
 export type AgentCompactionMemoryFlushConfig = {
   /** Enable the pre-compaction memory flush (default: true). */
   enabled?: boolean;
-  /** Optional model override for memory flush (provider/model). */
-  model?: string;
   /** Run the memory flush when context is within this many tokens of the compaction threshold. */
   softThresholdTokens?: number;
   /** User prompt used for the memory flush turn (NO_REPLY is enforced if missing). */
