@@ -27,6 +27,8 @@ export type SubagentRunRecord = {
   cleanupHandled?: boolean;
   /** Strategy for announcing sub-agent results: "direct" (interrupt) or "desk" (async signal). */
   announceStrategy?: "direct" | "desk";
+  /** Persistent worker mode: session survives completion for multi-turn engagement. */
+  persistent?: boolean;
 };
 
 const subagentRuns = new Map<string, SubagentRunRecord>();
@@ -293,10 +295,12 @@ export function registerSubagentRun(params: {
   label?: string;
   runTimeoutSeconds?: number;
   announceStrategy?: "direct" | "desk";
+  persistent?: boolean;
 }) {
   const now = Date.now();
   const cfg = loadConfig();
-  const archiveAfterMs = resolveArchiveAfterMs(cfg);
+  // Persistent workers: disable auto-archive so the session stays alive
+  const archiveAfterMs = params.persistent ? undefined : resolveArchiveAfterMs(cfg);
   const archiveAtMs = archiveAfterMs ? now + archiveAfterMs : undefined;
   const waitTimeoutMs = resolveSubagentWaitTimeoutMs(cfg, params.runTimeoutSeconds);
   const requesterOrigin = normalizeDeliveryContext(params.requesterOrigin);
@@ -314,6 +318,7 @@ export function registerSubagentRun(params: {
     archiveAtMs,
     cleanupHandled: false,
     announceStrategy: params.announceStrategy,
+    persistent: params.persistent,
   });
   ensureListener();
   persistSubagentRuns();

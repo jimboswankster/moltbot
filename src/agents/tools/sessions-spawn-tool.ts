@@ -53,6 +53,14 @@ const SessionsSpawnToolSchema = Type.Object({
   idempotencyKeySeed: Type.Optional(Type.String({ minLength: 1 })),
   /** How to announce sub-agent results: "direct" (interrupt, default) or "desk" (async signal). */
   announceStrategy: Type.Optional(optionalStringEnum(ANNOUNCE_STRATEGIES)),
+  /**
+   * Persistent worker mode. When true:
+   * - Session key is stable: agent:{agentId}:worker:{label} (addressable for follow-ups)
+   * - cleanup forced to "keep" (session survives completion)
+   * - announceStrategy defaults to "desk" if not specified
+   * Use for long-lived workers that receive multiple tasks via sessions_send or switchboard.
+   */
+  persistent: Type.Optional(Type.Boolean()),
 });
 
 function splitModelRef(ref?: string) {
@@ -125,7 +133,7 @@ export function createSessionsSpawnTool(opts?: {
     label: "Sessions",
     name: "sessions_spawn",
     description:
-      'Spawn a background sub-agent run in an isolated session and announce the result back to the requester. Set announceStrategy to "desk" to route the result to the State Desk (non-interrupting) instead of direct announce.',
+      'Spawn a background sub-agent run in an isolated session and announce the result back to the requester. Set announceStrategy to "desk" to route the result to the State Desk (non-interrupting) instead of direct announce. Set persistent to true for long-lived workers with stable session keys that survive completion.',
     parameters: SessionsSpawnToolSchema,
     execute: async (_toolCallId, args) => {
       const params = args as Record<string, unknown>;
@@ -219,7 +227,15 @@ export function createSessionsSpawnTool(opts?: {
           });
         }
       }
-      const childSessionKey = `agent:${targetAgentId}:subagent:${crypto.randomUUID()}`;
+      // Persistent workers get a stable, addressable session key based on label
+      const isPersistent = params.persistent === true;
+      const sanitizedLabel = label
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]/g, "-")
+        .replace(/-+/g, "-");
+      const childSessionKey = isPersistent
+        ? `agent:${targetAgentId}:worker:${sanitizedLabel}`
+        : `agent:${targetAgentId}:subagent:${crypto.randomUUID()}`;
       const spawnedByKey = requesterInternalKey;
       const targetAgentConfig = resolveAgentConfig(cfg, targetAgentId);
       let resolvedModel: string | undefined;
@@ -345,7 +361,13 @@ export function createSessionsSpawnTool(opts?: {
           ? ("desk" as const)
           : params.announceStrategy === "direct"
             ? ("direct" as const)
-            : undefined;
+            : // Persistent workers default to desk announce (non-interrupting)
+              isPersistent
+              ? ("desk" as const)
+              : undefined;
+
+      // Persistent workers force cleanup to "keep" (session survives completion)
+      const effectiveCleanup = isPersistent ? ("keep" as const) : cleanup;
 
       registerSubagentRun({
         runId: childRunId,
@@ -354,10 +376,11 @@ export function createSessionsSpawnTool(opts?: {
         requesterOrigin,
         requesterDisplayKey,
         task,
-        cleanup,
+        cleanup: effectiveCleanup,
         label: label || undefined,
         runTimeoutSeconds,
         announceStrategy: announceStrategyParam,
+        persistent: isPersistent || undefined,
       });
 
       return jsonResult({
