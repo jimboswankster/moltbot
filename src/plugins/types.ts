@@ -379,6 +379,7 @@ export type PluginHookMessageSentEvent = {
 export type PluginHookToolContext = {
   agentId?: string;
   sessionKey?: string;
+  runId?: string;
   toolName: string;
 };
 

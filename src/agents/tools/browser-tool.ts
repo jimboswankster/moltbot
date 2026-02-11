@@ -21,6 +21,7 @@ import {
   browserTabs,
 } from "../../browser/client.js";
 import { resolveBrowserConfig } from "../../browser/config.js";
+import { DEFAULT_AI_SNAPSHOT_MAX_CHARS } from "../../browser/constants.js";
 import { loadConfig } from "../../config/config.js";
 import {
   loadSessionStore,
@@ -344,7 +345,7 @@ export function createBrowserTool(opts?: {
       hostHint,
     ].join(" "),
     parameters: BrowserToolSchema,
-    execute: async (_toolCallId, args) => {
+    execute: async (_toolCallId, args, _signal?, _onUpdate?): Promise<any> => {
       const params = args as Record<string, unknown>;
       const action = readStringParam(params, "action", { required: true });
       const profile = readStringParam(params, "profile");

@@ -124,7 +124,7 @@ export function capToolResultSize(
       .filter(
         (b: { type: string; text?: string }) => b.type === "text" && typeof b.text === "string",
       )
-      .map((b: { text: string }) => b.text)
+      .map((b) => (b as { type: string; text: string }).text)
       .join("\n");
 
     const truncatedChars = allText.length - headChars - tailChars;

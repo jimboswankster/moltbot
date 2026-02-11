@@ -76,19 +76,20 @@ function applyToolIdempotency(params: {
     typeof params.args.idempotencyKeySeed === "string" && params.args.idempotencyKeySeed.trim()
       ? params.args.idempotencyKeySeed.trim()
       : undefined;
+  const ctx = params.ctx!;
   const payload = { ...params.args };
   delete payload.idempotencyKey;
   delete payload.idempotencyKeySeed;
   const idempotencyKey = buildIdempotencyKey({
-    runId: params.ctx.runId,
+    runId: ctx.runId!,
     toolName,
     payload,
     seed: seedOverride,
   });
   emitAgentEvent({
-    runId: params.ctx.runId,
+    runId: ctx.runId!,
     stream: "lifecycle",
-    ...(params.ctx.sessionKey ? { sessionKey: params.ctx.sessionKey } : {}),
+    ...(ctx.sessionKey ? { sessionKey: ctx.sessionKey } : {}),
     data: {
       phase: "telemetry",
       kind: "idempotency_injected",
