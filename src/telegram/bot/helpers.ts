@@ -99,24 +99,6 @@ export function buildTelegramGroupFrom(chatId: number | string, messageThreadId?
   return `telegram:group:${buildTelegramGroupPeerId(chatId, messageThreadId)}`;
 }
 
-/**
- * Build parentPeer for forum topic binding inheritance.
- * When a message comes from a forum topic, the peer ID includes the topic suffix
- * (e.g., `-1001234567890:topic:99`). To allow bindings configured for the base
- * group ID to match, we provide the parent group as `parentPeer` so the routing
- * layer can fall back to it when the exact peer doesn't match.
- */
-export function buildTelegramParentPeer(params: {
-  isGroup: boolean;
-  resolvedThreadId?: number;
-  chatId: number | string;
-}): { kind: "group"; id: string } | undefined {
-  if (!params.isGroup || params.resolvedThreadId == null) {
-    return undefined;
-  }
-  return { kind: "group", id: String(params.chatId) };
-}
-
 export function buildSenderName(msg: Message) {
   const name =
     [msg.from?.first_name, msg.from?.last_name].filter(Boolean).join(" ").trim() ||
@@ -226,35 +208,31 @@ export type TelegramReplyTarget = {
 
 export function describeReplyTarget(msg: Message): TelegramReplyTarget | null {
   const reply = msg.reply_to_message;
-  const externalReply = (msg as Message & { external_reply?: Message }).external_reply;
-  const quoteText =
-    msg.quote?.text ??
-    (externalReply as (Message & { quote?: { text?: string } }) | undefined)?.quote?.text;
+  const quote = msg.quote;
   let body = "";
   let kind: TelegramReplyTarget["kind"] = "reply";
 
-  if (typeof quoteText === "string") {
-    body = quoteText.trim();
+  if (quote?.text) {
+    body = quote.text.trim();
     if (body) {
       kind = "quote";
     }
   }
 
-  const replyLike = reply ?? externalReply;
-  if (!body && replyLike) {
-    const replyBody = (replyLike.text ?? replyLike.caption ?? "").trim();
+  if (!body && reply) {
+    const replyBody = (reply.text ?? reply.caption ?? "").trim();
     body = replyBody;
     if (!body) {
-      if (replyLike.photo) {
+      if (reply.photo) {
         body = "<media:image>";
-      } else if (replyLike.video) {
+      } else if (reply.video) {
         body = "<media:video>";
-      } else if (replyLike.audio || replyLike.voice) {
+      } else if (reply.audio || reply.voice) {
         body = "<media:audio>";
-      } else if (replyLike.document) {
+      } else if (reply.document) {
         body = "<media:document>";
       } else {
-        const locationData = extractTelegramLocation(replyLike);
+        const locationData = extractTelegramLocation(reply);
         if (locationData) {
           body = formatLocationText(locationData);
         }
@@ -264,11 +242,11 @@ export function describeReplyTarget(msg: Message): TelegramReplyTarget | null {
   if (!body) {
     return null;
   }
-  const sender = replyLike ? buildSenderName(replyLike) : undefined;
+  const sender = reply ? buildSenderName(reply) : undefined;
   const senderLabel = sender ?? "unknown sender";
 
   return {
-    id: replyLike?.message_id ? String(replyLike.message_id) : undefined,
+    id: reply?.message_id ? String(reply.message_id) : undefined,
     sender: senderLabel,
     body,
     kind,
@@ -284,7 +262,7 @@ export type TelegramForwardedContext = {
   fromTitle?: string;
   fromSignature?: string;
   /** Original chat type from forward_from_chat (e.g. "channel", "supergroup", "group"). */
-  fromChatType?: Chat["type"];
+  fromChatType?: string;
   /** Original message ID in the source chat (channel forwards). */
   fromMessageId?: number;
 };
@@ -358,7 +336,7 @@ function buildForwardedContextFromChat(params: {
   }
   const signature = params.signature?.trim() || undefined;
   const from = signature ? `${display} (${signature})` : display;
-  const chatType = (params.chat.type?.trim() || undefined) as Chat["type"] | undefined;
+  const chatType = params.chat.type?.trim() || undefined;
   return {
     from,
     date: params.date,
