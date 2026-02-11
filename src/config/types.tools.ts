@@ -177,6 +177,8 @@ export type ExecToolConfig = {
   backgroundMs?: number;
   /** Default timeout (seconds) before auto-killing exec commands. */
   timeoutSec?: number;
+  /** Memory limit in MB for exec (e.g. sandbox). */
+  memoryLimitMB?: number;
   /** Emit a running notice (ms) when approval-backed exec runs long (default: 10000, 0 = off). */
   approvalRunningNoticeMs?: number;
   /** How long to keep finished sessions in memory (ms). */
@@ -192,6 +194,8 @@ export type ExecToolConfig = {
      * Accepts either raw ids (e.g. "gpt-5.2") or full ids (e.g. "openai/gpt-5.2").
      */
     allowModels?: string[];
+    /** Optional allowlist of provider ids (e.g. "openai") that can use apply_patch. */
+    allowProviders?: string[];
   };
 };
 
@@ -423,6 +427,14 @@ export type ToolsConfig = {
     enabled?: boolean;
     /** Allowlist of agent ids or patterns (implementation-defined). */
     allow?: string[];
+    /** Naming mode for A2A. */
+    namingMode?: "contract" | "legacy";
+    /** Inbox ack mode. */
+    inboxAckMode?: "mark" | "clear";
+    /** Inbox retention in days. */
+    inboxRetentionDays?: number;
+    /** Delivery mode for A2A (e.g. "inject"). */
+    deliveryMode?: string;
   };
   /** Elevated exec permissions for the host machine. */
   elevated?: {

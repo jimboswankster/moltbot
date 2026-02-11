@@ -80,6 +80,8 @@ export type CronJob = {
   payload: CronPayload;
   isolation?: CronIsolation;
   state: CronJobState;
+  /** Optional delivery options (e.g. best-effort). */
+  delivery?: { bestEffort?: boolean };
 };
 
 export type CronStoreFile = {

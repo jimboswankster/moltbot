@@ -185,7 +185,7 @@ export async function getStatusSummary(): Promise<StatusSummary> {
     watchers: getWatcherTelemetry(),
     a2a: {
       ...getA2ATelemetry(),
-      inboxAckMode: cfg.tools?.agentToAgent?.inboxAckMode ?? "mark",
+      inboxAckMode: (cfg.tools?.agentToAgent?.inboxAckMode ?? "mark") as "mark" | "clear",
     },
     fallbacks: getFallbackTelemetry(),
     linkChannel: linkContext

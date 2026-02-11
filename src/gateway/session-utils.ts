@@ -522,6 +522,7 @@ export function getSessionDefaults(cfg: OpenClawConfig): GatewaySessionsDefaults
 export function resolveSessionModelRef(
   cfg: OpenClawConfig,
   entry?: SessionEntry,
+  _sessionAgentId?: string,
 ): { provider: string; model: string } {
   const resolved = resolveConfiguredModelRef({
     cfg,

@@ -360,6 +360,8 @@ export async function runSubagentAnnounceFlow(params: {
   endedAt?: number;
   label?: string;
   outcome?: SubagentRunOutcome;
+  /** Optional label for the announce type (e.g. "cron job"). */
+  announceType?: string;
 }): Promise<boolean> {
   let didAnnounce = false;
   try {

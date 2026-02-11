@@ -14,6 +14,8 @@ type SubsystemLogger = ReturnType<typeof createSubsystemLogger>;
 
 export type GatewayClient = {
   connect: ConnectParams;
+  /** Optional connection id for scoped broadcasts (e.g. tool events). */
+  connId?: string;
 };
 
 export type RespondFn = (
@@ -84,6 +86,8 @@ export type GatewayRequestContext = {
     prompter: import("../../wizard/prompts.js").WizardPrompter,
   ) => Promise<void>;
   broadcastVoiceWakeChanged: (triggers: string[]) => void;
+  /** Register a connection to receive tool events for a run. */
+  registerToolEventRecipient?: (runId: string, connId: string) => void;
 };
 
 export type GatewayRequestOptions = {

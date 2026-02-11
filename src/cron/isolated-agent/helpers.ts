@@ -8,7 +8,32 @@ type DeliveryPayload = {
   text?: string;
   mediaUrl?: string;
   mediaUrls?: string[];
+  channelData?: Record<string, unknown>;
 };
+
+/**
+ * Returns the last payload that is suitable for delivery (has text, media, or channelData).
+ */
+export function pickLastDeliverablePayload(
+  payloads: Array<{
+    text?: string;
+    mediaUrl?: string;
+    mediaUrls?: string[];
+    channelData?: Record<string, unknown>;
+  }>,
+): DeliveryPayload | undefined {
+  for (let i = payloads.length - 1; i >= 0; i--) {
+    const p = payloads[i];
+    if (!p) continue;
+    const hasText = (p.text ?? "").trim().length > 0;
+    const hasMedia = (p.mediaUrls?.length ?? 0) > 0 || Boolean(p.mediaUrl);
+    const hasChannelData = p.channelData && Object.keys(p.channelData).length > 0;
+    if (hasText || hasMedia || hasChannelData) {
+      return p as DeliveryPayload;
+    }
+  }
+  return undefined;
+}
 
 export function pickSummaryFromOutput(text: string | undefined) {
   const clean = (text ?? "").trim();

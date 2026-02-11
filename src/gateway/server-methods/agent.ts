@@ -302,7 +302,7 @@ export const agentHandlers: GatewayRequestHandlers = {
       client?.connect?.caps,
       GATEWAY_CLIENT_CAPS.TOOL_EVENTS,
     );
-    if (connId && wantsToolEvents) {
+    if (connId && wantsToolEvents && context.registerToolEventRecipient) {
       context.registerToolEventRecipient(runId, connId);
       // Register for any other active runs *in the same session* so
       // late-joining clients (e.g. page refresh mid-response) receive

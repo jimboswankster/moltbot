@@ -98,6 +98,8 @@ export type AgentDefaultsConfig = {
   imageModel?: AgentModelListConfig;
   /** Model catalog with optional aliases (full provider/model keys). */
   models?: Record<string, AgentModelEntryConfig>;
+  /** Model roles (e.g. role name -> provider/model). */
+  modelRoles?: Record<string, string>;
   /** Agent working directory (preferred). Used as the default cwd for agent runs. */
   workspace?: string;
   /** Optional repository root for system prompt runtime line (overrides auto-detect). */
@@ -263,4 +265,6 @@ export type AgentCompactionMemoryFlushConfig = {
   prompt?: string;
   /** System prompt appended for the memory flush turn. */
   systemPrompt?: string;
+  /** Optional model override for the memory flush turn. */
+  model?: string;
 };

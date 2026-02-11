@@ -72,6 +72,10 @@ export type RunEmbeddedPiAgentParams = {
   bashElevated?: ExecElevatedDefaults;
   timeoutMs: number;
   runId: string;
+  /** When true, message tool must target an explicit recipient. */
+  requireExplicitMessageTarget?: boolean;
+  /** When true, disable the message tool for this run. */
+  disableMessageTool?: boolean;
   abortSignal?: AbortSignal;
   shouldEmitToolResult?: () => boolean;
   shouldEmitToolOutput?: () => boolean;

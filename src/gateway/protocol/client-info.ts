@@ -3,6 +3,11 @@ export const GATEWAY_CLIENT_CAPS = {
   TOOL_EVENTS: "tool_events",
 } as const;
 
+/** Returns true if the given caps array includes the capability. */
+export function hasGatewayClientCap(caps: string[] | undefined, cap: string): boolean {
+  return Array.isArray(caps) && caps.includes(cap);
+}
+
 export const GATEWAY_CLIENT_IDS = {
   WEBCHAT_UI: "webchat-ui",
   CONTROL_UI: "openclaw-control-ui",

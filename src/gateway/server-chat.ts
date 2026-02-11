@@ -1,3 +1,4 @@
+import type { ChatAbortControllerEntry } from "./chat-abort.js";
 import { normalizeVerboseLevel } from "../auto-reply/thinking.js";
 import { loadConfig } from "../config/config.js";
 import { type AgentEventPayload, getAgentRunContext } from "../infra/agent-events.js";
@@ -203,7 +204,7 @@ export type NodeSendToSession = (sessionKey: string, event: string, payload: unk
 
 export type AgentEventHandlerOptions = {
   broadcast: ChatEventBroadcast;
-  broadcastToConnIds: (
+  broadcastToConnIds?: (
     event: string,
     payload: unknown,
     connIds: ReadonlySet<string>,
@@ -212,9 +213,12 @@ export type AgentEventHandlerOptions = {
   nodeSendToSession: NodeSendToSession;
   agentRunSeq: Map<string, number>;
   chatRunState: ChatRunState;
+  chatAbortControllers?: Map<string, ChatAbortControllerEntry>;
   resolveSessionKeyForRun: (runId: string) => string | undefined;
   clearAgentRunContext: (runId: string) => void;
-  toolEventRecipients: ToolEventRecipientRegistry;
+  toolEventRecipients?: ToolEventRecipientRegistry;
+  logGateway?: unknown;
+  streamBufferAdapter?: unknown;
 };
 
 export function createAgentEventHandler({
@@ -357,8 +361,8 @@ export function createAgentEventHandler({
       // tool-events capability, regardless of verboseLevel. The verbose
       // setting only controls whether tool details are sent as channel
       // messages to messaging surfaces (Telegram, Discord, etc.).
-      const recipients = toolEventRecipients.get(evt.runId);
-      if (recipients && recipients.size > 0) {
+      const recipients = toolEventRecipients?.get(evt.runId);
+      if (recipients && recipients.size > 0 && broadcastToConnIds) {
         broadcastToConnIds("agent", toolPayload, recipients);
       }
     } else {
@@ -411,7 +415,7 @@ export function createAgentEventHandler({
     }
 
     if (lifecyclePhase === "end" || lifecyclePhase === "error") {
-      toolEventRecipients.markFinal(evt.runId);
+      toolEventRecipients?.markFinal(evt.runId);
       clearAgentRunContext(evt.runId);
     }
   };

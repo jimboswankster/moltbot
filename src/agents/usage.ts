@@ -103,3 +103,22 @@ export function derivePromptTokens(usage?: {
   const sum = input + cacheRead + cacheWrite;
   return sum > 0 ? sum : undefined;
 }
+
+export function deriveSessionTotalTokens(params: {
+  usage?: NormalizedUsage | null;
+  contextTokens?: number | null;
+}): number | undefined {
+  const { usage, contextTokens } = params;
+  if (usage?.total != null && Number.isFinite(usage.total)) {
+    return usage.total;
+  }
+  if (usage) {
+    const input = usage.input ?? 0;
+    const output = usage.output ?? 0;
+    const cacheRead = usage.cacheRead ?? 0;
+    const cacheWrite = usage.cacheWrite ?? 0;
+    const sum = input + output + cacheRead + cacheWrite;
+    if (sum > 0) return sum;
+  }
+  return contextTokens != null && Number.isFinite(contextTokens) ? contextTokens : undefined;
+}
