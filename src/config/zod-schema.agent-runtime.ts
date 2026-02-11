@@ -274,6 +274,7 @@ export const AgentToolsSchema = z
         safeBins: z.array(z.string()).optional(),
         backgroundMs: z.number().int().positive().optional(),
         timeoutSec: z.number().int().positive().optional(),
+        memoryLimitMB: z.number().int().positive().optional(),
         approvalRunningNoticeMs: z.number().int().nonnegative().optional(),
         cleanupMs: z.number().int().positive().optional(),
         notifyOnExit: z.boolean().optional(),
@@ -281,6 +282,7 @@ export const AgentToolsSchema = z
           .object({
             enabled: z.boolean().optional(),
             allowModels: z.array(z.string()).optional(),
+            allowProviders: z.array(z.string()).optional(),
           })
           .strict()
           .optional(),
@@ -498,6 +500,10 @@ export const ToolsSchema = z
       .object({
         enabled: z.boolean().optional(),
         allow: z.array(z.string()).optional(),
+        namingMode: z.enum(["contract", "legacy"]).optional(),
+        inboxAckMode: z.enum(["mark", "clear"]).optional(),
+        inboxRetentionDays: z.number().int().nonnegative().optional(),
+        deliveryMode: z.string().optional(),
       })
       .strict()
       .optional(),
@@ -518,12 +524,14 @@ export const ToolsSchema = z
         safeBins: z.array(z.string()).optional(),
         backgroundMs: z.number().int().positive().optional(),
         timeoutSec: z.number().int().positive().optional(),
+        memoryLimitMB: z.number().int().positive().optional(),
         cleanupMs: z.number().int().positive().optional(),
         notifyOnExit: z.boolean().optional(),
         applyPatch: z
           .object({
             enabled: z.boolean().optional(),
             allowModels: z.array(z.string()).optional(),
+            allowProviders: z.array(z.string()).optional(),
           })
           .strict()
           .optional(),
