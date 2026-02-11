@@ -4,38 +4,40 @@ export type SlashCommand = {
   prompt?: string;
 };
 
+export const SHORTCUT_PREFIX = ">>";
+
 export const slashCommands: SlashCommand[] = [
   {
-    name: "/commands",
-    summary: "Show available slash commands and what they do.",
+    name: ">>commands",
+    summary: "Show available shortcut commands and what they do.",
     prompt:
-      "List the available slash commands you support in this workspace and briefly explain what each one does.",
+      "List the available shortcut commands you support in this workspace and briefly explain what each one does.",
   },
   {
-    name: "/commit",
+    name: ">>commit",
     summary: "Run the commit protocol (recall GIT_POLICY.md, then stage/commit).",
     prompt:
       "Commit your work according to our git policy. Recall GIT_POLICY.md, run git status, and proceed with an appropriate commit plan.",
   },
   {
-    name: "/global_readme",
+    name: ">>global_readme",
     summary: "Read the global workspace README and route.",
     prompt:
       "Read the global workspace README (README.md at the workspace root) and use it as the router.",
   },
   {
-    name: "/global_changelog",
+    name: ">>global_changelog",
     summary: "Open/update SYSTEM_CHANGELOG.md.",
     prompt: "Open SYSTEM_CHANGELOG.md at the workspace root and summarize the most recent entries.",
   },
   {
-    name: "/os_changelog",
+    name: ">>os_changelog",
     summary: "Open the OS-level changelog in Second Brain.",
     prompt:
       "Open the OS-level changelog in Second Brain (os/vault/projects/second-brain/CHANGELOG.md) and summarize recent entries.",
   },
   {
-    name: "/local_changelog",
+    name: ">>local_changelog",
     summary: "Open the changelog for the current project/system.",
     prompt:
       "Determine the current project or system context and open the relevant local changelog, then summarize recent entries.",
@@ -50,7 +52,7 @@ export function filterSlashCommands(
   if (!normalized) {
     return commands;
   }
-  return commands.filter((cmd) => cmd.name.toLowerCase().startsWith(`/${normalized}`));
+  return commands.filter((cmd) => cmd.name.toLowerCase().startsWith(`${SHORTCUT_PREFIX}${normalized}`));
 }
 
 export async function loadSlashCommands(basePath: string): Promise<SlashCommand[]> {

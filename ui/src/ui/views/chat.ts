@@ -15,6 +15,7 @@ import { icons } from "../icons";
 import {
   filterSlashCommands,
   slashCommands as defaultSlashCommands,
+  SHORTCUT_PREFIX,
   type SlashCommand,
 } from "../slash-commands";
 import { renderMarkdownSidebar } from "./markdown-sidebar";
@@ -135,10 +136,10 @@ function clampIndex(value: number, max: number) {
 }
 
 function getSlashSuggestions(draft: string, commands: SlashCommand[]) {
-  if (!draft.startsWith("/")) {
+  if (!draft.startsWith(SHORTCUT_PREFIX)) {
     return { active: false, items: [] as SlashCommand[] };
   }
-  const raw = draft.slice(1);
+  const raw = draft.slice(SHORTCUT_PREFIX.length);
   if (/\s/.test(raw)) {
     return { active: false, items: [] as SlashCommand[] };
   }
@@ -233,7 +234,7 @@ export function renderChat(props: ChatProps) {
     avatar: props.assistantAvatar ?? props.assistantAvatarUrl ?? null,
   };
   const commands = props.slashCommands ?? defaultSlashCommands;
-  const slashEnabled = props.slashMode ?? props.draft.startsWith("/");
+  const slashEnabled = props.slashMode ?? props.draft.startsWith(SHORTCUT_PREFIX);
   const slash = slashEnabled
     ? getSlashSuggestions(props.draft, commands)
     : { active: false, items: [] as SlashCommand[] };
