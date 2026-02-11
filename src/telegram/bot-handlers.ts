@@ -105,10 +105,34 @@ export const registerTelegramHandlers = ({
         await processMessage(last.ctx, last.allMedia, last.storeAllowFrom);
         return;
       }
-      const combinedText = entries
-        .map((entry) => entry.msg.text ?? entry.msg.caption ?? "")
-        .filter(Boolean)
-        .join("\n");
+
+      // Merge texts with "\n" separator, and preserve entities with offset
+      // adjustments so formatting, mentions, and links survive debounce merging.
+      let combinedText = "";
+      const mergedEntities: Array<{
+        type: string;
+        offset: number;
+        length: number;
+        [k: string]: unknown;
+      }> = [];
+      for (const entry of entries) {
+        const part = entry.msg.text ?? entry.msg.caption ?? "";
+        if (!part) {
+          continue;
+        }
+        const partOffset = combinedText.length > 0 ? combinedText.length + 1 : 0; // +1 for "\n"
+        if (combinedText.length > 0) {
+          combinedText += "\n";
+        }
+        combinedText += part;
+
+        // Shift entities from this message by the current combined text offset
+        const sourceEntities = entry.msg.entities ?? entry.msg.caption_entities ?? [];
+        for (const entity of sourceEntities) {
+          mergedEntities.push({ ...entity, offset: entity.offset + partOffset });
+        }
+      }
+
       if (!combinedText.trim()) {
         return;
       }
@@ -121,7 +145,7 @@ export const registerTelegramHandlers = ({
         text: combinedText,
         caption: undefined,
         caption_entities: undefined,
-        entities: undefined,
+        entities: mergedEntities.length > 0 ? (mergedEntities as Message["entities"]) : undefined,
         date: last.msg.date ?? first.msg.date,
       };
       const messageIdOverride = last.msg.message_id ? String(last.msg.message_id) : undefined;
@@ -216,7 +240,12 @@ export const registerTelegramHandlers = ({
         }
       }
 
-      const storeAllowFrom = await readChannelAllowFromStore("telegram").catch(() => []);
+      const storeAllowFrom = await readChannelAllowFromStore("telegram").catch((err) => {
+        console.warn(
+          `[telegram] pairing store read failed, using config-only allowlist: ${String(err)}`,
+        );
+        return [] as string[];
+      });
       await processMessage(primaryEntry.ctx, allMedia, storeAllowFrom);
     } catch (err) {
       runtime.error?.(danger(`media group handler failed: ${String(err)}`));
@@ -247,7 +276,12 @@ export const registerTelegramHandlers = ({
         date: last.msg.date ?? first.msg.date,
       };
 
-      const storeAllowFrom = await readChannelAllowFromStore("telegram").catch(() => []);
+      const storeAllowFrom = await readChannelAllowFromStore("telegram").catch((err) => {
+        console.warn(
+          `[telegram] pairing store read failed, using config-only allowlist: ${String(err)}`,
+        );
+        return [] as string[];
+      });
       const baseCtx = first.ctx;
       const getFile =
         typeof baseCtx.getFile === "function" ? baseCtx.getFile.bind(baseCtx) : async () => ({});
@@ -271,7 +305,9 @@ export const registerTelegramHandlers = ({
         .then(async () => {
           await flushTextFragments(entry);
         })
-        .catch(() => undefined);
+        .catch((err) => {
+          runtime.error?.(danger(`telegram scheduled text fragment flush failed: ${String(err)}`));
+        });
       await textFragmentProcessing;
     }, TELEGRAM_TEXT_FRAGMENT_MAX_GAP_MS);
   };
@@ -322,7 +358,12 @@ export const registerTelegramHandlers = ({
         messageThreadId,
       });
       const { groupConfig, topicConfig } = resolveTelegramGroupConfig(chatId, resolvedThreadId);
-      const storeAllowFrom = await readChannelAllowFromStore("telegram").catch(() => []);
+      const storeAllowFrom = await readChannelAllowFromStore("telegram").catch((err) => {
+        console.warn(
+          `[telegram] pairing store read failed, using config-only allowlist: ${String(err)}`,
+        );
+        return [] as string[];
+      });
       const groupAllowOverride = firstDefined(topicConfig?.allowFrom, groupConfig?.allowFrom);
       const effectiveGroupAllow = normalizeAllowFromWithStore({
         allowFrom: groupAllowOverride ?? groupAllowFrom,
@@ -683,7 +724,12 @@ export const registerTelegramHandlers = ({
         isForum,
         messageThreadId,
       });
-      const storeAllowFrom = await readChannelAllowFromStore("telegram").catch(() => []);
+      const storeAllowFrom = await readChannelAllowFromStore("telegram").catch((err) => {
+        console.warn(
+          `[telegram] pairing store read failed, using config-only allowlist: ${String(err)}`,
+        );
+        return [] as string[];
+      });
       const { groupConfig, topicConfig } = resolveTelegramGroupConfig(chatId, resolvedThreadId);
       const groupAllowOverride = firstDefined(topicConfig?.allowFrom, groupConfig?.allowFrom);
       const effectiveGroupAllow = normalizeAllowFromWithStore({
@@ -818,7 +864,9 @@ export const registerTelegramHandlers = ({
             .then(async () => {
               await flushTextFragments(existing);
             })
-            .catch(() => undefined);
+            .catch((err) => {
+              runtime.error?.(danger(`telegram text fragment flush failed: ${String(err)}`));
+            });
           await textFragmentProcessing;
         }
 
@@ -848,7 +896,9 @@ export const registerTelegramHandlers = ({
               .then(async () => {
                 await processMediaGroup(existing);
               })
-              .catch(() => undefined);
+              .catch((err) => {
+                runtime.error?.(danger(`telegram media group processing failed: ${String(err)}`));
+              });
             await mediaGroupProcessing;
           }, MEDIA_GROUP_TIMEOUT_MS);
         } else {
@@ -860,7 +910,9 @@ export const registerTelegramHandlers = ({
                 .then(async () => {
                   await processMediaGroup(entry);
                 })
-                .catch(() => undefined);
+                .catch((err) => {
+                  runtime.error?.(danger(`telegram media group processing failed: ${String(err)}`));
+                });
               await mediaGroupProcessing;
             }, MEDIA_GROUP_TIMEOUT_MS),
           };

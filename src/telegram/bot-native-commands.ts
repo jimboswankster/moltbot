@@ -54,6 +54,7 @@ import {
   resolveTelegramForumThreadId,
   resolveTelegramThreadSpec,
 } from "./bot/helpers.js";
+import { classifyErrorForUser } from "./error-classify.js";
 import { buildInlineKeyboard } from "./send.js";
 
 const EMPTY_RESPONSE_FALLBACK = "No response generated. Please try again.";
@@ -157,7 +158,12 @@ async function resolveTelegramCommandAuth(params: {
     isForum,
     messageThreadId,
   });
-  const storeAllowFrom = await readChannelAllowFromStore("telegram").catch(() => []);
+  const storeAllowFrom = await readChannelAllowFromStore("telegram").catch((err) => {
+    console.warn(
+      `[telegram] pairing store read failed, using config-only allowlist: ${String(err)}`,
+    );
+    return [] as string[];
+  });
   const { groupConfig, topicConfig } = resolveTelegramGroupConfig(chatId, resolvedThreadId);
   const groupAllowOverride = firstDefined(topicConfig?.allowFrom, groupConfig?.allowFrom);
   const effectiveGroupAllow = normalizeAllowFromWithStore({
@@ -548,6 +554,7 @@ export const registerTelegramNativeCommands = ({
           const deliveryState = {
             delivered: false,
             skippedNonSilent: 0,
+            errorCount: 0,
           };
 
           const { onModelSelected, ...prefixOptions } = createReplyPrefixOptions({
@@ -557,45 +564,72 @@ export const registerTelegramNativeCommands = ({
             accountId: route.accountId,
           });
 
-          await dispatchReplyWithBufferedBlockDispatcher({
-            ctx: ctxPayload,
-            cfg,
-            dispatcherOptions: {
-              ...prefixOptions,
-              deliver: async (payload, _info) => {
-                const result = await deliverReplies({
-                  replies: [payload],
-                  chatId: String(chatId),
-                  token: opts.token,
-                  runtime,
-                  bot,
-                  replyToMode,
-                  textLimit,
-                  thread: threadSpec,
-                  tableMode,
-                  chunkMode,
-                  linkPreview: telegramCfg.linkPreview,
-                });
-                if (result.delivered) {
-                  deliveryState.delivered = true;
-                }
+          try {
+            await dispatchReplyWithBufferedBlockDispatcher({
+              ctx: ctxPayload,
+              cfg,
+              dispatcherOptions: {
+                ...prefixOptions,
+                deliver: async (payload, _info) => {
+                  const result = await deliverReplies({
+                    replies: [payload],
+                    chatId: String(chatId),
+                    token: opts.token,
+                    runtime,
+                    bot,
+                    replyToMode,
+                    textLimit,
+                    thread: threadSpec,
+                    tableMode,
+                    chunkMode,
+                    linkPreview: telegramCfg.linkPreview,
+                  });
+                  if (result.delivered) {
+                    deliveryState.delivered = true;
+                  }
+                },
+                onSkip: (_payload, info) => {
+                  if (info.reason !== "silent") {
+                    deliveryState.skippedNonSilent += 1;
+                  }
+                },
+                onError: (err, info) => {
+                  runtime.error?.(
+                    danger(`telegram slash ${info.kind} reply failed: ${String(err)}`),
+                  );
+                  deliveryState.errorCount += 1;
+                },
               },
-              onSkip: (_payload, info) => {
-                if (info.reason !== "silent") {
-                  deliveryState.skippedNonSilent += 1;
-                }
+              replyOptions: {
+                skillFilter,
+                disableBlockStreaming,
+                onModelSelected,
               },
-              onError: (err, info) => {
-                runtime.error?.(danger(`telegram slash ${info.kind} reply failed: ${String(err)}`));
-              },
-            },
-            replyOptions: {
-              skillFilter,
-              disableBlockStreaming,
-              onModelSelected,
-            },
-          });
-          if (!deliveryState.delivered && deliveryState.skippedNonSilent > 0) {
+            });
+          } catch (err) {
+            runtime.error?.(danger(`telegram slash dispatch failed: ${String(err)}`));
+            await deliverReplies({
+              replies: [{ text: classifyErrorForUser(err) }],
+              chatId: String(chatId),
+              token: opts.token,
+              runtime,
+              bot,
+              replyToMode,
+              textLimit,
+              thread: threadSpec,
+              tableMode,
+              chunkMode,
+              linkPreview: telegramCfg.linkPreview,
+            }).catch((deliveryErr) => {
+              runtime.error?.(
+                danger(`telegram slash error-reply delivery also failed: ${String(deliveryErr)}`),
+              );
+            });
+          }
+          if (
+            !deliveryState.delivered &&
+            (deliveryState.skippedNonSilent > 0 || deliveryState.errorCount > 0)
+          ) {
             await deliverReplies({
               replies: [{ text: EMPTY_RESPONSE_FALLBACK }],
               chatId: String(chatId),

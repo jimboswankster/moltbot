@@ -18,6 +18,11 @@ const resolveChannelOverride = (params: {
   return resolveMs(params.byChannel[params.channel]);
 };
 
+// Default debounce for rapid-fire messages (ms).
+// 150ms batches fast sequential messages without perceptible delay, reducing
+// redundant agent invocations from split-second multi-message sends.
+const DEFAULT_INBOUND_DEBOUNCE_MS = 150;
+
 export function resolveInboundDebounceMs(params: {
   cfg: OpenClawConfig;
   channel: string;
@@ -30,7 +35,7 @@ export function resolveInboundDebounceMs(params: {
     channel: params.channel,
   });
   const base = resolveMs(inbound?.debounceMs);
-  return override ?? byChannel ?? base ?? 0;
+  return override ?? byChannel ?? base ?? DEFAULT_INBOUND_DEBOUNCE_MS;
 }
 
 type DebounceBuffer<T> = {

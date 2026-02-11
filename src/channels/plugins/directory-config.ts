@@ -200,40 +200,38 @@ export async function listTelegramDirectoryPeersFromConfig(
     ),
   );
 
-  const results = uniqueIds
-    .map((entry) => {
-      const trimmed = entry.trim();
-      if (!trimmed) {
-        return null;
-      }
-      let id: string;
-      if (/^-?\d+$/.test(trimmed)) {
-        id = trimmed;
-      } else {
-        id = trimmed.startsWith("@") ? trimmed : `@${trimmed}`;
-      }
-      const name = nameMap.get(trimmed);
-      return { kind: "user" as const, id, ...(name ? { name } : {}) };
-    })
-    .filter((entry): entry is ChannelDirectoryEntry => Boolean(entry))
-    .filter((entry) => {
-      if (!q) {
-        return true;
-      }
-      const candidates = [entry.id, entry.name, entry.handle]
+  const results: ChannelDirectoryEntry[] = [];
+  for (const entry of uniqueIds) {
+    const trimmed = entry.trim();
+    if (!trimmed) {
+      continue;
+    }
+    const id = /^-?\d+$/.test(trimmed)
+      ? trimmed
+      : trimmed.startsWith("@")
+        ? trimmed
+        : `@${trimmed}`;
+    const name = nameMap.get(trimmed);
+    const dirEntry: ChannelDirectoryEntry = { kind: "user", id, ...(name ? { name } : {}) };
+    if (q) {
+      const candidates = [dirEntry.id, dirEntry.name, dirEntry.handle]
         .filter(Boolean)
         .map((v) => v!.toLowerCase());
-      return candidates.some((v) => v.includes(q));
-    })
-    .slice(0, params.limit && params.limit > 0 ? params.limit : undefined);
+      if (!candidates.some((v) => v.includes(q))) {
+        continue;
+      }
+    }
+    results.push(dirEntry);
+  }
+  const limited = results.slice(0, params.limit && params.limit > 0 ? params.limit : undefined);
 
   if (q) {
     console.log(
-      `[telegram-directory] query=${JSON.stringify(q)} totalPeers=${uniqueIds.length} matched=${results.length}${results.length > 0 ? ` → [${results.map((e) => `${e.id}(${e.name ?? "?"})`).join(", ")}]` : " (no matches)"}`,
+      `[telegram-directory] query=${JSON.stringify(q)} totalPeers=${uniqueIds.length} matched=${limited.length}${limited.length > 0 ? ` → [${limited.map((e) => `${e.id}(${e.name ?? "?"})`).join(", ")}]` : " (no matches)"}`,
     );
   }
 
-  return results;
+  return limited;
 }
 
 export async function listTelegramDirectoryGroupsFromConfig(

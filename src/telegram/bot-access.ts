@@ -49,8 +49,11 @@ export const isSenderAllowed = (params: {
   senderUsername?: string;
 }) => {
   const { allow, senderId, senderUsername } = params;
+  // Deny-by-default: no entries means no one is explicitly allowed.
+  // This is consistent with resolveSenderAllowMatch (used in the DM path).
+  // The "open" policy bypasses this function entirely.
   if (!allow.hasEntries) {
-    return true;
+    return false;
   }
   if (allow.hasWildcard) {
     return true;
