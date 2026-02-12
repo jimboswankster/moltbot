@@ -166,7 +166,7 @@ describe("fireDeskAnnounce", () => {
     expect(result).toBe(false);
   });
 
-  it("returns false when handler throws", async () => {
+  it("returns false when handler throws (error caught, not propagated)", async () => {
     const handler = vi.fn(async () => {
       throw new Error("supabase down");
     });
@@ -180,7 +180,10 @@ describe("fireDeskAnnounce", () => {
       triggerMessage: "test",
     });
 
+    // Error was caught internally — returned false instead of throwing
     expect(result).toBe(false);
+    // Handler WAS invoked (error caught after invocation, not before)
+    expect(handler).toHaveBeenCalledTimes(1);
   });
 
   it("H6 circuit breaker: after 3 failures in window, returns false without calling handler", async () => {
@@ -235,15 +238,15 @@ describe("runSubagentAnnounceFlow announceStrategy", () => {
     const handler = vi.fn(async () => false);
     registerDeskAnnounceHandler(handler);
 
-    // callGateway is mocked to return { status: "ok" } — direct announce will succeed
     const result = await runSubagentAnnounceFlow(makeAnnounceParams({ announceStrategy: "desk" }));
 
-    // Handler was called but returned false
+    // Handler was called but returned false — desk failed
     expect(handler).toHaveBeenCalledTimes(1);
-    // Flow should have fallen through to direct announce
-    // (callGateway mock is used, so result depends on queue/direct path)
-    // The important thing: it didn't return after the desk attempt
-    expect(typeof result).toBe("boolean");
+    // H2 fallback: flow fell through to direct announce path.
+    // The direct path returns false because callGateway ultimately doesn't
+    // reach a real gateway (mocked), but the critical assertion is that
+    // the handler was invoked AND the flow continued past the desk branch.
+    expect(result).toBe(false);
   });
 
   it('announceStrategy="direct" (or undefined) does not call desk handler', async () => {
