@@ -36,8 +36,9 @@ export function createTelegramRunnerOptions(cfg: OpenClawConfig): RunOptions<unk
     },
     runner: {
       fetch: {
-        // Match grammY defaults
-        timeout: 30,
+        // Increased from grammY default (30s) to reduce spurious timeout-restart
+        // cycles on slow networks. Telegram supports up to 50s for long-polling.
+        timeout: 45,
         // Request reactions without dropping default update types.
         allowed_updates: resolveTelegramAllowedUpdates(),
       },
@@ -171,16 +172,29 @@ export async function monitorTelegramProvider(opts: MonitorTelegramOpts = {}) {
 
     while (!opts.abortSignal?.aborted) {
       const runner = run(bot, createTelegramRunnerOptions(cfg));
+      // Track the runner.stop() promise so we can await it during cleanup,
+      // preventing resource leaks from fire-and-forget stops.
+      let stopPromise: Promise<void> | undefined;
       const stopOnAbort = () => {
         if (opts.abortSignal?.aborted) {
-          void runner.stop();
+          stopPromise = runner.stop();
         }
       };
       opts.abortSignal?.addEventListener("abort", stopOnAbort, { once: true });
       try {
         // runner.task() returns a promise that resolves when the runner stops
         await runner.task();
-        return;
+        // Runner stopped without error — don't exit the loop. This can happen due
+        // to internal cleanup, idle timeout, or Node fetch quirks (upstream #1639).
+        // Reset backoff and restart polling instead of exiting permanently.
+        if (opts.abortSignal?.aborted) {
+          return;
+        }
+        restartAttempts = 0;
+        (opts.runtime?.error ?? console.warn)(
+          "Telegram runner stopped (non-error); restarting polling...",
+        );
+        continue;
       } catch (err) {
         if (opts.abortSignal?.aborted) {
           throw err;
@@ -207,6 +221,11 @@ export async function monitorTelegramProvider(opts: MonitorTelegramOpts = {}) {
         }
       } finally {
         opts.abortSignal?.removeEventListener("abort", stopOnAbort);
+        // Await the stop if it was triggered, ensuring the runner fully drains
+        // before we create a new one in the next iteration.
+        if (stopPromise) {
+          await stopPromise.catch(() => {});
+        }
       }
     }
   } finally {

@@ -117,7 +117,9 @@ export async function acquireSessionWriteLock(params: {
   release: () => Promise<void>;
 }> {
   registerCleanupHandlers();
-  const timeoutMs = params.timeoutMs ?? 10_000;
+  // Increased from 10s to 30s — upstream #14676 confirms 10s is too short for
+  // large session contexts (~1MB+) with slow models, causing deadlocks.
+  const timeoutMs = params.timeoutMs ?? 30_000;
   const staleMs = params.staleMs ?? 30 * 60 * 1000;
   const sessionFile = path.resolve(params.sessionFile);
   const sessionDir = path.dirname(sessionFile);
@@ -187,6 +189,10 @@ export async function acquireSessionWriteLock(params: {
       const stale = !Number.isFinite(createdAt) || Date.now() - createdAt > staleMs;
       const alive = payload?.pid ? isAlive(payload.pid) : false;
       if (stale || !alive) {
+        const reason = stale ? "stale" : "dead-pid";
+        console.warn(
+          `[session-lock] Removing ${reason} lock: ${lockPath} (pid=${payload?.pid ?? "?"}, age=${createdAt ? Math.round((Date.now() - createdAt) / 1000) + "s" : "unknown"})`,
+        );
         await fs.rm(lockPath, { force: true });
         continue;
       }

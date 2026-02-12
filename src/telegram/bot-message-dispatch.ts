@@ -316,22 +316,59 @@ export const dispatchTelegramMessage = async ({
   } catch (err) {
     runtime.error?.(danger(`telegram dispatch failed: ${String(err)}`));
     // Ensure the user always sees something when the agent pipeline fails
-    await deliverReplies({
-      replies: [{ text: classifyErrorForUser(err) }],
-      chatId: String(chatId),
-      token: opts.token,
-      runtime,
-      bot,
-      replyToMode,
-      textLimit,
-      thread: threadSpec,
-      tableMode,
-      chunkMode,
-      linkPreview: telegramCfg.linkPreview,
-      replyQuoteText,
-    }).catch((deliveryErr) => {
-      runtime.error?.(danger(`telegram error-reply delivery also failed: ${String(deliveryErr)}`));
-    });
+    // Retry error delivery once after a short delay if the first attempt fails.
+    // Without this, a transient Telegram API issue causes complete silence — the
+    // user never sees any response and must manually resend.
+    let errorDelivered = false;
+    for (let attempt = 0; attempt < 2 && !errorDelivered; attempt++) {
+      try {
+        if (attempt > 0) {
+          await new Promise((r) => setTimeout(r, 2000));
+        }
+        const result = await deliverReplies({
+          replies: [{ text: classifyErrorForUser(err) }],
+          chatId: String(chatId),
+          token: opts.token,
+          runtime,
+          bot,
+          replyToMode,
+          textLimit,
+          thread: threadSpec,
+          tableMode,
+          chunkMode,
+          linkPreview: telegramCfg.linkPreview,
+          replyQuoteText,
+        });
+        errorDelivered = result.delivered;
+      } catch (deliveryErr) {
+        runtime.error?.(
+          danger(
+            `telegram error-reply delivery failed (attempt ${attempt + 1}): ${String(deliveryErr)}`,
+          ),
+        );
+      }
+    }
+    // Dead-letter: if error delivery also failed, log a structured record so
+    // the failed interaction can be diagnosed or replayed later.
+    if (!errorDelivered) {
+      try {
+        const fs = await import("node:fs");
+        const path = await import("node:path");
+        const home = process.env.HOME ?? process.env.USERPROFILE ?? "/tmp";
+        const dlPath = path.join(home, ".openclaw", "logs", "telegram-dead-letters.jsonl");
+        const dlDir = path.dirname(dlPath);
+        if (!fs.existsSync(dlDir)) fs.mkdirSync(dlDir, { recursive: true });
+        const entry = {
+          ts: new Date().toISOString(),
+          chatId: String(chatId),
+          error: String(err),
+          deliveryError: "all delivery attempts failed",
+        };
+        fs.appendFileSync(dlPath, JSON.stringify(entry) + "\n");
+      } catch {
+        /* best-effort */
+      }
+    }
   } finally {
     draftStream?.stop();
   }

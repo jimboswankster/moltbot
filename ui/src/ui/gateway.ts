@@ -62,9 +62,23 @@ export type GatewayBrowserClientOptions = {
 // 4008 = application-defined code (browser rejects 1008 "Policy Violation")
 const CONNECT_FAILED_CLOSE_CODE = 4008;
 
+// Requests queued while the socket is disconnected. They are replayed after
+// the next successful hello-ok, or rejected after QUEUE_TIMEOUT_MS.
+type QueuedRequest = {
+  frame: string;
+  id: string;
+  resolve: (v: unknown) => void;
+  reject: (err: unknown) => void;
+  timer: number;
+};
+
+const QUEUE_TIMEOUT_MS = 15_000;
+const MAX_QUEUED = 20;
+
 export class GatewayBrowserClient {
   private ws: WebSocket | null = null;
   private pending = new Map<string, Pending>();
+  private queued: QueuedRequest[] = [];
   private closed = false;
   private lastSeq: number | null = null;
   private connectNonce: string | null = null;
@@ -84,6 +98,11 @@ export class GatewayBrowserClient {
     this.ws?.close();
     this.ws = null;
     this.flushPending(new Error("gateway client stopped"));
+    // Also reject queued requests on permanent stop
+    for (const q of this.queued.splice(0)) {
+      window.clearTimeout(q.timer);
+      q.reject(new Error("gateway client stopped"));
+    }
   }
 
   get connected() {
@@ -225,6 +244,7 @@ export class GatewayBrowserClient {
           });
         }
         this.backoffMs = 800;
+        this.flushQueued();
         this.opts.onHello?.(hello);
       })
       .catch(() => {
@@ -287,16 +307,56 @@ export class GatewayBrowserClient {
   }
 
   request<T = unknown>(method: string, params?: unknown): Promise<T> {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+    const id = generateUUID();
+    const frameObj = { type: "req", id, method, params };
+    const frameStr = JSON.stringify(frameObj);
+
+    // If connected, send immediately
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      const p = new Promise<T>((resolve, reject) => {
+        this.pending.set(id, { resolve: (v) => resolve(v as T), reject });
+      });
+      this.ws.send(frameStr);
+      return p;
+    }
+
+    // If closed permanently, reject
+    if (this.closed) {
       return Promise.reject(new Error("gateway not connected"));
     }
-    const id = generateUUID();
-    const frame = { type: "req", id, method, params };
-    const p = new Promise<T>((resolve, reject) => {
-      this.pending.set(id, { resolve: (v) => resolve(v as T), reject });
+
+    // Queue for replay after reconnect (up to MAX_QUEUED with timeout)
+    if (this.queued.length >= MAX_QUEUED) {
+      return Promise.reject(new Error("gateway reconnect queue full"));
+    }
+
+    return new Promise<T>((resolve, reject) => {
+      const timer = window.setTimeout(() => {
+        this.queued = this.queued.filter((q) => q.id !== id);
+        reject(new Error("gateway reconnect timeout"));
+      }, QUEUE_TIMEOUT_MS);
+      this.queued.push({
+        frame: frameStr,
+        id,
+        resolve: (v) => resolve(v as T),
+        reject,
+        timer,
+      });
     });
-    this.ws.send(JSON.stringify(frame));
-    return p;
+  }
+
+  /** Replay queued requests after successful reconnect. */
+  private flushQueued() {
+    const toSend = this.queued.splice(0);
+    for (const q of toSend) {
+      window.clearTimeout(q.timer);
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        this.pending.set(q.id, { resolve: q.resolve, reject: q.reject });
+        this.ws.send(q.frame);
+      } else {
+        q.reject(new Error("gateway not connected after reconnect"));
+      }
+    }
   }
 
   private queueConnect() {

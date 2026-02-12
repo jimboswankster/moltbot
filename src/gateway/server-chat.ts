@@ -99,11 +99,37 @@ export type ChatRunState = {
   clear: () => void;
 };
 
+// Abort entries older than this are considered orphaned — the provider hung and
+// never sent a terminal lifecycle event. Safe to garbage-collect.
+const ABORT_ORPHAN_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const ABORT_SWEEP_INTERVAL_MS = 60 * 1000; // sweep every 60s
+
 export function createChatRunState(): ChatRunState {
   const registry = createChatRunRegistry();
   const buffers = new Map<string, string>();
   const deltaSentAt = new Map<string, number>();
   const abortedRuns = new Map<string, number>();
+
+  // Periodic sweep for orphaned abort entries (Issue #12).
+  // If a run was aborted but the provider never sent end/error, the entry
+  // would stay forever, blocking future runs on that session.
+  const sweepTimer = setInterval(() => {
+    const now = Date.now();
+    for (const [runId, ts] of abortedRuns) {
+      if (now - ts > ABORT_ORPHAN_TTL_MS) {
+        abortedRuns.delete(runId);
+        buffers.delete(runId);
+        deltaSentAt.delete(runId);
+        console.warn(
+          `[chat-run] Swept orphaned abort entry: ${runId} (age=${Math.round((now - ts) / 1000)}s)`,
+        );
+      }
+    }
+  }, ABORT_SWEEP_INTERVAL_MS);
+  // Don't block process exit
+  if (typeof sweepTimer === "object" && "unref" in sweepTimer) {
+    sweepTimer.unref();
+  }
 
   const clear = () => {
     registry.clear();
@@ -231,7 +257,12 @@ export function createAgentEventHandler({
   clearAgentRunContext,
   toolEventRecipients,
 }: AgentEventHandlerOptions) {
+  // Track the last-sent text length per run so we can compute the delta slice
+  // instead of resending the full accumulated text every time (O(N²) → O(N)).
+  const deltaOffsets = new Map<string, number>();
+
   const emitChatDelta = (sessionKey: string, clientRunId: string, seq: number, text: string) => {
+    const prevLen = deltaOffsets.get(clientRunId) ?? 0;
     chatRunState.buffers.set(clientRunId, text);
     const now = Date.now();
     const last = chatRunState.deltaSentAt.get(clientRunId) ?? 0;
@@ -239,11 +270,17 @@ export function createAgentEventHandler({
       return;
     }
     chatRunState.deltaSentAt.set(clientRunId, now);
+    // Compute the new characters since the last broadcast.
+    // The full text is still included for consumers that don't support deltaText,
+    // but deltaText allows efficient append-only rendering on the client.
+    const deltaText = prevLen < text.length ? text.slice(prevLen) : undefined;
+    deltaOffsets.set(clientRunId, text.length);
     const payload = {
       runId: clientRunId,
       sessionKey,
       seq,
       state: "delta" as const,
+      deltaText,
       message: {
         role: "assistant",
         content: [{ type: "text", text }],
@@ -267,6 +304,7 @@ export function createAgentEventHandler({
     const text = chatRunState.buffers.get(clientRunId)?.trim() ?? "";
     chatRunState.buffers.delete(clientRunId);
     chatRunState.deltaSentAt.delete(clientRunId);
+    deltaOffsets.delete(clientRunId);
     if (jobState === "done") {
       const payload = {
         runId: clientRunId,
@@ -408,6 +446,7 @@ export function createAgentEventHandler({
         chatRunState.abortedRuns.delete(evt.runId);
         chatRunState.buffers.delete(clientRunId);
         chatRunState.deltaSentAt.delete(clientRunId);
+        deltaOffsets.delete(clientRunId);
         if (chatLink) {
           chatRunState.registry.remove(evt.runId, clientRunId, sessionKey);
         }

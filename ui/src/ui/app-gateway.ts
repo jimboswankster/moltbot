@@ -157,23 +157,24 @@ export function connectGateway(host: GatewayHost) {
       host.hello = hello;
       applySnapshot(host, hello);
       ensureMainActivity(host as unknown as Parameters<typeof ensureMainActivity>[0]);
-      // Reset orphaned chat run state from before disconnect unless we plan to resync.
-      // Any in-flight run's final event was lost during the disconnect window.
-      if (!host.pendingChatResync) {
-        host.chatRunId = null;
-        (host as unknown as { chatStream: string | null }).chatStream = null;
-        (host as unknown as { chatStreamStartedAt: number | null }).chatStreamStartedAt = null;
-        resetToolStream(host as unknown as Parameters<typeof resetToolStream>[0]);
-      }
+      // Always resync chat history on reconnect. Even when no run was active at
+      // disconnect time, the server may have started one (e.g., cron/Telegram) or
+      // an event-gap may have occurred. Clearing state here is safe because
+      // loadChatHistory will restore the correct state from the server.
+      const hadActiveRun = host.pendingChatResync;
+      host.chatRunId = null;
+      (host as unknown as { chatStream: string | null }).chatStream = null;
+      (host as unknown as { chatStreamStartedAt: number | null }).chatStreamStartedAt = null;
+      resetToolStream(host as unknown as Parameters<typeof resetToolStream>[0]);
+      host.pendingChatResync = false;
       void loadAssistantIdentity(host as unknown as OpenClawApp);
       void loadAgents(host as unknown as OpenClawApp);
       void loadNodes(host as unknown as OpenClawApp, { quiet: true });
       void loadDevices(host as unknown as OpenClawApp, { quiet: true });
       void refreshActiveTab(host as unknown as Parameters<typeof refreshActiveTab>[0]);
-      if (host.pendingChatResync) {
-        host.pendingChatResync = false;
-        scheduleChatResync(host, 800);
-      }
+      // Resync immediately when a run was active (no delay), or after 500ms for
+      // general reconnects. This prevents the 800ms gap where rapid events were missed.
+      scheduleChatResync(host, hadActiveRun ? 0 : 500);
       if (host.tab === "activity-hud") {
         void loadSessions(host as unknown as OpenClawApp, { limit: 50, activeMinutes: 60 }).then(
           () => {
