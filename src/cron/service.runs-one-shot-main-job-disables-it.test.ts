@@ -76,7 +76,7 @@ describe("CronService", () => {
       log: noopLogger,
       enqueueSystemEvent,
       requestHeartbeatNow,
-      runIsolatedAgentJob: vi.fn(async () => ({ status: "ok" })),
+      runIsolatedAgentJob: vi.fn(async () => ({ status: "ok" as const })),
     });
 
     await cron.start();
@@ -118,7 +118,7 @@ describe("CronService", () => {
       log: noopLogger,
       enqueueSystemEvent,
       requestHeartbeatNow,
-      runIsolatedAgentJob: vi.fn(async () => ({ status: "ok" })),
+      runIsolatedAgentJob: vi.fn(async () => ({ status: "ok" as const })),
     });
 
     await cron.start();
@@ -151,7 +151,10 @@ describe("CronService", () => {
     const store = await makeStorePath();
     const enqueueSystemEvent = vi.fn();
     const requestHeartbeatNow = vi.fn();
-    const runIsolatedAgentJob = vi.fn(async () => ({ status: "error", error: "boom" }));
+    const runIsolatedAgentJob = vi.fn(async () => ({
+      status: "error" as const,
+      error: "boom",
+    }));
 
     const cron = new CronService({
       storePath: store.storePath,
@@ -222,7 +225,7 @@ describe("CronService", () => {
       enqueueSystemEvent,
       requestHeartbeatNow,
       runHeartbeatOnce,
-      runIsolatedAgentJob: vi.fn(async () => ({ status: "ok" })),
+      runIsolatedAgentJob: vi.fn(async () => ({ status: "ok" as const })),
     });
 
     await cron.start();
@@ -251,7 +254,8 @@ describe("CronService", () => {
     });
     expect(job.state.runningAtMs).toBeTypeOf("number");
 
-    resolveHeartbeat?.({ status: "ran", durationMs: 123 });
+    const resolver = resolveHeartbeat as ((r: HeartbeatRunResult) => void) | null;
+    if (resolver) resolver({ status: "ran", durationMs: 123 });
     await runPromise;
 
     expect(job.state.lastStatus).toBe("ok");
@@ -340,7 +344,7 @@ describe("CronService", () => {
       log: noopLogger,
       enqueueSystemEvent,
       requestHeartbeatNow,
-      runIsolatedAgentJob: vi.fn(async () => ({ status: "ok" })),
+      runIsolatedAgentJob: vi.fn(async () => ({ status: "ok" as const })),
     });
 
     await cron.start();
@@ -391,7 +395,7 @@ describe("CronService", () => {
       log: noopLogger,
       enqueueSystemEvent,
       requestHeartbeatNow,
-      runIsolatedAgentJob: vi.fn(async () => ({ status: "ok" })),
+      runIsolatedAgentJob: vi.fn(async () => ({ status: "ok" as const })),
     });
 
     await cron.start();
@@ -501,7 +505,7 @@ describe("CronService", () => {
       log: noopLogger,
       enqueueSystemEvent: vi.fn(),
       requestHeartbeatNow: vi.fn(),
-      runIsolatedAgentJob: vi.fn(async () => ({ status: "ok" })),
+      runIsolatedAgentJob: vi.fn(async () => ({ status: "ok" as const })),
     });
 
     await cron.start();
@@ -536,7 +540,7 @@ describe("CronService", () => {
     const store = await makeStorePath();
     const enqueueSystemEvent = vi.fn();
     const requestHeartbeatNow = vi.fn();
-    const runIsolatedAgentJob = vi.fn(async () => ({ status: "ok" }));
+    const runIsolatedAgentJob = vi.fn(async () => ({ status: "ok" as const }));
     const runPreCheck = vi.fn(async () => ({ pass: false, err: "preCheck gate skipped" }));
 
     const cron = new CronService({
@@ -663,7 +667,7 @@ describe("CronService", () => {
       log: noopLogger,
       enqueueSystemEvent,
       requestHeartbeatNow,
-      runIsolatedAgentJob: vi.fn(async () => ({ status: "ok" })),
+      runIsolatedAgentJob: vi.fn(async () => ({ status: "ok" as const })),
     });
 
     await cron.start();
