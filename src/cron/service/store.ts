@@ -6,6 +6,16 @@ import { inferLegacyName, normalizeOptionalText } from "./normalize.js";
 
 const storeCache = new Map<string, { version: 1; jobs: CronJob[] }>();
 
+/**
+ * Reload jobs from disk, clearing any in-memory cache. Use after external edits to
+ * jobs.json so new/updated/removed jobs are picked up without a gateway restart.
+ */
+export async function reloadFromDisk(state: CronServiceState) {
+  storeCache.delete(state.deps.storePath);
+  state.store = undefined;
+  await ensureLoaded(state);
+}
+
 export async function ensureLoaded(state: CronServiceState) {
   if (state.store) {
     return;

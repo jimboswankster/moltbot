@@ -10,7 +10,7 @@ import {
   recomputeNextRuns,
 } from "./jobs.js";
 import { locked } from "./locked.js";
-import { ensureLoaded, persist, warnIfDisabled } from "./store.js";
+import { ensureLoaded, persist, reloadFromDisk, warnIfDisabled } from "./store.js";
 import { armTimer, emit, executeJob, stopTimer, wake } from "./timer.js";
 
 export async function start(state: CronServiceState) {
@@ -56,6 +56,21 @@ export async function list(state: CronServiceState, opts?: { includeDisabled?: b
     const includeDisabled = opts?.includeDisabled === true;
     const jobs = (state.store?.jobs ?? []).filter((j) => includeDisabled || j.enabled);
     return jobs.toSorted((a, b) => (a.state.nextRunAtMs ?? 0) - (b.state.nextRunAtMs ?? 0));
+  });
+}
+
+export async function refresh(state: CronServiceState) {
+  return await locked(state, async () => {
+    warnIfDisabled(state, "refresh");
+    await reloadFromDisk(state);
+    recomputeNextRuns(state);
+    await persist(state);
+    armTimer(state);
+    state.deps.log.info(
+      { jobs: state.store?.jobs.length ?? 0, nextWakeAtMs: nextWakeAtMs(state) ?? null },
+      "cron: refreshed from disk",
+    );
+    return { ok: true, jobs: state.store?.jobs.length ?? 0 };
   });
 }
 

@@ -149,6 +149,7 @@ function authorizeGatewayMethod(method: string, client: GatewayRequestOptions["c
     method === "cron.update" ||
     method === "cron.remove" ||
     method === "cron.run" ||
+    method === "cron.refresh" ||
     method === "sessions.patch" ||
     method === "sessions.reset" ||
     method === "sessions.delete" ||

@@ -54,6 +54,10 @@ export const cronHandlers: GatewayRequestHandlers = {
     });
     respond(true, { jobs }, undefined);
   },
+  "cron.refresh": async ({ respond, context }) => {
+    const result = await context.cron.refresh();
+    respond(true, result, undefined);
+  },
   "cron.status": async ({ params, respond, context }) => {
     if (!validateCronStatusParams(params)) {
       respond(

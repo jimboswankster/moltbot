@@ -1,9 +1,14 @@
 import type { HeartbeatRunResult } from "../../infra/heartbeat-wake.js";
 import type { CronJob } from "../types.js";
 import type { CronEvent, CronServiceState } from "./state.js";
-import { computeJobNextRunAtMs, nextWakeAtMs, resolveJobPayloadTextForMain } from "./jobs.js";
+import {
+  computeJobNextRunAtMs,
+  nextWakeAtMs,
+  recomputeNextRuns,
+  resolveJobPayloadTextForMain,
+} from "./jobs.js";
 import { locked } from "./locked.js";
-import { ensureLoaded, persist } from "./store.js";
+import { persist, reloadFromDisk } from "./store.js";
 
 const MAX_TIMEOUT_MS = 2 ** 31 - 1;
 
@@ -44,10 +49,12 @@ export async function onTimer(state: CronServiceState) {
 
 export async function runDueJobs(state: CronServiceState) {
   const dueIds = await locked(state, async () => {
-    await ensureLoaded(state);
+    await reloadFromDisk(state);
     if (!state.store) {
       return [];
     }
+    recomputeNextRuns(state);
+    await persist(state);
     const now = state.deps.nowMs();
     let mutated = false;
     const ids = state.store.jobs

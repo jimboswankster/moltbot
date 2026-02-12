@@ -42,6 +42,10 @@ export class CronService {
     return await ops.run(this.state, id, mode);
   }
 
+  async refresh() {
+    return await ops.refresh(this.state);
+  }
+
   wake(opts: { mode: "now" | "next-heartbeat"; text: string }) {
     return ops.wakeNow(this.state, opts);
   }
