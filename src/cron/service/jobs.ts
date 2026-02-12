@@ -103,6 +103,7 @@ export function createJob(state: CronServiceState, input: CronJobCreate): CronJo
     wakeMode: input.wakeMode,
     payload: input.payload,
     isolation: input.isolation,
+    preCheck: input.preCheck,
     state: {
       ...input.state,
     },
@@ -139,6 +140,9 @@ export function applyJobPatch(job: CronJob, patch: CronJobPatch) {
   }
   if (patch.isolation) {
     job.isolation = patch.isolation;
+  }
+  if ("preCheck" in patch) {
+    job.preCheck = patch.preCheck ?? undefined;
   }
   if (patch.state) {
     job.state = { ...job.state, ...patch.state };

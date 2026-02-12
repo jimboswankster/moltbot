@@ -71,6 +71,11 @@ export type CronJobState = {
   nextAllowedAtMs?: number;
 };
 
+export type CronPreCheck = {
+  script: string;
+  args?: string[];
+};
+
 export type CronJob = {
   id: string;
   agentId?: string;
@@ -85,6 +90,8 @@ export type CronJob = {
   wakeMode: CronWakeMode;
   payload: CronPayload;
   isolation?: CronIsolation;
+  /** Optional pre-check: run before isolated agent; if script exits non-zero, skip job. */
+  preCheck?: CronPreCheck;
   state: CronJobState;
   /** Optional delivery options (e.g. best-effort). */
   delivery?: { bestEffort?: boolean };
@@ -97,9 +104,11 @@ export type CronStoreFile = {
 
 export type CronJobCreate = Omit<CronJob, "id" | "createdAtMs" | "updatedAtMs" | "state"> & {
   state?: Partial<CronJobState>;
+  preCheck?: CronPreCheck;
 };
 
 export type CronJobPatch = Partial<Omit<CronJob, "id" | "createdAtMs" | "state" | "payload">> & {
   payload?: CronPayloadPatch;
   state?: Partial<CronJobState>;
+  preCheck?: CronPreCheck | null;
 };

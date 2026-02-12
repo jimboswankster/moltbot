@@ -1,3 +1,4 @@
+import path from "node:path";
 import type { HeartbeatRunResult } from "../../infra/heartbeat-wake.js";
 import type { CronJob } from "../types.js";
 import type { CronEvent, CronServiceState } from "./state.js";
@@ -8,7 +9,7 @@ import {
   resolveJobPayloadTextForMain,
 } from "./jobs.js";
 import { locked } from "./locked.js";
-import { persist, reloadFromDisk } from "./store.js";
+import { ensureLoaded, persist, reloadFromDisk } from "./store.js";
 
 const MAX_TIMEOUT_MS = 2 ** 31 - 1;
 
@@ -300,6 +301,21 @@ async function runJobCore(
 
   if (job.payload.kind !== "agentTurn") {
     return { status: "skipped", err: "isolated job requires payload.kind=agentTurn" };
+  }
+
+  if (job.preCheck && state.deps.runPreCheck && state.deps.workspaceDir) {
+    const scriptPath = path.join(state.deps.workspaceDir, job.preCheck.script);
+    const result = await state.deps.runPreCheck({
+      scriptPath,
+      workspaceDir: state.deps.workspaceDir,
+      args: job.preCheck.args,
+    });
+    if (!result.pass) {
+      return {
+        status: "skipped",
+        err: result.err ?? "preCheck gate skipped",
+      };
+    }
   }
 
   const res = await state.deps.runIsolatedAgentJob({

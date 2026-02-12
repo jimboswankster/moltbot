@@ -172,26 +172,23 @@ describe("CronService", () => {
       payload: { kind: "agentTurn", message: "hello" },
     });
 
-    vi.setSystemTime(new Date("2025-12-13T00:00:02.000Z"));
-    await vi.runOnlyPendingTimersAsync();
+    // Force run to avoid timer async timing; ensures executeJob completes before we assert
+    await cron.run(job.id, "force");
 
-    const afterFirst = await waitForJob(
-      cron,
-      job.id,
-      (entry) => entry?.state.lastStatus === "error",
-    );
+    const afterFirst = (await cron.list({ includeDisabled: true })).find((j) => j.id === job.id);
     expect(afterFirst?.state.failureCount).toBe(1);
     expect(afterFirst?.state.nextAllowedAtMs).toBeTypeOf("number");
     expect(runIsolatedAgentJob).toHaveBeenCalledTimes(1);
 
     // Advance less than backoff window (default 60s) - should not run again
     await vi.advanceTimersByTimeAsync(30_000);
-    await cron.run(job.id, "due");
+    const runResultWithinBackoff = await cron.run(job.id, "due");
+    expect(runResultWithinBackoff).toEqual({ ok: true, ran: false, reason: "not-due" });
     expect(runIsolatedAgentJob).toHaveBeenCalledTimes(1);
 
-    // Advance beyond backoff window
-    await vi.advanceTimersByTimeAsync(40_000);
-    await cron.run(job.id, "due");
+    // Advance beyond backoff window (60s) - force run to verify job can run again
+    await vi.advanceTimersByTimeAsync(61_000);
+    await cron.run(job.id, "force");
     expect(runIsolatedAgentJob).toHaveBeenCalledTimes(2);
 
     cron.stop();
@@ -530,6 +527,104 @@ describe("CronService", () => {
         payload: { kind: "systemEvent", text: "nope" },
       }),
     ).rejects.toThrow(/isolated cron jobs require/);
+
+    cron.stop();
+    await store.cleanup();
+  });
+
+  it("skips isolated job when preCheck gate fails", async () => {
+    const store = await makeStorePath();
+    const enqueueSystemEvent = vi.fn();
+    const requestHeartbeatNow = vi.fn();
+    const runIsolatedAgentJob = vi.fn(async () => ({ status: "ok" }));
+    const runPreCheck = vi.fn(async () => ({ pass: false, err: "preCheck gate skipped" }));
+
+    const cron = new CronService({
+      storePath: store.storePath,
+      cronEnabled: true,
+      workspaceDir: "/tmp/test-workspace",
+      log: noopLogger,
+      enqueueSystemEvent,
+      requestHeartbeatNow,
+      runIsolatedAgentJob,
+      runPreCheck,
+    });
+
+    await cron.start();
+    const atMs = Date.parse("2025-12-13T00:00:01.000Z");
+    const job = await cron.add({
+      name: "preCheck gate job",
+      enabled: true,
+      schedule: { kind: "at", atMs },
+      sessionTarget: "isolated",
+      wakeMode: "now",
+      payload: { kind: "agentTurn", message: "do it", deliver: false },
+      preCheck: { script: "os/scripts/telemetry-remediation-gate.mjs" },
+    });
+
+    vi.setSystemTime(new Date("2025-12-13T00:00:01.000Z"));
+    await vi.runOnlyPendingTimersAsync();
+
+    const updated = await waitForJob(
+      cron,
+      job.id,
+      (entry) => entry?.state.lastStatus === "skipped",
+    );
+    expect(updated?.state.lastStatus).toBe("skipped");
+    expect(updated?.state.lastError).toMatch(/preCheck gate skipped/i);
+    expect(runPreCheck).toHaveBeenCalledTimes(1);
+    expect(runPreCheck).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scriptPath: expect.stringContaining("telemetry-remediation-gate.mjs"),
+        workspaceDir: "/tmp/test-workspace",
+      }),
+    );
+    expect(runIsolatedAgentJob).not.toHaveBeenCalled();
+
+    cron.stop();
+    await store.cleanup();
+  });
+
+  it("runs isolated job when preCheck gate passes", async () => {
+    const store = await makeStorePath();
+    const enqueueSystemEvent = vi.fn();
+    const requestHeartbeatNow = vi.fn();
+    const runIsolatedAgentJob = vi.fn(async () => ({
+      status: "ok" as const,
+      summary: "done",
+    }));
+    const runPreCheck = vi.fn(async () => ({ pass: true }));
+
+    const cron = new CronService({
+      storePath: store.storePath,
+      cronEnabled: true,
+      workspaceDir: "/tmp/test-workspace",
+      log: noopLogger,
+      enqueueSystemEvent,
+      requestHeartbeatNow,
+      runIsolatedAgentJob,
+      runPreCheck,
+    });
+
+    await cron.start();
+    const atMs = Date.parse("2025-12-13T00:00:01.000Z");
+    const job = await cron.add({
+      name: "preCheck pass job",
+      enabled: true,
+      schedule: { kind: "at", atMs },
+      sessionTarget: "isolated",
+      wakeMode: "now",
+      payload: { kind: "agentTurn", message: "do it", deliver: false },
+      preCheck: { script: "os/scripts/telemetry-remediation-gate.mjs" },
+    });
+
+    vi.setSystemTime(new Date("2025-12-13T00:00:01.000Z"));
+    await vi.runOnlyPendingTimersAsync();
+
+    const updated = await waitForJob(cron, job.id, (entry) => entry?.state.lastStatus === "ok");
+    expect(updated?.state.lastStatus).toBe("ok");
+    expect(runPreCheck).toHaveBeenCalledTimes(1);
+    expect(runIsolatedAgentJob).toHaveBeenCalledTimes(1);
 
     cron.stop();
     await store.cleanup();

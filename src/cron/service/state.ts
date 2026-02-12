@@ -24,6 +24,8 @@ export type CronServiceDeps = {
   log: Logger;
   storePath: string;
   cronEnabled: boolean;
+  /** Workspace root for preCheck scripts (resolved from config). */
+  workspaceDir?: string;
   enqueueSystemEvent: (text: string, opts?: { agentId?: string }) => void;
   requestHeartbeatNow: (opts?: { reason?: string }) => void;
   runHeartbeatOnce?: (opts?: { reason?: string }) => Promise<HeartbeatRunResult>;
@@ -35,6 +37,15 @@ export type CronServiceDeps = {
     error?: string;
     errorKind?: "invalid-model";
   }>;
+  /**
+   * Optional pre-check for isolated jobs. If job.preCheck is set, run this before invoking the agent.
+   * Return { pass: true } to proceed, { pass: false, err? } to skip.
+   */
+  runPreCheck?: (params: {
+    scriptPath: string;
+    workspaceDir: string;
+    args?: string[];
+  }) => Promise<{ pass: boolean; err?: string }>;
   onEvent?: (evt: CronEvent) => void;
 };
 

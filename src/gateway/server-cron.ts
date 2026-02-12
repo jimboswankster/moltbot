@@ -1,5 +1,6 @@
+import { spawnSync } from "node:child_process";
 import type { CliDeps } from "../cli/deps.js";
-import { resolveDefaultAgentId } from "../agents/agent-scope.js";
+import { resolveDefaultAgentId, resolveAgentWorkspaceDir } from "../agents/agent-scope.js";
 import { loadConfig } from "../config/config.js";
 import { resolveAgentMainSessionKey } from "../config/sessions.js";
 import { runCronIsolatedAgentTurn } from "../cron/isolated-agent.js";
@@ -43,9 +44,24 @@ export function buildGatewayCronService(params: {
     return { agentId, cfg: runtimeConfig };
   };
 
+  const runtimeConfig = loadConfig();
+  const defaultAgentId = resolveDefaultAgentId(runtimeConfig);
+  const workspaceDir = resolveAgentWorkspaceDir(runtimeConfig, defaultAgentId);
+
   const cron = new CronService({
     storePath,
     cronEnabled,
+    workspaceDir,
+    runPreCheck: async ({ scriptPath, workspaceDir: cwd, args }) => {
+      const result = spawnSync("node", [scriptPath, ...(args ?? [])], {
+        cwd,
+        encoding: "utf-8",
+        timeout: 30_000,
+      });
+      const pass = result.status === 0;
+      const err = pass ? undefined : result.stderr?.trim() || `exit ${result.status ?? -1}`;
+      return { pass, err };
+    },
     enqueueSystemEvent: (text, opts) => {
       const { agentId, cfg: runtimeConfig } = resolveCronAgent(opts?.agentId);
       const sessionKey = resolveAgentMainSessionKey({
