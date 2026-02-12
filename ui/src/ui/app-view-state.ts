@@ -1,4 +1,5 @@
 import type { AgentActivity } from "./activity-hud-state";
+import type { CompactionIndicatorStatus } from "./views/chat";
 import type { EventLogEntry } from "./app-events";
 import type { DevicePairingList } from "./controllers/devices";
 import type { ExecApprovalRequest } from "./controllers/exec-approval";
@@ -15,6 +16,7 @@ import type {
   AgentIdentityResult,
   ChannelsStatusSnapshot,
   ConfigSnapshot,
+  ConfigUiHints,
   CronJob,
   CronRunLogEntry,
   CronStatus,
@@ -69,14 +71,18 @@ export type AppViewState = {
   chatMessages: unknown[];
   chatToolMessages: unknown[];
   chatStream: string | null;
+  chatStreamStartedAt: number | null;
   chatRunId: string | null;
   chatAvatarUrl: string | null;
   chatThinkingLevel: string | null;
   chatQueue: ChatQueueItem[];
+  refreshSessionsAfterChat: Set<string>;
   nodesLoading: boolean;
   nodes: Array<Record<string, unknown>>;
   chatNewMessagesBelow: boolean;
+  compactionStatus: CompactionIndicatorStatus | null;
   activityEntries: AgentActivity[];
+  activityDismissedSessionKeys: Set<string>;
   scrollToBottom: () => void;
   devicesLoading: boolean;
   devicesError: string | null;
@@ -104,7 +110,7 @@ export type AppViewState = {
   configSnapshot: ConfigSnapshot | null;
   configSchema: unknown;
   configSchemaLoading: boolean;
-  configUiHints: Record<string, unknown>;
+  configUiHints: ConfigUiHints;
   configForm: Record<string, unknown> | null;
   configFormOriginal: Record<string, unknown> | null;
   configFormMode: "form" | "raw";
@@ -119,6 +125,11 @@ export type AppViewState = {
   nostrProfileFormState: NostrProfileFormState | null;
   nostrProfileAccountId: string | null;
   configFormDirty: boolean;
+  applySessionKey: string;
+  configSchemaVersion: string | null;
+  configSearchQuery: string;
+  configActiveSection: string | null;
+  configActiveSubsection: string | null;
   presenceLoading: boolean;
   presenceEntries: PresenceEntry[];
   presenceError: string | null;
@@ -175,12 +186,20 @@ export type AppViewState = {
   debugCallError: string | null;
   logsLoading: boolean;
   logsError: string | null;
+  logsCursor: number | null;
   logsFile: string | null;
   logsEntries: LogEntry[];
+  logsLastFetchAt: number | null;
+  logsLimit: number;
+  logsMaxBytes: number;
   logsFilterText: string;
   logsLevelFilters: Record<LogLevel, boolean>;
   logsAutoFollow: boolean;
   logsTruncated: boolean;
+  sidebarOpen: boolean;
+  sidebarContent: string | null;
+  sidebarError: string | null;
+  splitRatio: number;
   intelligenceMenu: IntelligenceMenu;
   client: GatewayBrowserClient | null;
   connect: () => void;
@@ -242,4 +261,16 @@ export type AppViewState = {
   handleLogsLevelFilterToggle: (level: LogLevel) => void;
   handleLogsAutoFollowToggle: (next: boolean) => void;
   handleCallDebugMethod: (method: string, params: string) => Promise<void>;
+  resetToolStream: () => void;
+  resetChatScroll: () => void;
+  handleChatScroll: (event: Event) => void;
+  handleSendChat: (messageOverride?: string, opts?: { restoreDraft?: boolean }) => Promise<void>;
+  handleAbortChat: () => Promise<void>;
+  removeQueuedMessage: (id: string) => void;
+  handleOpenSidebar: (content: string) => void;
+  handleCloseSidebar: () => void;
+  handleSplitRatioChange: (ratio: number) => void;
+  handleDismissActivitySession: (key: string) => void;
+  exportLogs: (lines: unknown[], label: string) => void;
+  handleLogsScroll: (event: Event) => void;
 };
