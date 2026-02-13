@@ -33,13 +33,13 @@ export function wrapToolWithAfterToolCallHook(tool: AnyAgentTool, ctx?: HookCont
   const toolName = tool.name || "tool";
   return {
     ...tool,
-    execute: async (toolCallId, params, signal, onUpdate) => {
+    execute: async (toolCallId: string, params: any, signal?: AbortSignal, onUpdate?: any) => {
       const start = Date.now();
       let result: unknown;
       let error: string | undefined;
       try {
         result = await execute(toolCallId, params, signal, onUpdate);
-        return result;
+        return result as any;
       } catch (e) {
         error = e instanceof Error ? e.message : String(e);
         throw e;

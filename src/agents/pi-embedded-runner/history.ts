@@ -240,7 +240,7 @@ export function stripLegacySessionMemoryBlocks(messages: AgentMessage[]): AgentM
   const result = messages.map((msg) => {
     if (msg.role !== "user") return msg;
 
-    const content = (msg as Record<string, unknown>).content;
+    const content = (msg as unknown as Record<string, unknown>).content;
     if (typeof content !== "string") return msg;
     if (!content.includes("[SESSION MEMORY")) return msg;
 

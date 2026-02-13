@@ -12,7 +12,7 @@ const storeCache = new Map<string, { version: 1; jobs: CronJob[] }>();
  */
 export async function reloadFromDisk(state: CronServiceState) {
   storeCache.delete(state.deps.storePath);
-  state.store = undefined;
+  state.store = null;
   await ensureLoaded(state);
 }
 

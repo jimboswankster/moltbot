@@ -658,9 +658,11 @@ export async function runEmbeddedAttempt(
         }
         cacheTrace?.recordStage("session:budget", {
           messages: budgetResult.messages,
-          estimatedTokens: budgetResult.estimatedTokens,
-          budgetTokens: budgetResult.budgetTokens,
-          actions: budgetResult.actions,
+          options: {
+            estimatedTokens: budgetResult.estimatedTokens,
+            budgetTokens: budgetResult.budgetTokens,
+            actions: budgetResult.actions,
+          },
         });
 
         const limited = budgetResult.messages;

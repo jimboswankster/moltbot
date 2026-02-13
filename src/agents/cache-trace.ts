@@ -11,6 +11,7 @@ export type CacheTraceStage =
   | "session:loaded"
   | "session:sanitized"
   | "session:limited"
+  | "session:budget"
   | "prompt:before"
   | "prompt:images"
   | "stream:context"
