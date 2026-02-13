@@ -94,6 +94,7 @@ import {
   buildEmbeddedSystemPrompt,
   createSystemPromptOverride,
 } from "../system-prompt.js";
+import { deriveContextLimits, fitToTokenBudget } from "../token-budget.js";
 import { splitSdkTools } from "../tool-split.js";
 import { describeUnknownError, mapThinkingLevel } from "../utils.js";
 import { detectAndLoadPromptImages } from "./images.js";
@@ -587,11 +588,22 @@ export async function runEmbeddedAttempt(
           log.warn(`memory companion adapter load failed, falling back: ${err}`);
         }
 
+        // ── Budget-derived first-pass limits (from model context window) ──
+        const ctxLimits = deriveContextLimits(params.contextWindowTokens);
+        const channelHistoryLimit = getDmHistoryLimitFromSessionKey(
+          params.sessionKey,
+          params.config,
+        );
+        const effectiveHistoryLimit =
+          channelHistoryLimit != null
+            ? Math.min(channelHistoryLimit, ctxLimits.historyTurns)
+            : ctxLimits.historyTurns;
+
         let limitedHistory: AgentMessage[];
         if (mcAdapter) {
           const mcResult = mcAdapter.limitWithMemory(
             validated,
-            getDmHistoryLimitFromSessionKey(params.sessionKey, params.config),
+            effectiveHistoryLimit,
             params.sessionFile,
           );
           limitedHistory = mcResult.messages;
@@ -602,15 +614,39 @@ export async function runEmbeddedAttempt(
             );
           }
         } else {
-          limitedHistory = limitHistoryTurns(
-            validated,
-            getDmHistoryLimitFromSessionKey(params.sessionKey, params.config),
-          );
+          limitedHistory = limitHistoryTurns(validated, effectiveHistoryLimit);
         }
 
-        const toolLimited = limitToolResults(limitedHistory, 3);
-        const limited = capToolResultSize(toolLimited);
-        cacheTrace?.recordStage("session:limited", { messages: limited });
+        const toolLimited = limitToolResults(limitedHistory, ctxLimits.toolResultsKept);
+        const capped = capToolResultSize(toolLimited, ctxLimits.toolResultMaxChars);
+        cacheTrace?.recordStage("session:limited", { messages: capped });
+
+        // ── Token Budget Gate — hard guarantee against context overflow ──
+        const budgetResult = fitToTokenBudget(capped, params.contextWindowTokens, {
+          outputReserveTokens: params.streamParams?.maxTokens ?? 4096,
+        });
+
+        if (budgetResult.actions.length > 0) {
+          log.warn(
+            `[token-budget] ${budgetResult.actions.join("; ")} | ` +
+              `estimated=${budgetResult.estimatedTokens} budget=${budgetResult.budgetTokens} ` +
+              `contextWindow=${params.contextWindowTokens} messages=${budgetResult.messages.length} ` +
+              `runId=${params.runId} sessionId=${params.sessionId}`,
+          );
+        } else {
+          log.debug(
+            `[token-budget] within budget: estimated=${budgetResult.estimatedTokens} budget=${budgetResult.budgetTokens} ` +
+              `contextWindow=${params.contextWindowTokens} messages=${budgetResult.messages.length}`,
+          );
+        }
+        cacheTrace?.recordStage("session:budget", {
+          messages: budgetResult.messages,
+          estimatedTokens: budgetResult.estimatedTokens,
+          budgetTokens: budgetResult.budgetTokens,
+          actions: budgetResult.actions,
+        });
+
+        const limited = budgetResult.messages;
 
         // Validate message format before sending to model — catch malformed content early and loudly.
         for (let mi = 0; mi < limited.length; mi++) {
