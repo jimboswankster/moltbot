@@ -83,6 +83,8 @@ export type EmbeddedRunAttemptParams = {
   inputSource?: AgentInputSource;
   ownerNumbers?: string[];
   enforceFinalTag?: boolean;
+  /** Resolved context window size in tokens for token-budget limiting. */
+  contextWindowTokens: number;
 };
 
 export type EmbeddedRunAttemptResult = {

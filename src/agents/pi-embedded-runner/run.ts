@@ -387,6 +387,7 @@ export async function runEmbeddedPiAgent(
             inputSource: params.inputSource,
             ownerNumbers: params.ownerNumbers,
             enforceFinalTag: params.enforceFinalTag,
+            contextWindowTokens: ctxInfo.tokens,
           });
 
           const { aborted, promptError, timedOut, sessionIdUsed, lastAssistant } = attempt;

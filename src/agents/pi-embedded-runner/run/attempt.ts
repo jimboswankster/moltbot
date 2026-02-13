@@ -94,6 +94,7 @@ import {
   buildEmbeddedSystemPrompt,
   createSystemPromptOverride,
 } from "../system-prompt.js";
+import { fitToTokenBudget } from "../token-budget.js";
 import { splitSdkTools } from "../tool-split.js";
 import { describeUnknownError, mapThinkingLevel } from "../utils.js";
 import { detectAndLoadPromptImages } from "./images.js";
@@ -609,8 +610,35 @@ export async function runEmbeddedAttempt(
         }
 
         const toolLimited = limitToolResults(limitedHistory, 20);
-        const limited = capToolResultSize(toolLimited);
-        cacheTrace?.recordStage("session:limited", { messages: limited });
+        const capped = capToolResultSize(toolLimited);
+        cacheTrace?.recordStage("session:limited", { messages: capped });
+
+        // ── Token Budget Gate — hard guarantee against context overflow ──
+        const budgetResult = fitToTokenBudget(capped, params.contextWindowTokens, {
+          outputReserveTokens: params.streamParams?.maxTokens ?? 4096,
+        });
+
+        if (budgetResult.actions.length > 0) {
+          log.warn(
+            `[token-budget] ${budgetResult.actions.join("; ")} | ` +
+              `estimated=${budgetResult.estimatedTokens} budget=${budgetResult.budgetTokens} ` +
+              `contextWindow=${params.contextWindowTokens} messages=${budgetResult.messages.length} ` +
+              `runId=${params.runId} sessionId=${params.sessionId}`,
+          );
+        } else {
+          log.debug(
+            `[token-budget] within budget: estimated=${budgetResult.estimatedTokens} budget=${budgetResult.budgetTokens} ` +
+              `contextWindow=${params.contextWindowTokens} messages=${budgetResult.messages.length}`,
+          );
+        }
+        cacheTrace?.recordStage("session:budget", {
+          messages: budgetResult.messages,
+          estimatedTokens: budgetResult.estimatedTokens,
+          budgetTokens: budgetResult.budgetTokens,
+          actions: budgetResult.actions,
+        });
+
+        const limited = budgetResult.messages;
 
         // Validate message format before sending to model — catch malformed content early and loudly.
         for (let mi = 0; mi < limited.length; mi++) {
