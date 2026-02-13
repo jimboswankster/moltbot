@@ -2,6 +2,7 @@ import path from "node:path";
 import type { HeartbeatRunResult } from "../../infra/heartbeat-wake.js";
 import type { CronJob } from "../types.js";
 import type { CronEvent, CronServiceState } from "./state.js";
+import { emitSystemEvent } from "../../telemetry/supabase.js";
 import {
   computeJobNextRunAtMs,
   nextWakeAtMs,
@@ -261,6 +262,24 @@ async function runJobCore(
       };
     }
     state.deps.enqueueSystemEvent(text, { agentId: job.agentId });
+    // Telemetry: record delivery intent for main-lane system events.
+    emitSystemEvent({
+      subsystem: "delivery",
+      event_type: "system_event_enqueued",
+      status: "ok",
+      source: "cron",
+      process_id: job.id,
+      process_name: job.name ?? null,
+      agent_id: job.agentId ?? null,
+      message: text.slice(0, 240),
+      details: {
+        cronJobId: job.id,
+        cronJobName: job.name,
+        sessionTarget: job.sessionTarget,
+        wakeMode: job.wakeMode,
+        textChars: text.length,
+      },
+    });
     if (job.wakeMode === "now" && state.deps.runHeartbeatOnce) {
       const reason = `cron:${job.id}`;
       const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -372,8 +391,27 @@ async function runJobCore(
     }
   }
 
-  state.deps.enqueueSystemEvent(`${statusPrefix}: ${body}`, {
+  state.deps.enqueueSystemEvent(`: `, {
     agentId: job.agentId,
+  });
+  // Telemetry: isolated job postback (system event to main lane)
+  emitSystemEvent({
+    subsystem: "delivery",
+    event_type: "system_event_enqueued",
+    status: outcome.status === "ok" ? "ok" : outcome.status,
+    source: "cron-postback",
+    process_id: job.id,
+    process_name: job.name ?? null,
+    agent_id: job.agentId ?? null,
+    message: `: `.slice(0, 240),
+    details: {
+      cronJobId: job.id,
+      cronJobName: job.name,
+      sessionTarget: job.sessionTarget,
+      wakeMode: job.wakeMode,
+      postbackMode: mode,
+      textChars: `: `.length,
+    },
   });
   if (job.wakeMode === "now") {
     state.deps.requestHeartbeatNow({ reason: `cron:${job.id}:post` });
