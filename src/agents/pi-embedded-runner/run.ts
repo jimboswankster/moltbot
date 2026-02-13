@@ -392,6 +392,46 @@ export async function runEmbeddedPiAgent(
 
           const { aborted, promptError, timedOut, sessionIdUsed, lastAssistant } = attempt;
 
+          // ── Proactive compaction: token budget gate requested compaction before model call ──
+          if (attempt.proactiveCompactRequested && !overflowCompactionAttempted) {
+            log.warn(
+              `proactive compaction triggered by token budget gate for ${provider}/${modelId}`,
+            );
+            overflowCompactionAttempted = true;
+            const compactResult = await compactEmbeddedPiSessionDirect({
+              sessionId: params.sessionId,
+              sessionKey: params.sessionKey,
+              messageChannel: params.messageChannel,
+              messageProvider: params.messageProvider,
+              agentAccountId: params.agentAccountId,
+              authProfileId: lastProfileId,
+              sessionFile: params.sessionFile,
+              workspaceDir: params.workspaceDir,
+              agentDir,
+              config: params.config,
+              skillsSnapshot: params.skillsSnapshot,
+              provider,
+              model: modelId,
+              thinkLevel,
+              reasoningLevel: params.reasoningLevel,
+              bashElevated: params.bashElevated,
+              extraSystemPrompt: params.extraSystemPrompt,
+              ownerNumbers: params.ownerNumbers,
+            });
+            if (compactResult.compacted) {
+              log.info(
+                `proactive compaction succeeded for ${provider}/${modelId}; retrying prompt`,
+              );
+              continue;
+            }
+            log.warn(
+              `proactive compaction failed for ${provider}/${modelId}: ${compactResult.reason ?? "nothing to compact"}; proceeding anyway`,
+            );
+            // Fall through — the model call was skipped, so retry the attempt
+            // even if compaction failed (fitToTokenBudget already shed what it could)
+            continue;
+          }
+
           if (promptError && !aborted) {
             const errorText = describeUnknownError(promptError);
             if (isContextOverflowError(errorText)) {

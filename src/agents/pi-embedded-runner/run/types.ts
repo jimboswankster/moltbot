@@ -104,4 +104,9 @@ export type EmbeddedRunAttemptResult = {
   cloudCodeAssistFormatError: boolean;
   /** Client tool call detected (OpenResponses hosted tools). */
   clientToolCall?: { name: string; params: Record<string, unknown> };
+  /**
+   * If true, the token budget gate determined that even after maximum shedding
+   * the prompt is still over budget. The caller should trigger compaction and retry.
+   */
+  proactiveCompactRequested?: boolean;
 };

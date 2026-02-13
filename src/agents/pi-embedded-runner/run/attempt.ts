@@ -94,7 +94,6 @@ import {
   buildEmbeddedSystemPrompt,
   createSystemPromptOverride,
 } from "../system-prompt.js";
-import { fitToTokenBudget } from "../token-budget.js";
 import { splitSdkTools } from "../tool-split.js";
 import { describeUnknownError, mapThinkingLevel } from "../utils.js";
 import { detectAndLoadPromptImages } from "./images.js";
@@ -609,36 +608,9 @@ export async function runEmbeddedAttempt(
           );
         }
 
-        const toolLimited = limitToolResults(limitedHistory, 20);
-        const capped = capToolResultSize(toolLimited);
-        cacheTrace?.recordStage("session:limited", { messages: capped });
-
-        // ── Token Budget Gate — hard guarantee against context overflow ──
-        const budgetResult = fitToTokenBudget(capped, params.contextWindowTokens, {
-          outputReserveTokens: params.streamParams?.maxTokens ?? 4096,
-        });
-
-        if (budgetResult.actions.length > 0) {
-          log.warn(
-            `[token-budget] ${budgetResult.actions.join("; ")} | ` +
-              `estimated=${budgetResult.estimatedTokens} budget=${budgetResult.budgetTokens} ` +
-              `contextWindow=${params.contextWindowTokens} messages=${budgetResult.messages.length} ` +
-              `runId=${params.runId} sessionId=${params.sessionId}`,
-          );
-        } else {
-          log.debug(
-            `[token-budget] within budget: estimated=${budgetResult.estimatedTokens} budget=${budgetResult.budgetTokens} ` +
-              `contextWindow=${params.contextWindowTokens} messages=${budgetResult.messages.length}`,
-          );
-        }
-        cacheTrace?.recordStage("session:budget", {
-          messages: budgetResult.messages,
-          estimatedTokens: budgetResult.estimatedTokens,
-          budgetTokens: budgetResult.budgetTokens,
-          actions: budgetResult.actions,
-        });
-
-        const limited = budgetResult.messages;
+        const toolLimited = limitToolResults(limitedHistory, 3);
+        const limited = capToolResultSize(toolLimited);
+        cacheTrace?.recordStage("session:limited", { messages: limited });
 
         // Validate message format before sending to model — catch malformed content early and loudly.
         for (let mi = 0; mi < limited.length; mi++) {
@@ -655,6 +627,32 @@ export async function runEmbeddedAttempt(
 
         if (limited.length > 0) {
           activeSession.agent.replaceMessages(limited);
+        }
+
+        // ── Proactive compaction: if budget gate says we're still over, bail early ──
+        if (budgetResult.shouldCompact) {
+          log.warn(
+            `[token-budget] proactive compaction requested — skipping model call ` +
+              `(estimated=${budgetResult.estimatedTokens} budget=${budgetResult.budgetTokens}) ` +
+              `runId=${params.runId} sessionId=${params.sessionId}`,
+          );
+          sessionManager.flushPendingToolResults?.();
+          activeSession.dispose();
+          return {
+            aborted: false,
+            timedOut: false,
+            promptError: null,
+            sessionIdUsed: params.sessionId,
+            messagesSnapshot: limited,
+            assistantTexts: [],
+            toolMetas: [],
+            lastAssistant: undefined,
+            didSendViaMessagingTool: false,
+            messagingToolSentTexts: [],
+            messagingToolSentTargets: [],
+            cloudCodeAssistFormatError: false,
+            proactiveCompactRequested: true,
+          };
         }
       } catch (err) {
         sessionManager.flushPendingToolResults?.();
