@@ -40,7 +40,6 @@ import { getQueueSize } from "../process/command-queue.js";
 import { CommandLane } from "../process/lanes.js";
 import { normalizeAgentId, toAgentStoreSessionKey } from "../routing/session-key.js";
 import { defaultRuntime, type RuntimeEnv } from "../runtime.js";
-import { getTelemetrySupabaseClient } from "../telemetry/supabase.js";
 import { formatErrorMessage } from "./errors.js";
 import { emitHeartbeatEvent, resolveIndicatorType } from "./heartbeat-events.js";
 import { resolveHeartbeatVisibility } from "./heartbeat-visibility.js";
@@ -586,35 +585,32 @@ export async function runHeartbeatOnce(opts: {
   const hasCronEvents = isCronEvent && pendingEvents.length > 0;
 
   // Option A routing enforcement:
-  // Cron-triggered system events must be Desk-routed (Switchboard SSOT) by default,
-  // not delivered into the CEO chat lane. Only explicit escalation policy should
-  // page the CEO.
+  // Cron-triggered system events must be desk-routed by default, not delivered
+  // into the CEO chat lane. To honor the engine↔OS IP boundary, the engine
+  // appends a generic JSONL event record; the OS adapter routes it into
+  // Switchboard (state_signals) with escalation policy.
   if (hasCronEvents) {
     try {
-      const client = getTelemetrySupabaseClient();
-      if (client) {
-        const text = pendingEvents.join("\n\n---\n\n");
-        await client.from("state_signals").insert({
-          agent_id: agentId,
-          source: "cron-event",
-          kind: "cron_event",
-          workstream_id: "SYSTEM/IMMUNE",
-          status: "open",
-          priority: "normal",
-          summary: "[Cron] Scheduled event triggered (desk-routed)",
-          payload: {
-            reason: opts.reason,
-            sessionKey,
-            events: pendingEvents,
-            text,
-            startedAt,
-          },
-          acknowledged: false,
-        } as any);
-      }
+      const queuePath = path.join(
+        workspaceRoot,
+        "os",
+        "coordination",
+        "events",
+        "cron-events.jsonl",
+      );
+      fs.mkdirSync(path.dirname(queuePath), { recursive: true });
+      const event = {
+        ts: new Date().toISOString(),
+        event_id: "cron_" + Date.now() + "_" + Math.random().toString(16).slice(2),
+        reason: opts.reason,
+        sessionKey,
+        events: pendingEvents,
+        text: pendingEvents.join("\n\n---\n\n"),
+      };
+      fs.appendFileSync(queuePath, JSON.stringify(event) + "\n", "utf-8");
     } catch (err) {
       // Best-effort: never crash heartbeat runner.
-      log.warn("cron-event: failed to desk-route state_signals", {
+      log.warn("cron-event: failed to append event queue", {
         error: err.message,
       });
     }
