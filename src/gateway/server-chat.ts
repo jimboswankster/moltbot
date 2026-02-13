@@ -247,6 +247,17 @@ export type AgentEventHandlerOptions = {
   streamBufferAdapter?: unknown;
 };
 
+type SubsystemLoggerLike = { debug?: (msg: string, meta?: Record<string, unknown>) => void };
+const logDebug = (
+  log: SubsystemLoggerLike | undefined,
+  msg: string,
+  meta?: Record<string, unknown>,
+) => {
+  if (log && typeof log.debug === "function") {
+    log.debug(msg, meta);
+  }
+};
+
 export function createAgentEventHandler({
   broadcast,
   broadcastToConnIds,
@@ -256,7 +267,9 @@ export function createAgentEventHandler({
   resolveSessionKeyForRun,
   clearAgentRunContext,
   toolEventRecipients,
+  logGateway,
 }: AgentEventHandlerOptions) {
+  const log = logGateway as SubsystemLoggerLike | undefined;
   // Track the last-sent text length per run so we can compute the delta slice
   // instead of resending the full accumulated text every time (O(N²) → O(N)).
   const deltaOffsets = new Map<string, number>();
@@ -267,6 +280,12 @@ export function createAgentEventHandler({
     const now = Date.now();
     const last = chatRunState.deltaSentAt.get(clientRunId) ?? 0;
     if (now - last < 150) {
+      logDebug(log, "chat-delta skipped (throttle)", {
+        sessionKey,
+        clientRunId,
+        seq,
+        textLen: text.length,
+      });
       return;
     }
     chatRunState.deltaSentAt.set(clientRunId, now);
@@ -292,6 +311,12 @@ export function createAgentEventHandler({
       broadcast("chat", payload, { dropIfSlow: true });
     }
     nodeSendToSession(sessionKey, "chat", payload);
+    logDebug(log, "chat-delta broadcast", {
+      sessionKey,
+      clientRunId,
+      seq,
+      deltaLen: deltaText?.length ?? 0,
+    });
   };
 
   const emitChatFinal = (
@@ -324,6 +349,7 @@ export function createAgentEventHandler({
         broadcast("chat", payload);
       }
       nodeSendToSession(sessionKey, "chat", payload);
+      logChatFinal(sessionKey, clientRunId, seq, "done");
       return;
     }
     const payload = {
@@ -335,6 +361,10 @@ export function createAgentEventHandler({
     };
     broadcast("chat", payload);
     nodeSendToSession(sessionKey, "chat", payload);
+    logChatFinal(sessionKey, clientRunId, seq, "error");
+  };
+  const logChatFinal = (sessionKey: string, clientRunId: string, seq: number, jobState: string) => {
+    logDebug(log, "chat-final broadcast", { sessionKey, clientRunId, seq, jobState });
   };
 
   const resolveToolVerboseLevel = (runId: string, sessionKey?: string) => {
@@ -363,6 +393,20 @@ export function createAgentEventHandler({
     const chatLink = chatRunState.registry.peek(evt.runId);
     const sessionKey = chatLink?.sessionKey ?? resolveSessionKeyForRun(evt.runId);
     const clientRunId = chatLink?.clientRunId ?? evt.runId;
+    if (evt.stream === "assistant" || evt.stream === "lifecycle") {
+      const hasText = typeof (evt.data as { text?: string })?.text === "string";
+      const hasDelta = typeof (evt.data as { delta?: string })?.delta === "string";
+      logDebug(log, "agent event", {
+        stream: evt.stream,
+        runId: evt.runId,
+        sessionKey: sessionKey ?? "(none)",
+        clientRunId,
+        chatLink: Boolean(chatLink),
+        hasText,
+        hasDelta,
+        textLen: hasText ? (evt.data as { text: string }).text.length : 0,
+      });
+    }
     const isAborted =
       chatRunState.abortedRuns.has(clientRunId) || chatRunState.abortedRuns.has(evt.runId);
     // Include sessionKey so Control UI can filter tool streams per session.
@@ -418,6 +462,12 @@ export function createAgentEventHandler({
       }
       if (!isAborted && evt.stream === "assistant" && typeof evt.data?.text === "string") {
         emitChatDelta(sessionKey, clientRunId, evt.seq, evt.data.text);
+      } else if (!isAborted && evt.stream === "assistant" && sessionKey) {
+        logDebug(log, "assistant event skipped (no text)", {
+          runId: evt.runId,
+          sessionKey,
+          hasDelta: typeof (evt.data as { delta?: string })?.delta === "string",
+        });
       } else if (!isAborted && (lifecyclePhase === "end" || lifecyclePhase === "error")) {
         if (chatLink) {
           const finished = chatRunState.registry.shift(evt.runId);

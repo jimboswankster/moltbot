@@ -392,6 +392,11 @@ export const chatHandlers: GatewayRequestHandlers = {
     });
     const now = Date.now();
     const clientRunId = p.idempotencyKey;
+    context.logGateway.debug("chat.send received", {
+      sessionKey: rawSessionKey,
+      clientRunId,
+      msgLen: rawMessage.length,
+    });
 
     const sendPolicy = resolveSendPolicy({
       cfg,
@@ -528,6 +533,12 @@ export const chatHandlers: GatewayRequestHandlers = {
           disableBlockStreaming: true,
           onAgentRunStart: (runId) => {
             agentRunStarted = true;
+            context.addChatRun(runId, { sessionKey, clientRunId: p.idempotencyKey });
+            context.logGateway.debug("chat.send agent run started", {
+              runId,
+              sessionKey,
+              clientRunId: p.idempotencyKey,
+            });
             const connId = typeof client?.connId === "string" ? client.connId : undefined;
             const wantsToolEvents = hasGatewayClientCap(
               client?.connect?.caps,

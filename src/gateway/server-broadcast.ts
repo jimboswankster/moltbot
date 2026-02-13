@@ -60,6 +60,12 @@ export function createGatewayBroadcaster(params: { clients: Set<GatewayWsClient>
     if (event === "agent") {
       Object.assign(logMeta, summarizeAgentEventForWsLog(payload));
     }
+    if (event === "chat" && payload && typeof payload === "object") {
+      const p = payload as Record<string, unknown>;
+      logMeta.runId = p.runId;
+      logMeta.sessionKey = p.sessionKey;
+      logMeta.state = p.state;
+    }
     logWs("out", "event", logMeta);
     for (const c of params.clients) {
       if (!hasEventScope(c, event)) {
