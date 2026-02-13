@@ -218,15 +218,20 @@ export function handleAgentEvent(host: ToolStreamHost, payload?: AgentEventPaylo
   if (payload.stream !== "tool") {
     return;
   }
+  // Resolve effective runId: prefer clientRunId (from chat.send idempotencyKey)
+  // over the internal agent runId for matching against the UI's chatRunId.
+  const effectiveRunId = typeof (payload as Record<string, unknown>).clientRunId === "string"
+    ? ((payload as Record<string, unknown>).clientRunId as string)
+    : payload.runId;
   const sessionKey = typeof payload.sessionKey === "string" ? payload.sessionKey : undefined;
   if (sessionKey && sessionKey !== host.sessionKey) {
     return;
   }
   // Fallback: only accept session-less events for the active run.
-  if (!sessionKey && host.chatRunId && payload.runId !== host.chatRunId) {
+  if (!sessionKey && host.chatRunId && effectiveRunId !== host.chatRunId) {
     return;
   }
-  if (host.chatRunId && payload.runId !== host.chatRunId) {
+  if (host.chatRunId && effectiveRunId !== host.chatRunId) {
     return;
   }
   if (!host.chatRunId) {

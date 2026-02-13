@@ -239,16 +239,22 @@ function handleGatewayEventUnsafe(host: GatewayHost, evt: GatewayEventFrame) {
     }
     const payload = evt.payload as AgentEventPayload | undefined;
     if (payload) {
+      // Resolve effective runId: prefer clientRunId (the idempotencyKey from chat.send)
+      // over the internal agent runId. This ensures the UI can match agent events
+      // against its own chatRunId without relying on timeout-based fallbacks.
+      const effectiveRunId = typeof (payload as Record<string, unknown>).clientRunId === "string"
+        ? ((payload as Record<string, unknown>).clientRunId as string)
+        : payload.runId;
       const sessionKey = typeof payload.sessionKey === "string" ? payload.sessionKey : "";
       const activeSession = host.sessionKey;
       const matchesSession = sessionKey ? sessionKey === activeSession : false;
       const currentRun = host.chatRunId;
-      const runMatches = !currentRun || currentRun === payload.runId;
-      const matchesRunOnly = !sessionKey && currentRun === payload.runId;
+      const runMatches = !currentRun || currentRun === effectiveRunId;
+      const matchesRunOnly = !sessionKey && currentRun === effectiveRunId;
       const lastSendAt = (host as unknown as { lastChatSendAt?: number | null }).lastChatSendAt;
       const lastSendRunId = (host as unknown as { lastChatSendRunId?: string | null })
         .lastChatSendRunId;
-      const recentSend = typeof lastSendAt === "number" && Date.now() - lastSendAt < 120_000;
+      const recentSend = typeof lastSendAt === "number" && Date.now() - lastSendAt < 300_000;
       const matchesRecentRun = recentSend && currentRun && lastSendRunId === currentRun;
       const accepted =
         (matchesSession && runMatches) || matchesRunOnly || matchesRecentRun;
@@ -256,6 +262,7 @@ function handleGatewayEventUnsafe(host: GatewayHost, evt: GatewayEventFrame) {
         const debugInfo = {
           stream: payload.stream,
           runId: payload.runId,
+          effectiveRunId,
           sessionKey: sessionKey || "(empty)",
           activeSession,
           matchesSession,
@@ -274,7 +281,7 @@ function handleGatewayEventUnsafe(host: GatewayHost, evt: GatewayEventFrame) {
       }
       if (accepted) {
         if (!host.chatRunId) {
-          host.chatRunId = payload.runId;
+          host.chatRunId = effectiveRunId;
         }
         const startedAt = (host as unknown as { chatStreamStartedAt: number | null })
           .chatStreamStartedAt;
@@ -297,14 +304,14 @@ function handleGatewayEventUnsafe(host: GatewayHost, evt: GatewayEventFrame) {
             (host as unknown as { chatStream: string | null }).chatStream = current + delta;
           }
         } else if (payload.stream === "lifecycle" && payload.data?.phase === "end") {
-          if (host.chatRunId === payload.runId) {
+          if (host.chatRunId === effectiveRunId) {
             host.chatRunId = null;
             (host as unknown as { chatStream: string | null }).chatStream = null;
             (host as unknown as { chatStreamStartedAt: number | null }).chatStreamStartedAt = null;
             void loadChatHistory(host as unknown as OpenClawApp);
           }
         } else if (payload.stream === "lifecycle" && payload.data?.phase === "error") {
-          if (host.chatRunId === payload.runId) {
+          if (host.chatRunId === effectiveRunId) {
             host.chatRunId = null;
             (host as unknown as { chatStream: string | null }).chatStream = null;
             (host as unknown as { chatStreamStartedAt: number | null }).chatStreamStartedAt = null;

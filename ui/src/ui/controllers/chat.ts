@@ -195,16 +195,16 @@ export function handleChatEvent(state: ChatState, payload?: ChatEventPayload) {
   }
 
   if (payload.state === "delta") {
-    const deltaText = payload.deltaText;
-    if (typeof deltaText === "string" && deltaText.length > 0) {
-      const current = state.chatStream ?? "";
-      state.chatStream = `${current}${deltaText}`;
-      return payload.state;
-    }
+    // Agent events (unthrottled, never dropped) are the primary source of truth
+    // for chatStream — they set it to the full accumulated text. Chat deltas act
+    // only as a fallback using the full text from the message payload. We do NOT
+    // append deltaText because both the agent and chat paths fire for the same
+    // tokens, and appending a delta on top of an already-full chatStream produces
+    // garbled/duplicated text.
     const next = extractText(payload.message);
-    if (typeof next === "string") {
+    if (typeof next === "string" && next.length > 0) {
       const current = state.chatStream ?? "";
-      if (!current || next.length >= current.length) {
+      if (next.length > current.length) {
         state.chatStream = next;
       }
     }

@@ -92,19 +92,40 @@ describe("handleChatEvent", () => {
     expect(state.chatStreamStartedAt).toBe(null);
   });
 
-  it("appends deltaText updates for streaming", () => {
+  it("uses full message text as fallback for delta updates (agent events are primary)", () => {
     const state = createState({
       sessionKey: "main",
       chatRunId: "run-1",
       chatStream: "Hello",
     });
+    // Chat deltas carry the full accumulated text in payload.message.
+    // The handler uses this as a fallback — it does NOT append deltaText,
+    // because agent events (unthrottled) already set chatStream to full text.
     const payload: ChatEventPayload = {
       runId: "run-1",
       sessionKey: "main",
       state: "delta",
       deltaText: " world",
+      message: { role: "assistant", content: [{ type: "text", text: "Hello world" }] },
     };
     expect(handleChatEvent(state, payload)).toBe("delta");
     expect(state.chatStream).toBe("Hello world");
+  });
+
+  it("does not regress chatStream when full text is shorter than current", () => {
+    const state = createState({
+      sessionKey: "main",
+      chatRunId: "run-1",
+      chatStream: "Hello world, how are you?",
+    });
+    // Out-of-order chat delta with stale full text — should NOT regress.
+    const payload: ChatEventPayload = {
+      runId: "run-1",
+      sessionKey: "main",
+      state: "delta",
+      message: { role: "assistant", content: [{ type: "text", text: "Hello" }] },
+    };
+    expect(handleChatEvent(state, payload)).toBe("delta");
+    expect(state.chatStream).toBe("Hello world, how are you?");
   });
 });
