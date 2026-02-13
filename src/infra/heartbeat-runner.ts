@@ -101,8 +101,8 @@ const EXEC_EVENT_PROMPT =
 // This overrides the standard heartbeat prompt so the model relays the scheduled
 // reminder instead of responding with "HEARTBEAT_OK".
 const CRON_EVENT_PROMPT =
-  "A scheduled reminder has been triggered. The reminder message is shown in the system messages above. " +
-  "Please relay this reminder to the user in a helpful and friendly way.";
+  "A scheduled cron event has been triggered. The event text is included below. " +
+  "Please relay it to the user in a helpful and friendly way.";
 
 function resolveActiveHoursTimezone(cfg: OpenClawConfig, raw?: string): string {
   const trimmed = raw?.trim();
@@ -586,7 +586,10 @@ export async function runHeartbeatOnce(opts: {
   const prompt = hasExecCompletion
     ? EXEC_EVENT_PROMPT
     : hasCronEvents
-      ? CRON_EVENT_PROMPT
+      ? CRON_EVENT_PROMPT +
+        "\n\n--- CRON EVENT TEXT (inlined) ---\n" +
+        pendingEvents.join("\n\n---\n\n") +
+        "\n--- END CRON EVENT TEXT ---\n"
       : resolveHeartbeatPrompt(cfg, heartbeat);
   const ctx = {
     Body: appendCronStyleCurrentTimeLine(prompt, cfg, startedAt),
