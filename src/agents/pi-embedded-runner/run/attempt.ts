@@ -608,7 +608,7 @@ export async function runEmbeddedAttempt(
           );
         }
 
-        const toolLimited = limitToolResults(limitedHistory, 3);
+        const toolLimited = limitToolResults(limitedHistory, 20);
         const limited = capToolResultSize(toolLimited);
         cacheTrace?.recordStage("session:limited", { messages: limited });
 

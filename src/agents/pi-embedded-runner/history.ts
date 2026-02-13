@@ -172,7 +172,7 @@ export function getDmHistoryLimitFromSessionKey(
   const userIdRaw = providerParts.slice(2).join(":");
   const userId = stripThreadSuffix(userIdRaw);
   if (provider === "webchat") {
-    return 30; // Safety limit for webchat sessions
+    return 80; // Safety limit for webchat sessions
   }
   if (kind !== "dm") {
     return undefined;
