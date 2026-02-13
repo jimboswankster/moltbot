@@ -35,6 +35,7 @@ import { loadStreamBufferAdapter } from "../infra/stream-buffer-adapter.js";
 import { scheduleGatewayUpdateCheck } from "../infra/update-startup.js";
 import { startDiagnosticHeartbeat, stopDiagnosticHeartbeat } from "../logging/diagnostic.js";
 import { createSubsystemLogger, runtimeForLogger } from "../logging/subsystem.js";
+import { emitSystemEvent } from "../telemetry/supabase.js";
 import { runOnboardingWizard } from "../wizard/onboarding.js";
 import { startGatewayConfigReloader } from "./config-reload.js";
 import { ExecApprovalManager } from "./exec-approval-manager.js";
@@ -336,6 +337,27 @@ export async function startGatewayServer(
   });
   let { cron, storePath: cronStorePath } = cronState;
 
+  // Telemetry: gateway proof-of-life heartbeat (best-effort; no-op if Supabase env missing).
+  const gatewayHeartbeatIntervalMs = 15 * 60 * 1000;
+  emitSystemEvent({
+    subsystem: "gateway",
+    event_type: "gateway_started",
+    status: "ok",
+    source: "gateway",
+    message: "gateway started",
+  });
+  const gatewayHeartbeatTimer = setInterval(() => {
+    emitSystemEvent({
+      subsystem: "gateway",
+      event_type: "gateway_heartbeat",
+      status: "ok",
+      source: "gateway",
+      details: { port },
+    });
+  }, gatewayHeartbeatIntervalMs);
+  // Allow process to exit naturally if this is the only pending timer.
+  (gatewayHeartbeatTimer as any).unref?.();
+
   const channelManager = createChannelManager({
     loadConfig,
     channelLogs,
@@ -590,6 +612,7 @@ export async function startGatewayServer(
         skillsRefreshTimer = null;
       }
       skillsChangeUnsub();
+      clearInterval(gatewayHeartbeatTimer);
       await close(opts);
     },
   };
