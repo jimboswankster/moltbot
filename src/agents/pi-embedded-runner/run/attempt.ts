@@ -630,8 +630,16 @@ export async function runEmbeddedAttempt(
         cacheTrace?.recordStage("session:limited", { messages: capped });
 
         // ── Token Budget Gate — hard guarantee against context overflow ──
+        // Estimate system prompt tokens (including session memory if injected).
+        // Uses the same ~4 chars/token heuristic as the rest of the token estimation pipeline.
+        const effectiveSystemPromptChars = mcSessionMemory
+          ? systemPromptText.length + mcSessionMemory.length + 80 // 80 chars for [SESSION MEMORY] wrapper
+          : systemPromptText.length;
+        const systemPromptTokens = Math.ceil(effectiveSystemPromptChars / 4);
+
         const budgetResult = fitToTokenBudget(capped, params.contextWindowTokens, {
           outputReserveTokens: params.streamParams?.maxTokens ?? 4096,
+          systemPromptTokens,
         });
 
         if (budgetResult.actions.length > 0) {
