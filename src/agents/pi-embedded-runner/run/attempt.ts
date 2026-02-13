@@ -78,6 +78,7 @@ import {
   getDmHistoryLimitFromSessionKey,
   limitHistoryTurns,
   limitToolResults,
+  stripLegacySessionMemoryBlocks,
 } from "../history.js";
 import { log } from "../logger.js";
 import { buildModelAliasLines } from "../model.js";
@@ -582,6 +583,13 @@ export async function runEmbeddedAttempt(
         const validated = transcriptPolicy.validateAnthropicTurns
           ? validateAnthropicTurns(validatedGemini)
           : validatedGemini;
+
+        // Strip legacy [SESSION MEMORY...][END SESSION MEMORY] blocks from historical
+        // user messages. Before the Phase 1 fix, session memory was injected into the
+        // user prompt and stored in the JSONL. Old sessions carry these blocks — strip
+        // them so they don't waste tokens, confuse the model, or poison the classifier.
+        const sanitizedMemory = stripLegacySessionMemoryBlocks(validated);
+
         try {
           mcAdapter = await loadMemoryCompanionAdapter(params.config, params.agentDir, log);
         } catch (err) {
@@ -602,7 +610,7 @@ export async function runEmbeddedAttempt(
         let limitedHistory: AgentMessage[];
         if (mcAdapter) {
           const mcResult = mcAdapter.limitWithMemory(
-            validated,
+            sanitizedMemory,
             effectiveHistoryLimit,
             params.sessionFile,
           );
@@ -614,7 +622,7 @@ export async function runEmbeddedAttempt(
             );
           }
         } else {
-          limitedHistory = limitHistoryTurns(validated, effectiveHistoryLimit);
+          limitedHistory = limitHistoryTurns(sanitizedMemory, effectiveHistoryLimit);
         }
 
         const toolLimited = limitToolResults(limitedHistory, ctxLimits.toolResultsKept);

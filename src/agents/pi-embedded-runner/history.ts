@@ -212,3 +212,45 @@ export function getDmHistoryLimitFromSessionKey(
 
   return getLimit(resolveProviderConfig(config, provider));
 }
+
+// ─── Legacy session memory block stripper ────────────────────────────────────
+
+/**
+ * Regex matching [SESSION MEMORY...][END SESSION MEMORY] blocks that were
+ * previously baked into user messages when session memory was injected
+ * into the user prompt instead of the system prompt.
+ *
+ * Matches the full block including surrounding whitespace so the cleaned
+ * message reads naturally.
+ */
+const SESSION_MEMORY_BLOCK_RE = /\[SESSION MEMORY[^\]]*\][\s\S]*?\[END SESSION MEMORY\]\s*/g;
+
+/**
+ * Strip legacy [SESSION MEMORY...][END SESSION MEMORY] blocks from user
+ * messages in the conversation history.
+ *
+ * Before the Phase 1 fix, session memory was injected into the user prompt
+ * and stored in the JSONL. Old sessions carry these blocks — strip them so
+ * they don't waste tokens, confuse the model, or poison the classifier.
+ *
+ * This function is idempotent and pure (never mutates the input array).
+ */
+export function stripLegacySessionMemoryBlocks(messages: AgentMessage[]): AgentMessage[] {
+  let changed = false;
+  const result = messages.map((msg) => {
+    if (msg.role !== "user") return msg;
+
+    const content = (msg as Record<string, unknown>).content;
+    if (typeof content !== "string") return msg;
+    if (!content.includes("[SESSION MEMORY")) return msg;
+
+    const cleaned = content.replace(SESSION_MEMORY_BLOCK_RE, "").trim();
+    if (cleaned === content.trim()) return msg;
+    if (!cleaned) return msg; // Don't produce empty messages
+
+    changed = true;
+    return { ...msg, content: cleaned };
+  });
+
+  return changed ? result : messages;
+}
