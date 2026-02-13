@@ -866,11 +866,19 @@ export async function runEmbeddedAttempt(
           }
         }
 
-        // Memory Companion: inject session memory into prompt context.
+        // Memory Companion: inject session memory into system prompt (ephemeral, not stored in JSONL).
         // mcSessionMemory was populated during the history limiting phase above.
+        // IMPORTANT: Session memory is appended to the SYSTEM prompt, not the user prompt.
+        // Injecting into the user prompt would bake the memory block into the JSONL as part
+        // of the user message, causing: (a) compounding across turns, (b) classifier
+        // self-poisoning (messages starting with [SESSION MEMORY are classified as system
+        // injections), and (c) user-visible "spam" in the chat UI.
         if (mcSessionMemory) {
-          effectivePrompt = `[SESSION MEMORY — Summary of earlier conversation]\n${mcSessionMemory}\n[END SESSION MEMORY]\n\n${effectivePrompt}`;
-          log.debug(`memory companion: injected session memory (${mcSessionMemory.length} chars)`);
+          const memoryBlock = `\n\n[SESSION MEMORY — Summary of earlier conversation]\n${mcSessionMemory}\n[END SESSION MEMORY]`;
+          activeSession.agent.setSystemPrompt(systemPromptText + memoryBlock);
+          log.debug(
+            `memory companion: injected session memory into system prompt (${mcSessionMemory.length} chars)`,
+          );
         }
 
         log.debug(`embedded run prompt start: runId=${params.runId} sessionId=${params.sessionId}`);
