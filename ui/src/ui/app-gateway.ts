@@ -359,14 +359,25 @@ function handleGatewayEventUnsafe(host: GatewayHost, evt: GatewayEventFrame) {
       }
     }
     if (state === "final") {
-      // Force scroll to bottom after the response completes. The transition from
-      // stream bubble → final message (via loadChatHistory) can leave the viewport
-      // above the bottom: markdown rendering, code syntax highlighting, and image
-      // loading increase content height after the initial layout, and the streaming
-      // threshold (2000px) drops back to 450px once chatStream is null.
-      void loadChatHistory(host as unknown as OpenClawApp).then(() => {
-        (host as unknown as OpenClawApp).scrollToBottom();
-      });
+      const chatStream = (host as unknown as { chatStream: string | null }).chatStream;
+      const isCurrentRunFinal = chatStream === null;
+      if (isCurrentRunFinal) {
+        // The current run completed: chatStream was reset to null by handleChatEvent.
+        // Force scroll to bottom after the response completes. The transition from
+        // stream bubble → final message (via loadChatHistory) can leave the viewport
+        // above the bottom: markdown rendering, code syntax highlighting, and image
+        // loading increase content height after the initial layout, and the streaming
+        // threshold (2000px) drops back to 450px once chatStream is null.
+        void loadChatHistory(host as unknown as OpenClawApp).then(() => {
+          (host as unknown as OpenClawApp).scrollToBottom();
+        });
+      } else {
+        // A different run's final (e.g. sub-agent announce). Don't replace
+        // chatMessages mid-stream — the server history can include the user's
+        // message in a different position than the optimistic one, causing a
+        // transient duplicate or message shuffle. The current run's own final
+        // will refresh history properly when it arrives.
+      }
     }
     (host as unknown as OpenClawApp).requestUpdate();
     return;
