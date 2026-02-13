@@ -43,6 +43,7 @@ function createScrollHost(
     chatUserNearBottom: true,
     chatNewMessagesBelow: false,
     chatStream: null as string | null,
+    chatLastScrollTop: scrollTop,
     logsScrollFrame: null as number | null,
     logsAtBottom: true,
     topbarObserver: null as ResizeObserver | null,
@@ -62,7 +63,7 @@ function createScrollEvent(scrollHeight: number, scrollTop: number, clientHeight
 /* ------------------------------------------------------------------ */
 
 describe("handleChatScroll", () => {
-  it("sets chatUserNearBottom=true when within the 450px threshold", () => {
+  it("sets chatUserNearBottom=true when within the 200px threshold", () => {
     const { host } = createScrollHost({});
     // distanceFromBottom = 2000 - 1600 - 400 = 0 → clearly near bottom
     const event = createScrollEvent(2000, 1600, 400);
@@ -72,16 +73,16 @@ describe("handleChatScroll", () => {
 
   it("sets chatUserNearBottom=true when distance is just under threshold", () => {
     const { host } = createScrollHost({});
-    // distanceFromBottom = 2000 - 1151 - 400 = 449 → just under threshold
-    const event = createScrollEvent(2000, 1151, 400);
+    // distanceFromBottom = 2000 - 1401 - 400 = 199 → just under 200px threshold
+    const event = createScrollEvent(2000, 1401, 400);
     handleChatScroll(host, event);
     expect(host.chatUserNearBottom).toBe(true);
   });
 
   it("sets chatUserNearBottom=false when distance is exactly at threshold", () => {
     const { host } = createScrollHost({});
-    // distanceFromBottom = 2000 - 1150 - 400 = 450 → at threshold (uses strict <)
-    const event = createScrollEvent(2000, 1150, 400);
+    // distanceFromBottom = 2000 - 1400 - 400 = 200 → at threshold (uses strict <)
+    const event = createScrollEvent(2000, 1400, 400);
     handleChatScroll(host, event);
     expect(host.chatUserNearBottom).toBe(false);
   });
@@ -94,11 +95,10 @@ describe("handleChatScroll", () => {
     expect(host.chatUserNearBottom).toBe(false);
   });
 
-  it("sets chatUserNearBottom=false when user scrolled up past one long message (>200px <450px)", () => {
+  it("sets chatUserNearBottom=false when user scrolled up past one short message (~250px)", () => {
     const { host } = createScrollHost({});
-    // distanceFromBottom = 2000 - 1250 - 400 = 350 → old threshold would say "near", new says "near"
-    // distanceFromBottom = 2000 - 1100 - 400 = 500 → old threshold would say "not near", new also "not near"
-    const event = createScrollEvent(2000, 1100, 400);
+    // distanceFromBottom = 2000 - 1350 - 400 = 250 → above 200px threshold
+    const event = createScrollEvent(2000, 1350, 400);
     handleChatScroll(host, event);
     expect(host.chatUserNearBottom).toBe(false);
   });
@@ -187,6 +187,43 @@ describe("scheduleChatScroll", () => {
     expect(container.scrollTop).toBe(container.scrollHeight);
   });
 
+  it("does NOT scroll when within 200px of bottom but chatUserNearBottom=false (after initial load)", async () => {
+    const { host, container } = createScrollHost({
+      scrollHeight: 2000,
+      scrollTop: 1500,
+      clientHeight: 400,
+    });
+    // distanceFromBottom = 2000 - 1500 - 400 = 100 → within 200px threshold
+    // But chatUserNearBottom is false and initial auto-scroll already happened.
+    // The distance fallback should NOT override the user's scroll position.
+    host.chatUserNearBottom = false;
+    host.chatHasAutoScrolled = true;
+    const originalScrollTop = container.scrollTop;
+
+    scheduleChatScroll(host);
+    await host.updateComplete;
+
+    expect(container.scrollTop).toBe(originalScrollTop);
+    expect(host.chatNewMessagesBelow).toBe(true);
+  });
+
+  it("DOES scroll when within 200px of bottom on initial load (chatHasAutoScrolled=false)", async () => {
+    const { host, container } = createScrollHost({
+      scrollHeight: 2000,
+      scrollTop: 1500,
+      clientHeight: 400,
+    });
+    // distanceFromBottom = 100 → within 200px threshold
+    // chatUserNearBottom is false but this is the initial load
+    host.chatUserNearBottom = false;
+    host.chatHasAutoScrolled = false;
+
+    scheduleChatScroll(host);
+    await host.updateComplete;
+
+    expect(container.scrollTop).toBe(container.scrollHeight);
+  });
+
   it("sets chatNewMessagesBelow when not scrolling due to user position", async () => {
     const { host } = createScrollHost({
       scrollHeight: 2000,
@@ -257,18 +294,27 @@ describe("streaming scroll behavior", () => {
     expect(container.scrollTop).toBe(container.scrollHeight);
   });
 
-  it("during streaming, large content growth (>450px) still auto-scrolls", async () => {
+  it("during streaming, content growth does NOT disable auto-scroll (scrollTop unchanged)", async () => {
     const { host, container } = createScrollHost({
-      scrollHeight: 3000,
+      scrollHeight: 2000,
       scrollTop: 1600,
       clientHeight: 400,
     });
-    // distanceFromBottom = 3000 - 1600 - 400 = 1000 → above 450px threshold
-    // But during streaming, the 2000px threshold should keep auto-scroll.
-    host.chatUserNearBottom = false;
+    // User is at bottom, auto-scroll is active
+    host.chatUserNearBottom = true;
     host.chatHasAutoScrolled = true;
-    host.chatStream = "streaming content..."; // Active stream
+    host.chatStream = "streaming content...";
+    host.chatLastScrollTop = 1600;
 
+    // Simulate content growth: scrollHeight increases, scrollTop stays the same
+    // distanceFromBottom = 3000 - 1600 - 400 = 1000 → above 450px threshold
+    // But since scrollTop didn't decrease, handleChatScroll should NOT set nearBottom=false
+    const growthEvent = createScrollEvent(3000, 1600, 400);
+    handleChatScroll(host, growthEvent);
+    expect(host.chatUserNearBottom).toBe(true);
+
+    // scheduleChatScroll should still auto-scroll since chatUserNearBottom is true
+    container.scrollHeight = 3000;
     scheduleChatScroll(host);
     await host.updateComplete;
 
@@ -276,22 +322,29 @@ describe("streaming scroll behavior", () => {
     expect(host.chatNewMessagesBelow).toBe(false);
   });
 
-  it("during streaming, handleChatScroll does not flag 'not near bottom' for moderate distance", () => {
+  it("during streaming, user scrolling UP does disable auto-scroll", () => {
     const { host } = createScrollHost({});
-    host.chatStream = "streaming..."; // Active stream
-    // distanceFromBottom = 2000 - 1100 - 400 = 500 → above 450px, but below 2000px streaming threshold
-    const event = createScrollEvent(2000, 1100, 400);
-    handleChatScroll(host, event);
-    expect(host.chatUserNearBottom).toBe(true);
-  });
+    host.chatStream = "streaming...";
+    host.chatUserNearBottom = true;
+    host.chatLastScrollTop = 1500; // Was near bottom
 
-  it("during streaming, user scrolling up past 2000px DOES flag 'not near bottom'", () => {
-    const { host } = createScrollHost({});
-    host.chatStream = "streaming..."; // Active stream
-    // distanceFromBottom = 5000 - 500 - 400 = 4100 → above 2000px streaming threshold
-    const event = createScrollEvent(5000, 500, 400);
+    // User scrolls up — scrollTop decreases from 1500 to 500
+    const event = createScrollEvent(2000, 500, 400);
     handleChatScroll(host, event);
     expect(host.chatUserNearBottom).toBe(false);
+  });
+
+  it("during streaming, user scrolling back to bottom re-enables auto-scroll", () => {
+    const { host } = createScrollHost({});
+    host.chatStream = "streaming...";
+    host.chatUserNearBottom = false; // Was scrolled up
+    host.chatLastScrollTop = 500;
+
+    // User scrolls back down near bottom
+    // distanceFromBottom = 2000 - 1500 - 400 = 100 → below 200px threshold
+    const event = createScrollEvent(2000, 1500, 400);
+    handleChatScroll(host, event);
+    expect(host.chatUserNearBottom).toBe(true);
   });
 });
 

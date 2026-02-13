@@ -366,8 +366,7 @@ function handleGatewayEventUnsafe(host: GatewayHost, evt: GatewayEventFrame) {
         // Force scroll to bottom after the response completes. The transition from
         // stream bubble → final message (via loadChatHistory) can leave the viewport
         // above the bottom: markdown rendering, code syntax highlighting, and image
-        // loading increase content height after the initial layout, and the streaming
-        // threshold (2000px) drops back to 450px once chatStream is null.
+        // loading increase content height after the initial layout.
         void loadChatHistory(host as unknown as OpenClawApp).then(() => {
           (host as unknown as OpenClawApp).scrollToBottom();
         });

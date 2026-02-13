@@ -289,6 +289,7 @@ export class OpenClawApp extends LitElement {
   private chatScrollTimeout: number | null = null;
   private chatHasAutoScrolled = false;
   private chatUserNearBottom = true;
+  private chatLastScrollTop = 0;
   @state() chatNewMessagesBelow = false;
   @state() activityEntries: AgentActivity[] = [];
   @state() activityDismissedSessionKeys: Set<string> = new Set();
@@ -353,7 +354,9 @@ export class OpenClawApp extends LitElement {
       return;
     }
     // During an active run, poll chat history to keep the UI responsive
-    // even when streaming deltas drop.
+    // even when streaming deltas drop. Use quiet mode to avoid toggling
+    // chatLoading (which flashes the Refresh button and triggers
+    // forcedByLoad auto-scrolls that yank the user to the bottom).
     this.chatPollingTimer = window.setInterval(async () => {
       if (!this.connected || !this.client || !this.chatRunId) {
         this.updateChatPolling();
@@ -364,7 +367,7 @@ export class OpenClawApp extends LitElement {
       }
       this.chatPollingInFlight = true;
       try {
-        await loadChatHistory(this);
+        await loadChatHistory(this, { quiet: true });
       } finally {
         this.chatPollingInFlight = false;
       }

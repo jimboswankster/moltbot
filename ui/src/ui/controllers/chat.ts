@@ -30,11 +30,17 @@ export type ChatEventPayload = {
   errorMessage?: string;
 };
 
-export async function loadChatHistory(state: ChatState) {
+export async function loadChatHistory(
+  state: ChatState,
+  opts?: { quiet?: boolean },
+) {
   if (!state.client || !state.connected) {
     return;
   }
-  state.chatLoading = true;
+  const quiet = opts?.quiet === true;
+  if (!quiet) {
+    state.chatLoading = true;
+  }
   state.lastError = null;
   try {
     const res = await state.client.request("chat.history", {
@@ -44,9 +50,13 @@ export async function loadChatHistory(state: ChatState) {
     state.chatMessages = Array.isArray(res.messages) ? res.messages : [];
     state.chatThinkingLevel = res.thinkingLevel ?? null;
   } catch (err) {
-    state.lastError = String(err);
+    if (!quiet) {
+      state.lastError = String(err);
+    }
   } finally {
-    state.chatLoading = false;
+    if (!quiet) {
+      state.chatLoading = false;
+    }
   }
 }
 

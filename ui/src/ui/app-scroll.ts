@@ -1,13 +1,8 @@
-/** Distance (px) from the bottom within which we consider the user "near bottom". */
-const NEAR_BOTTOM_THRESHOLD = 450;
-
-/**
- * During active streaming, use a much larger threshold so that content growth
- * (large tool results, code blocks, multi-line renders) doesn't falsely trip
- * "not near bottom." The user would need to deliberately scroll up this much
- * to disable auto-scroll during a streaming response.
- */
-const STREAMING_THRESHOLD = 2000;
+/** Distance (px) from the bottom within which we consider the user "near bottom".
+ *  200px ≈ one short chat message — enough to avoid accidental disengage from
+ *  minor scroll jitter, but small enough that a deliberate scroll-up of ~1
+ *  message immediately opts the user out of auto-scroll. */
+const NEAR_BOTTOM_THRESHOLD = 200;
 
 type ScrollHost = {
   updateComplete: Promise<unknown>;
@@ -19,6 +14,9 @@ type ScrollHost = {
   chatUserNearBottom: boolean;
   chatNewMessagesBelow: boolean;
   chatStream: string | null;
+  /** Tracks the last scrollTop seen by handleChatScroll, used to detect
+   *  user-initiated upward scrolls vs. content-growth scroll events. */
+  chatLastScrollTop: number;
   logsScrollFrame: number | null;
   logsAtBottom: boolean;
   topbarObserver: ResizeObserver | null;
@@ -49,17 +47,20 @@ export function scheduleChatScroll(host: ScrollHost, force = false) {
       }
       const distanceFromBottom = target.scrollHeight - target.scrollTop - target.clientHeight;
 
-      // During active streaming, use a much larger threshold so that content
-      // growth (large tool results, code blocks) doesn't trip "not near bottom."
-      // The user would need to deliberately scroll up ~2000px to disable auto-scroll.
-      const isStreaming = host.chatStream !== null;
-      const threshold = isStreaming ? STREAMING_THRESHOLD : NEAR_BOTTOM_THRESHOLD;
-
       // force=true only overrides when we haven't auto-scrolled yet (initial load).
       // After initial load, respect the user's scroll position.
       const effectiveForce = force && !host.chatHasAutoScrolled;
-      const shouldStick =
-        effectiveForce || host.chatUserNearBottom || distanceFromBottom < threshold;
+
+      // After the first auto-scroll, rely exclusively on chatUserNearBottom
+      // (maintained by handleChatScroll) instead of the distance fallback.
+      // The distance check is only used for the initial load when no scroll
+      // events have fired yet, so chatUserNearBottom hasn't been calibrated.
+      // Without this guard, the 2s polling cycle (loadChatHistory) would yank
+      // the user to the bottom whenever they were within 450px of it —
+      // preventing them from reading the latest content in peace.
+      const shouldStick = host.chatHasAutoScrolled
+        ? effectiveForce || host.chatUserNearBottom
+        : effectiveForce || host.chatUserNearBottom || distanceFromBottom < NEAR_BOTTOM_THRESHOLD;
 
       if (!shouldStick) {
         // User is scrolled up — flag that new content arrived below.
@@ -70,6 +71,7 @@ export function scheduleChatScroll(host: ScrollHost, force = false) {
         host.chatHasAutoScrolled = true;
       }
       target.scrollTop = target.scrollHeight;
+      host.chatLastScrollTop = target.scrollTop;
       host.chatUserNearBottom = true;
       host.chatNewMessagesBelow = false;
       const retryDelay = effectiveForce ? 150 : 120;
@@ -81,14 +83,16 @@ export function scheduleChatScroll(host: ScrollHost, force = false) {
         }
         const latestDistanceFromBottom =
           latest.scrollHeight - latest.scrollTop - latest.clientHeight;
-        const shouldStickRetry =
-          effectiveForce ||
-          host.chatUserNearBottom ||
-          latestDistanceFromBottom < threshold;
+        const shouldStickRetry = host.chatHasAutoScrolled
+          ? effectiveForce || host.chatUserNearBottom
+          : effectiveForce ||
+            host.chatUserNearBottom ||
+            latestDistanceFromBottom < NEAR_BOTTOM_THRESHOLD;
         if (!shouldStickRetry) {
           return;
         }
         latest.scrollTop = latest.scrollHeight;
+        host.chatLastScrollTop = latest.scrollTop;
         host.chatUserNearBottom = true;
       }, retryDelay);
     });
@@ -123,12 +127,31 @@ export function handleChatScroll(host: ScrollHost, event: Event) {
     return;
   }
   const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
-  // During streaming, use the larger threshold so content growth doesn't
-  // falsely mark the user as "scrolled away." This prevents the "New Messages"
-  // indicator from flickering during active agent responses.
-  const isStreaming = host.chatStream !== null;
-  const threshold = isStreaming ? STREAMING_THRESHOLD : NEAR_BOTTOM_THRESHOLD;
-  host.chatUserNearBottom = distanceFromBottom < threshold;
+  const nearBottom = distanceFromBottom < NEAR_BOTTOM_THRESHOLD;
+
+  if (nearBottom) {
+    // User is near the bottom — always enable auto-scroll.
+    host.chatUserNearBottom = true;
+  } else if (host.chatStream !== null) {
+    // During streaming: only disable auto-scroll on genuine USER scroll-up.
+    // Content growth increases scrollHeight without changing scrollTop, which
+    // increases distanceFromBottom. Without this guard, content growth would
+    // falsely set chatUserNearBottom=false and show the "New Messages" button,
+    // pinning the user away from the stream. By checking whether scrollTop
+    // actually decreased, we distinguish "user scrolled up" from "new content
+    // pushed the bottom further away."
+    if (container.scrollTop < host.chatLastScrollTop) {
+      host.chatUserNearBottom = false;
+    }
+    // If scrollTop stayed the same or increased (programmatic scroll / content
+    // growth), chatUserNearBottom is left unchanged — auto-scroll continues.
+  } else {
+    // Not streaming: standard threshold-based detection.
+    host.chatUserNearBottom = false;
+  }
+
+  host.chatLastScrollTop = container.scrollTop;
+
   // Clear the "new messages below" indicator when user scrolls back to bottom.
   if (host.chatUserNearBottom) {
     host.chatNewMessagesBelow = false;
@@ -148,6 +171,7 @@ export function resetChatScroll(host: ScrollHost) {
   host.chatHasAutoScrolled = false;
   host.chatUserNearBottom = true;
   host.chatNewMessagesBelow = false;
+  host.chatLastScrollTop = 0;
 }
 
 export function exportLogs(lines: string[], label: string) {
