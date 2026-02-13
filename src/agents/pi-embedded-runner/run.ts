@@ -751,6 +751,50 @@ export async function runEmbeddedPiAgent(
               agentDir: params.agentDir,
             });
           }
+
+          // ── Post-response compaction: proactively compact for the NEXT turn ──
+          // If the model's usage data shows context at >= 80% of the window, compact
+          // now (after the response is built) so the next user message doesn't overflow.
+          // This runs fire-and-forget — compaction failure is logged but doesn't block
+          // the current response from being delivered.
+          if (attempt.postResponseCompactAdvised && compactionAttempts < MAX_COMPACTION_ATTEMPTS) {
+            log.info(
+              `post-response compaction triggered for ${provider}/${modelId} (attempt ${compactionAttempts + 1}/${MAX_COMPACTION_ATTEMPTS})`,
+            );
+            compactionAttempts++;
+            try {
+              const compactResult = await compactEmbeddedPiSessionDirect({
+                sessionId: params.sessionId,
+                sessionKey: params.sessionKey,
+                messageChannel: params.messageChannel,
+                messageProvider: params.messageProvider,
+                agentAccountId: params.agentAccountId,
+                authProfileId: lastProfileId,
+                sessionFile: params.sessionFile,
+                workspaceDir: params.workspaceDir,
+                agentDir,
+                config: params.config,
+                skillsSnapshot: params.skillsSnapshot,
+                provider,
+                model: modelId,
+                thinkLevel,
+                reasoningLevel: params.reasoningLevel,
+                bashElevated: params.bashElevated,
+                extraSystemPrompt: params.extraSystemPrompt,
+                ownerNumbers: params.ownerNumbers,
+              });
+              if (compactResult.compacted) {
+                log.info(`post-response compaction succeeded for ${provider}/${modelId}`);
+              } else {
+                log.warn(
+                  `post-response compaction skipped for ${provider}/${modelId}: ${compactResult.reason ?? "nothing to compact"}`,
+                );
+              }
+            } catch (err) {
+              log.warn(`post-response compaction failed for ${provider}/${modelId}: ${describeUnknownError(err)}`);
+            }
+          }
+
           return {
             payloads: payloads.length ? payloads : undefined,
             meta: {

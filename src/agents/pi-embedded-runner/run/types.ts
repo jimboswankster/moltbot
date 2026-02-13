@@ -109,4 +109,10 @@ export type EmbeddedRunAttemptResult = {
    * the prompt is still over budget. The caller should trigger compaction and retry.
    */
   proactiveCompactRequested?: boolean;
+  /**
+   * If true, the model response's usage data indicates context tokens are at or
+   * above 80% of the context window. The caller should trigger compaction before
+   * processing the next user message to avoid overflow on the next turn.
+   */
+  postResponseCompactAdvised?: boolean;
 };

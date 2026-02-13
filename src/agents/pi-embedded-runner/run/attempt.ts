@@ -97,6 +97,7 @@ import {
 } from "../system-prompt.js";
 import { deriveContextLimits, fitToTokenBudget } from "../token-budget.js";
 import { splitSdkTools } from "../tool-split.js";
+import type { UsageLike } from "../../usage.js";
 import { describeUnknownError, mapThinkingLevel } from "../utils.js";
 import { detectAndLoadPromptImages } from "./images.js";
 
@@ -1091,6 +1092,31 @@ export async function runEmbeddedAttempt(
         )
         .map((entry) => ({ toolName: entry.toolName, meta: entry.meta }));
 
+      // ── Post-response compaction advisory: check if context is near threshold ──
+      // Use the model's actual usage data (much more accurate than char/4 estimate).
+      // If context tokens >= 80% of the window, advise the caller to compact before
+      // the next user message to avoid overflow.
+      const POST_RESPONSE_COMPACT_THRESHOLD = 0.80;
+      let postResponseCompactAdvised = false;
+      if (lastAssistant && !promptError && !aborted && params.contextWindowTokens > 0) {
+        const usage = lastAssistant.usage as UsageLike | undefined;
+        if (usage) {
+          const input = (usage.input ?? usage.inputTokens ?? usage.promptTokens ?? 0) as number;
+          const output = (usage.output ?? usage.outputTokens ?? usage.completionTokens ?? 0) as number;
+          const cacheRead = ((usage.cacheRead ?? 0) as number);
+          const cacheWrite = ((usage.cacheWrite ?? 0) as number);
+          const contextTokens = input + output + cacheRead + cacheWrite;
+          if (contextTokens > 0 && contextTokens >= params.contextWindowTokens * POST_RESPONSE_COMPACT_THRESHOLD) {
+            log.info(
+              `[post-response] context at ${((contextTokens / params.contextWindowTokens) * 100).toFixed(1)}% ` +
+                `(${contextTokens}/${params.contextWindowTokens}); advising compaction ` +
+                `runId=${params.runId} sessionId=${params.sessionId}`,
+            );
+            postResponseCompactAdvised = true;
+          }
+        }
+      }
+
       return {
         aborted,
         timedOut,
@@ -1110,6 +1136,7 @@ export async function runEmbeddedAttempt(
         ),
         // Client tool call detected (OpenResponses hosted tools)
         clientToolCall: clientToolCallDetected ?? undefined,
+        postResponseCompactAdvised,
       };
     } finally {
       // Always tear down the session (and release the lock) before we leave this attempt.
