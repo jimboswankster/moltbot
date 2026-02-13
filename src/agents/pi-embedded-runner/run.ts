@@ -324,7 +324,8 @@ export async function runEmbeddedPiAgent(
         }
       }
 
-      let overflowCompactionAttempted = false;
+      const MAX_COMPACTION_ATTEMPTS = 2;
+      let compactionAttempts = 0;
       try {
         while (true) {
           attemptedThinking.add(thinkLevel);
@@ -393,11 +394,38 @@ export async function runEmbeddedPiAgent(
           const { aborted, promptError, timedOut, sessionIdUsed, lastAssistant } = attempt;
 
           // ── Proactive compaction: token budget gate requested compaction before model call ──
-          if (attempt.proactiveCompactRequested && !overflowCompactionAttempted) {
+          if (attempt.proactiveCompactRequested) {
+            if (compactionAttempts >= MAX_COMPACTION_ATTEMPTS) {
+              // Compaction already attempted max times — return explicit error
+              // instead of silently falling through with no response (Bug 2 fix).
+              log.warn(
+                `proactive compaction requested but max attempts (${MAX_COMPACTION_ATTEMPTS}) exhausted for ${provider}/${modelId}`,
+              );
+              return {
+                payloads: [
+                  {
+                    text:
+                      "Session too large for the model after compaction. " +
+                      "Try /new to start a fresh session, or switch to a larger-context model.",
+                    isError: true,
+                  },
+                ],
+                meta: {
+                  durationMs: Date.now() - started,
+                  agentMeta: {
+                    sessionId: sessionIdUsed,
+                    provider,
+                    model: model.id,
+                  },
+                  systemPromptReport: attempt.systemPromptReport,
+                  error: { kind: "context_overflow" as const, message: "compaction exhausted" },
+                },
+              };
+            }
             log.warn(
-              `proactive compaction triggered by token budget gate for ${provider}/${modelId}`,
+              `proactive compaction triggered by token budget gate for ${provider}/${modelId} (attempt ${compactionAttempts + 1}/${MAX_COMPACTION_ATTEMPTS})`,
             );
-            overflowCompactionAttempted = true;
+            compactionAttempts++;
             const compactResult = await compactEmbeddedPiSessionDirect({
               sessionId: params.sessionId,
               sessionKey: params.sessionKey,
@@ -437,11 +465,11 @@ export async function runEmbeddedPiAgent(
             if (isContextOverflowError(errorText)) {
               const isCompactionFailure = isCompactionFailureError(errorText);
               // Attempt auto-compaction on context overflow (not compaction_failure)
-              if (!isCompactionFailure && !overflowCompactionAttempted) {
+              if (!isCompactionFailure && compactionAttempts < MAX_COMPACTION_ATTEMPTS) {
                 log.warn(
-                  `context overflow detected; attempting auto-compaction for ${provider}/${modelId}`,
+                  `context overflow detected; attempting auto-compaction for ${provider}/${modelId} (attempt ${compactionAttempts + 1}/${MAX_COMPACTION_ATTEMPTS})`,
                 );
-                overflowCompactionAttempted = true;
+                compactionAttempts++;
                 const compactResult = await compactEmbeddedPiSessionDirect({
                   sessionId: params.sessionId,
                   sessionKey: params.sessionKey,

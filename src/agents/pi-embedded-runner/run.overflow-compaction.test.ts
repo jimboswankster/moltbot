@@ -241,29 +241,41 @@ describe("overflow compaction in run loop", () => {
     expect(log.warn).toHaveBeenCalledWith(expect.stringContaining("auto-compaction failed"));
   });
 
-  it("returns error if overflow happens again after compaction", async () => {
+  it("returns error if overflow persists after max compaction attempts (2)", async () => {
     const overflowError = new Error("request_too_large: Request size exceeds model context window");
 
+    // 3 attempts: overflow → compact 1 → overflow → compact 2 → overflow → error (exhausted)
     mockedRunEmbeddedAttempt
+      .mockResolvedValueOnce(makeAttemptResult({ promptError: overflowError }))
       .mockResolvedValueOnce(makeAttemptResult({ promptError: overflowError }))
       .mockResolvedValueOnce(makeAttemptResult({ promptError: overflowError }));
 
-    mockedCompactDirect.mockResolvedValueOnce({
-      ok: true,
-      compacted: true,
-      result: {
-        summary: "Compacted",
-        firstKeptEntryId: "entry-3",
-        tokensBefore: 180000,
-      },
-    });
+    mockedCompactDirect
+      .mockResolvedValueOnce({
+        ok: true,
+        compacted: true,
+        result: {
+          summary: "Compacted (attempt 1)",
+          firstKeptEntryId: "entry-3",
+          tokensBefore: 180000,
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        compacted: true,
+        result: {
+          summary: "Compacted (attempt 2)",
+          firstKeptEntryId: "entry-6",
+          tokensBefore: 160000,
+        },
+      });
 
     const result = await runEmbeddedPiAgent(baseParams);
 
-    // Compaction attempted only once
-    expect(mockedCompactDirect).toHaveBeenCalledTimes(1);
-    // Two attempts: first overflow -> compact -> retry -> second overflow -> return error
-    expect(mockedRunEmbeddedAttempt).toHaveBeenCalledTimes(2);
+    // Compaction attempted twice (max attempts = 2)
+    expect(mockedCompactDirect).toHaveBeenCalledTimes(2);
+    // Three attempts: overflow → compact → overflow → compact → overflow → error
+    expect(mockedRunEmbeddedAttempt).toHaveBeenCalledTimes(3);
     expect(result.meta.error?.kind).toBe("context_overflow");
     expect(result.payloads?.[0]?.isError).toBe(true);
   });
