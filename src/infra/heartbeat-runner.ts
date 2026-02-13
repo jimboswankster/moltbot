@@ -40,6 +40,7 @@ import { getQueueSize } from "../process/command-queue.js";
 import { CommandLane } from "../process/lanes.js";
 import { normalizeAgentId, toAgentStoreSessionKey } from "../routing/session-key.js";
 import { defaultRuntime, type RuntimeEnv } from "../runtime.js";
+import { getTelemetrySupabaseClient } from "../telemetry/supabase.js";
 import { formatErrorMessage } from "./errors.js";
 import { emitHeartbeatEvent, resolveIndicatorType } from "./heartbeat-events.js";
 import { resolveHeartbeatVisibility } from "./heartbeat-visibility.js";
@@ -583,6 +584,51 @@ export async function runHeartbeatOnce(opts: {
   const pendingEvents = isExecEvent || isCronEvent ? peekSystemEvents(sessionKey) : [];
   const hasExecCompletion = pendingEvents.some((evt) => evt.includes("Exec finished"));
   const hasCronEvents = isCronEvent && pendingEvents.length > 0;
+
+  // Option A routing enforcement:
+  // Cron-triggered system events must be Desk-routed (Switchboard SSOT) by default,
+  // not delivered into the CEO chat lane. Only explicit escalation policy should
+  // page the CEO.
+  if (hasCronEvents) {
+    try {
+      const client = getTelemetrySupabaseClient();
+      if (client) {
+        const text = pendingEvents.join("\n\n---\n\n");
+        await client.from("state_signals").insert({
+          agent_id: agentId,
+          source: "cron-event",
+          kind: "cron_event",
+          workstream_id: "SYSTEM/IMMUNE",
+          status: "open",
+          priority: "normal",
+          summary: "[Cron] Scheduled event triggered (desk-routed)",
+          payload: {
+            reason: opts.reason,
+            sessionKey,
+            events: pendingEvents,
+            text,
+            startedAt,
+          },
+          acknowledged: false,
+        } as any);
+      }
+    } catch (err) {
+      // Best-effort: never crash heartbeat runner.
+      log.warn("cron-event: failed to desk-route state_signals", {
+        error: err.message,
+      });
+    }
+
+    emitHeartbeatEvent({
+      status: "ran",
+      reason: opts.reason,
+      durationMs: Date.now() - startedAt,
+      indicatorType: visibility.useIndicator ? resolveIndicatorType("ok") : undefined,
+      channel: delivery.channel !== "none" ? delivery.channel : undefined,
+      accountId: delivery.accountId,
+    });
+    return { status: "ran", durationMs: Date.now() - startedAt };
+  }
   const prompt = hasExecCompletion
     ? EXEC_EVENT_PROMPT
     : hasCronEvents
