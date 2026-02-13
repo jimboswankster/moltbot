@@ -13,6 +13,7 @@ import { enqueueSystemEvent } from "../infra/system-events.js";
 import { getChildLogger } from "../logging.js";
 import { normalizeAgentId } from "../routing/session-key.js";
 import { defaultRuntime } from "../runtime.js";
+import { emitSystemEvent } from "../telemetry/supabase.js";
 
 export type GatewayCronState = {
   cron: CronService;
@@ -94,6 +95,40 @@ export function buildGatewayCronService(params: {
     log: getChildLogger({ module: "cron", storePath }),
     onEvent: (evt) => {
       params.broadcast("cron", evt, { dropIfSlow: true });
+
+      // Telemetry: emit cron lifecycle events to Supabase (best-effort).
+      try {
+        if (evt.action === "started") {
+          emitSystemEvent({
+            subsystem: "cron",
+            event_type: "cron_job_started",
+            status: "ok",
+            source: "gateway-cron",
+            process_id: evt.jobId,
+            details: { jobId: evt.jobId, runAtMs: evt.runAtMs },
+          });
+        }
+        if (evt.action === "finished") {
+          emitSystemEvent({
+            subsystem: "cron",
+            event_type: "cron_job_finished",
+            status: evt.status ?? "ok",
+            source: "gateway-cron",
+            process_id: evt.jobId,
+            duration_ms: evt.durationMs ?? null,
+            message: evt.summary ?? null,
+            details: {
+              jobId: evt.jobId,
+              status: evt.status,
+              error: evt.error,
+              runAtMs: evt.runAtMs,
+              nextRunAtMs: evt.nextRunAtMs,
+            },
+          });
+        }
+      } catch {
+        // swallow
+      }
       if (evt.action === "finished") {
         const logPath = resolveCronRunLogPath({
           storePath,
