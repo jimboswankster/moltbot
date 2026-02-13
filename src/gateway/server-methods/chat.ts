@@ -9,6 +9,7 @@ import { resolveAgentTimeoutMs } from "../../agents/timeout.js";
 import { dispatchInboundMessage } from "../../auto-reply/dispatch.js";
 import { createReplyDispatcher } from "../../auto-reply/reply/reply-dispatcher.js";
 import { createReplyPrefixOptions } from "../../channels/reply-prefix.js";
+import { clearAgentRunContext } from "../../infra/agent-events.js";
 import { resolveSendPolicy } from "../../sessions/send-policy.js";
 import { INTERNAL_MESSAGE_CHANNEL } from "../../utils/message-channel.js";
 import {
@@ -608,20 +609,33 @@ export const chatHandlers: GatewayRequestHandlers = {
               message,
             });
           } else if (agentRunId) {
-            // Agent run completed. If the chatLink is still in the registry, it means
-            // the lifecycle handler skipped emitChatFinal because no assistant text was
-            // buffered (e.g. all model fallback retries overflowed). Emit a final now so
-            // the client knows the run is done.
+            // Agent run (including all model fallback retries) completed.
+            // The lifecycle "end" handler always preserves the chatLink so that
+            // retries continue to receive clientRunId injection and chat deltas.
+            // Now that the dispatch is truly done, consume the chatLink, read any
+            // buffered assistant text, and emit the definitive chat-final.
             const remaining = context.removeChatRun(agentRunId, clientRunId, sessionKey);
             if (remaining) {
+              const bufferedText = context.chatRunBuffers.get(clientRunId)?.trim() ?? "";
               context.chatRunBuffers.delete(clientRunId);
               context.chatDeltaSentAt.delete(clientRunId);
               broadcastChatFinal({
                 context,
                 runId: clientRunId,
                 sessionKey: rawSessionKey,
+                message: bufferedText
+                  ? {
+                      role: "assistant",
+                      content: [{ type: "text", text: bufferedText }],
+                      timestamp: Date.now(),
+                    }
+                  : undefined,
               });
             }
+            // Clean up the agent run context now that the full dispatch is done.
+            // This was deferred from the lifecycle handler to keep sessionKey
+            // enrichment available during model fallback retries.
+            clearAgentRunContext(agentRunId);
           }
           context.dedupe.set(`chat:${clientRunId}`, {
             ts: Date.now(),
@@ -641,12 +655,14 @@ export const chatHandlers: GatewayRequestHandlers = {
             },
             error,
           });
-          // Clean up residual chatLink if the lifecycle handler kept it (model fallback
-          // where all retries failed without producing text).
+          // Clean up residual chatLink and agent context. The lifecycle handler
+          // preserves these during model fallback retries; clean up now that the
+          // full dispatch has failed.
           if (agentRunId) {
             context.removeChatRun(agentRunId, clientRunId, sessionKey);
             context.chatRunBuffers.delete(clientRunId);
             context.chatDeltaSentAt.delete(clientRunId);
+            clearAgentRunContext(agentRunId);
           }
           broadcastChatError({
             context,

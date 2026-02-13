@@ -478,19 +478,8 @@ export function createAgentEventHandler({
         });
       } else if (!isAborted && (lifecyclePhase === "end" || lifecyclePhase === "error")) {
         if (chatLink) {
-          const bufferText = chatRunState.buffers.get(clientRunId)?.trim() ?? "";
-          if (!bufferText && lifecyclePhase !== "error") {
-            // No assistant text was produced — likely an intermediate model fallback retry
-            // (e.g. context overflow on a smaller model before falling back to a larger one).
-            // Keep the chatLink in the registry so the next retry attempt reuses it.
-            // The chat.send promise handler will emit the final when the dispatch completes
-            // (or the successful retry's lifecycle end will shift the chatLink normally).
-            logDebug(log, "lifecycle-end with empty buffer, keeping chatLink for retry", {
-              runId: evt.runId,
-              clientRunId,
-              sessionKey,
-            });
-          } else {
+          if (lifecyclePhase === "error") {
+            // Error: consume chatLink and emit error final immediately.
             const finished = chatRunState.registry.shift(evt.runId);
             if (!finished) {
               clearAgentRunContext(evt.runId);
@@ -500,9 +489,25 @@ export function createAgentEventHandler({
               finished.sessionKey,
               finished.clientRunId,
               evt.seq,
-              lifecyclePhase === "error" ? "error" : "done",
+              "error",
               evt.data?.error,
             );
+          } else {
+            // Lifecycle "end" (non-error): ALWAYS keep chatLink in the registry.
+            // The chat.send dispatch completion handler (.then()) will emit the
+            // chat-final when the entire dispatch — including model fallback
+            // retries — has finished. Consuming the chatLink here caused streaming
+            // to break during provider switches: the first attempt could produce
+            // partial text (non-empty buffer) before failing, the chatLink would
+            // be consumed and agentRunContext cleared, and then the retry attempt
+            // ran without chat tracking — no clientRunId injection, no sessionKey
+            // enrichment, no chat deltas emitted to the UI.
+            logDebug(log, "lifecycle-end, keeping chatLink for dispatch completion", {
+              runId: evt.runId,
+              clientRunId,
+              sessionKey,
+              bufferLen: chatRunState.buffers.get(clientRunId)?.length ?? 0,
+            });
           }
         } else {
           emitChatFinal(
@@ -527,7 +532,16 @@ export function createAgentEventHandler({
 
     if (lifecyclePhase === "end" || lifecyclePhase === "error") {
       toolEventRecipients?.markFinal(evt.runId);
-      clearAgentRunContext(evt.runId);
+      // Don't clear the agent run context when a chatLink is preserved for
+      // dispatch completion (lifecycle "end" with chatLink). The context
+      // provides sessionKey enrichment for retry attempts during model
+      // fallback. It will be cleared by the chat.send .then()/.catch()
+      // handlers when the full dispatch completes.
+      const chatLinkPreserved =
+        lifecyclePhase === "end" && chatRunState.registry.peek(evt.runId) != null;
+      if (!chatLinkPreserved) {
+        clearAgentRunContext(evt.runId);
+      }
     }
   };
 }
