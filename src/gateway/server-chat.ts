@@ -415,7 +415,9 @@ export function createAgentEventHandler({
     // fails because evt.runId is the internal agent runId, not the client's.
     const agentPayload = sessionKey
       ? { ...evt, sessionKey, ...(chatLink ? { clientRunId } : {}) }
-      : chatLink ? { ...evt, clientRunId } : evt;
+      : chatLink
+        ? { ...evt, clientRunId }
+        : evt;
     const last = agentRunSeq.get(evt.runId) ?? 0;
     const isToolEvent = evt.stream === "tool";
     const toolVerbose = isToolEvent ? resolveToolVerboseLevel(evt.runId, sessionKey) : "off";
@@ -476,18 +478,32 @@ export function createAgentEventHandler({
         });
       } else if (!isAborted && (lifecyclePhase === "end" || lifecyclePhase === "error")) {
         if (chatLink) {
-          const finished = chatRunState.registry.shift(evt.runId);
-          if (!finished) {
-            clearAgentRunContext(evt.runId);
-            return;
+          const bufferText = chatRunState.buffers.get(clientRunId)?.trim() ?? "";
+          if (!bufferText && lifecyclePhase !== "error") {
+            // No assistant text was produced — likely an intermediate model fallback retry
+            // (e.g. context overflow on a smaller model before falling back to a larger one).
+            // Keep the chatLink in the registry so the next retry attempt reuses it.
+            // The chat.send promise handler will emit the final when the dispatch completes
+            // (or the successful retry's lifecycle end will shift the chatLink normally).
+            logDebug(log, "lifecycle-end with empty buffer, keeping chatLink for retry", {
+              runId: evt.runId,
+              clientRunId,
+              sessionKey,
+            });
+          } else {
+            const finished = chatRunState.registry.shift(evt.runId);
+            if (!finished) {
+              clearAgentRunContext(evt.runId);
+              return;
+            }
+            emitChatFinal(
+              finished.sessionKey,
+              finished.clientRunId,
+              evt.seq,
+              lifecyclePhase === "error" ? "error" : "done",
+              evt.data?.error,
+            );
           }
-          emitChatFinal(
-            finished.sessionKey,
-            finished.clientRunId,
-            evt.seq,
-            lifecyclePhase === "error" ? "error" : "done",
-            evt.data?.error,
-          );
         } else {
           emitChatFinal(
             sessionKey,

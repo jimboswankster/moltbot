@@ -522,6 +522,7 @@ export const chatHandlers: GatewayRequestHandlers = {
       });
 
       let agentRunStarted = false;
+      let agentRunId: string | null = null;
       void dispatchInboundMessage({
         ctx,
         cfg,
@@ -533,6 +534,7 @@ export const chatHandlers: GatewayRequestHandlers = {
           disableBlockStreaming: true,
           onAgentRunStart: (runId) => {
             agentRunStarted = true;
+            agentRunId = runId;
             context.addChatRun(runId, { sessionKey, clientRunId: p.idempotencyKey });
             context.logGateway.debug("chat.send agent run started", {
               runId,
@@ -602,6 +604,21 @@ export const chatHandlers: GatewayRequestHandlers = {
               sessionKey: rawSessionKey,
               message,
             });
+          } else if (agentRunId) {
+            // Agent run completed. If the chatLink is still in the registry, it means
+            // the lifecycle handler skipped emitChatFinal because no assistant text was
+            // buffered (e.g. all model fallback retries overflowed). Emit a final now so
+            // the client knows the run is done.
+            const remaining = context.removeChatRun(agentRunId, clientRunId, sessionKey);
+            if (remaining) {
+              context.chatRunBuffers.delete(clientRunId);
+              context.chatDeltaSentAt.delete(clientRunId);
+              broadcastChatFinal({
+                context,
+                runId: clientRunId,
+                sessionKey: rawSessionKey,
+              });
+            }
           }
           context.dedupe.set(`chat:${clientRunId}`, {
             ts: Date.now(),
@@ -621,6 +638,13 @@ export const chatHandlers: GatewayRequestHandlers = {
             },
             error,
           });
+          // Clean up residual chatLink if the lifecycle handler kept it (model fallback
+          // where all retries failed without producing text).
+          if (agentRunId) {
+            context.removeChatRun(agentRunId, clientRunId, sessionKey);
+            context.chatRunBuffers.delete(clientRunId);
+            context.chatDeltaSentAt.delete(clientRunId);
+          }
           broadcastChatError({
             context,
             runId: clientRunId,

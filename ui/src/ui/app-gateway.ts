@@ -303,21 +303,13 @@ function handleGatewayEventUnsafe(host: GatewayHost, evt: GatewayEventFrame) {
             const current = (host as unknown as { chatStream: string | null }).chatStream ?? "";
             (host as unknown as { chatStream: string | null }).chatStream = current + delta;
           }
-        } else if (payload.stream === "lifecycle" && payload.data?.phase === "end") {
-          if (host.chatRunId === effectiveRunId) {
-            host.chatRunId = null;
-            (host as unknown as { chatStream: string | null }).chatStream = null;
-            (host as unknown as { chatStreamStartedAt: number | null }).chatStreamStartedAt = null;
-            void loadChatHistory(host as unknown as OpenClawApp);
-          }
-        } else if (payload.stream === "lifecycle" && payload.data?.phase === "error") {
-          if (host.chatRunId === effectiveRunId) {
-            host.chatRunId = null;
-            (host as unknown as { chatStream: string | null }).chatStream = null;
-            (host as unknown as { chatStreamStartedAt: number | null }).chatStreamStartedAt = null;
-            void loadChatHistory(host as unknown as OpenClawApp);
-          }
         }
+        // NOTE: We intentionally do NOT reset chatRunId/chatStream on agent lifecycle
+        // end/error events. The "chat" channel's state=final/error event is the
+        // authoritative signal for the chat state machine. Resetting here caused
+        // premature UI resets during model fallback retries: the first attempt's
+        // lifecycle end would clear the stream before the retry even started,
+        // forcing the user to manually refresh to see the response.
       }
     }
     handleAgentEvent(host as unknown as Parameters<typeof handleAgentEvent>[0], payload);

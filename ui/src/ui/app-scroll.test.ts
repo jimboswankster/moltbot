@@ -42,6 +42,7 @@ function createScrollHost(
     chatHasAutoScrolled: false,
     chatUserNearBottom: true,
     chatNewMessagesBelow: false,
+    chatStream: null as string | null,
     logsScrollFrame: null as number | null,
     logsAtBottom: true,
     topbarObserver: null as ResizeObserver | null,
@@ -254,6 +255,43 @@ describe("streaming scroll behavior", () => {
     await host.updateComplete;
 
     expect(container.scrollTop).toBe(container.scrollHeight);
+  });
+
+  it("during streaming, large content growth (>450px) still auto-scrolls", async () => {
+    const { host, container } = createScrollHost({
+      scrollHeight: 3000,
+      scrollTop: 1600,
+      clientHeight: 400,
+    });
+    // distanceFromBottom = 3000 - 1600 - 400 = 1000 → above 450px threshold
+    // But during streaming, the 2000px threshold should keep auto-scroll.
+    host.chatUserNearBottom = false;
+    host.chatHasAutoScrolled = true;
+    host.chatStream = "streaming content..."; // Active stream
+
+    scheduleChatScroll(host);
+    await host.updateComplete;
+
+    expect(container.scrollTop).toBe(container.scrollHeight);
+    expect(host.chatNewMessagesBelow).toBe(false);
+  });
+
+  it("during streaming, handleChatScroll does not flag 'not near bottom' for moderate distance", () => {
+    const { host } = createScrollHost({});
+    host.chatStream = "streaming..."; // Active stream
+    // distanceFromBottom = 2000 - 1100 - 400 = 500 → above 450px, but below 2000px streaming threshold
+    const event = createScrollEvent(2000, 1100, 400);
+    handleChatScroll(host, event);
+    expect(host.chatUserNearBottom).toBe(true);
+  });
+
+  it("during streaming, user scrolling up past 2000px DOES flag 'not near bottom'", () => {
+    const { host } = createScrollHost({});
+    host.chatStream = "streaming..."; // Active stream
+    // distanceFromBottom = 5000 - 500 - 400 = 4100 → above 2000px streaming threshold
+    const event = createScrollEvent(5000, 500, 400);
+    handleChatScroll(host, event);
+    expect(host.chatUserNearBottom).toBe(false);
   });
 });
 
