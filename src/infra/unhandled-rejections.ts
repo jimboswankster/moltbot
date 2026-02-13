@@ -89,6 +89,22 @@ export function isTransientNetworkError(err: unknown): boolean {
     return false;
   }
 
+  // Some subsystems stringify undici errors (e.g. "TypeError: fetch failed")
+  // before rethrowing. Treat these as transient to avoid gateway death loops.
+  if (typeof err === "string") {
+    const msg = err.toLowerCase();
+    if (msg.includes("fetch failed")) {
+      return true;
+    }
+  }
+
+  if (err instanceof Error) {
+    const msg = (err.message ?? "").toLowerCase();
+    if (msg.includes("fetch failed")) {
+      return true;
+    }
+  }
+
   const code = extractErrorCodeWithCause(err);
   if (code && TRANSIENT_NETWORK_CODES.has(code)) {
     return true;
