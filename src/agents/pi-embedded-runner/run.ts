@@ -755,9 +755,14 @@ export async function runEmbeddedPiAgent(
           // ── Post-response compaction: proactively compact for the NEXT turn ──
           // If the model's usage data shows context at >= 80% of the window, compact
           // now (after the response is built) so the next user message doesn't overflow.
+          // Skip if the SDK's auto-compaction already ran during this attempt.
           // This runs fire-and-forget — compaction failure is logged but doesn't block
           // the current response from being delivered.
-          if (attempt.postResponseCompactAdvised && compactionAttempts < MAX_COMPACTION_ATTEMPTS) {
+          if (
+            attempt.postResponseCompactAdvised &&
+            !attempt.sdkCompactionOccurred &&
+            compactionAttempts < MAX_COMPACTION_ATTEMPTS
+          ) {
             log.info(
               `post-response compaction triggered for ${provider}/${modelId} (attempt ${compactionAttempts + 1}/${MAX_COMPACTION_ATTEMPTS})`,
             );

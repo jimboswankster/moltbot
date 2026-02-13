@@ -115,4 +115,9 @@ export type EmbeddedRunAttemptResult = {
    * processing the next user message to avoid overflow on the next turn.
    */
   postResponseCompactAdvised?: boolean;
+  /**
+   * If true, the SDK's built-in auto-compaction fired during this attempt
+   * (threshold or overflow). The caller should skip redundant engine-side compaction.
+   */
+  sdkCompactionOccurred?: boolean;
 };

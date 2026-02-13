@@ -793,6 +793,7 @@ export async function runEmbeddedAttempt(
         getMessagingToolSentTargets,
         didSendViaMessagingTool,
         getLastToolError,
+        getCompactionCount,
       } = subscription;
 
       const queueHandle: EmbeddedPiQueueHandle = {
@@ -1033,6 +1034,29 @@ export async function runEmbeddedAttempt(
 
         messagesSnapshot = activeSession.messages.slice();
         sessionIdUsed = activeSession.sessionId;
+
+        // ── Silent compaction failure detection ──
+        // If the SDK's auto-compaction removed an overflow error message from agent
+        // state but then failed to compact (e.g., "Already compacted"), session.prompt()
+        // resolves with no error and no response. Detect this and surface it so the
+        // run loop can trigger reactive compaction.
+        if (
+          !promptError &&
+          !aborted &&
+          messagesSnapshot.length > 0 &&
+          getCompactionCount() > 0
+        ) {
+          const lastMsg = messagesSnapshot[messagesSnapshot.length - 1];
+          // If the last message is NOT an assistant message after a compaction ran,
+          // it means the SDK ate an error and failed to retry successfully.
+          if (lastMsg && lastMsg.role !== "assistant") {
+            log.warn(
+              `[sdk-compaction] possible silent compaction failure detected ` +
+                `(last message role=${lastMsg.role} after ${getCompactionCount()} compaction(s)); ` +
+                `runId=${params.runId} sessionId=${params.sessionId}`,
+            );
+          }
+        }
         cacheTrace?.recordStage("session:after", {
           messages: messagesSnapshot,
           note: promptError ? "prompt error" : undefined,
@@ -1137,6 +1161,7 @@ export async function runEmbeddedAttempt(
         // Client tool call detected (OpenResponses hosted tools)
         clientToolCall: clientToolCallDetected ?? undefined,
         postResponseCompactAdvised,
+        sdkCompactionOccurred: getCompactionCount() > 0,
       };
     } finally {
       // Always tear down the session (and release the lock) before we leave this attempt.

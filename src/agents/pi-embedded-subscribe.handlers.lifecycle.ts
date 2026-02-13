@@ -22,7 +22,10 @@ export function handleAgentStart(ctx: EmbeddedPiSubscribeContext) {
 export function handleAutoCompactionStart(ctx: EmbeddedPiSubscribeContext) {
   ctx.state.compactionInFlight = true;
   ctx.ensureCompactionPromise();
-  ctx.log.debug(`embedded run compaction start: runId=${ctx.params.runId}`);
+  // Lifted from debug → warn for operational visibility (Phase 3 compaction fix)
+  ctx.log.warn(
+    `[sdk-compaction] auto-compaction started: runId=${ctx.params.runId}`,
+  );
   emitAgentEvent({
     runId: ctx.params.runId,
     stream: "compaction",
@@ -36,15 +39,27 @@ export function handleAutoCompactionStart(ctx: EmbeddedPiSubscribeContext) {
 
 export function handleAutoCompactionEnd(
   ctx: EmbeddedPiSubscribeContext,
-  evt: AgentEvent & { willRetry?: unknown },
+  evt: AgentEvent & { willRetry?: unknown; result?: unknown; aborted?: unknown },
 ) {
   ctx.state.compactionInFlight = false;
   const willRetry = Boolean(evt.willRetry);
+  const aborted = Boolean(evt.aborted);
+  // Lifted from debug → warn for operational visibility (Phase 3 compaction fix)
   if (willRetry) {
     ctx.noteCompactionRetry();
     ctx.resetForCompactionRetry();
-    ctx.log.debug(`embedded run compaction retry: runId=${ctx.params.runId}`);
+    ctx.log.warn(
+      `[sdk-compaction] auto-compaction completed, retrying prompt: runId=${ctx.params.runId}`,
+    );
+  } else if (aborted) {
+    ctx.log.warn(
+      `[sdk-compaction] auto-compaction aborted (nothing to compact or cancelled): runId=${ctx.params.runId}`,
+    );
+    ctx.maybeResolveCompactionWait();
   } else {
+    ctx.log.warn(
+      `[sdk-compaction] auto-compaction completed (threshold): runId=${ctx.params.runId}`,
+    );
     ctx.maybeResolveCompactionWait();
   }
   emitAgentEvent({
