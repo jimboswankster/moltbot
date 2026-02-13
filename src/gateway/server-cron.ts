@@ -1,4 +1,6 @@
+import JSON5 from "json5";
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
 import type { CliDeps } from "../cli/deps.js";
 import { resolveDefaultAgentId, resolveAgentWorkspaceDir } from "../agents/agent-scope.js";
 import { loadConfig } from "../config/config.js";
@@ -29,6 +31,39 @@ export function buildGatewayCronService(params: {
   const cronLogger = getChildLogger({ module: "cron" });
   const storePath = resolveCronStorePath(params.cfg.cron?.store);
   const cronEnabled = process.env.OPENCLAW_SKIP_CRON !== "1" && params.cfg.cron?.enabled !== false;
+
+  // Best-effort cache of cron job metadata (name/description/schedule/payload),
+  // used to enrich telemetry events beyond raw jobId.
+  let cronStoreCache: { ts: number; jobs: any[] } | null = null;
+  const cronStoreCacheTtlMs = 60_000;
+  const getCronJobMeta = (jobId: string) => {
+    try {
+      const now = Date.now();
+      if (!cronStoreCache || now - cronStoreCache.ts > cronStoreCacheTtlMs) {
+        const raw = fs.readFileSync(storePath, "utf-8");
+        const parsed = JSON5.parse(raw);
+        const jobs = Array.isArray(parsed?.jobs) ? parsed.jobs : [];
+        cronStoreCache = { ts: now, jobs };
+      }
+      const job = cronStoreCache.jobs.find((j) => j && j.id === jobId);
+      if (!job) return null;
+      return {
+        id: job.id,
+        name: job.name,
+        description: job.description,
+        enabled: job.enabled,
+        deleteAfterRun: job.deleteAfterRun,
+        schedule: job.schedule,
+        sessionTarget: job.sessionTarget,
+        wakeMode: job.wakeMode,
+        payload: job.payload,
+        preCheck: job.preCheck,
+        isolation: job.isolation,
+      };
+    } catch {
+      return null;
+    }
+  };
 
   const resolveCronAgent = (requested?: string | null) => {
     const runtimeConfig = loadConfig();
@@ -105,7 +140,11 @@ export function buildGatewayCronService(params: {
             status: "ok",
             source: "gateway-cron",
             process_id: evt.jobId,
-            details: { jobId: evt.jobId, runAtMs: evt.runAtMs },
+            details: {
+              jobId: evt.jobId,
+              runAtMs: evt.runAtMs,
+              job: getCronJobMeta(evt.jobId),
+            },
           });
         }
         if (evt.action === "finished") {
@@ -123,6 +162,7 @@ export function buildGatewayCronService(params: {
               error: evt.error,
               runAtMs: evt.runAtMs,
               nextRunAtMs: evt.nextRunAtMs,
+              job: getCronJobMeta(evt.jobId),
             },
           });
         }
