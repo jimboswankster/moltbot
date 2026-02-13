@@ -53,8 +53,6 @@ export interface MemoryCompanionAdapter {
     sessionFile: string,
   ): HistoryLimitResult;
 
-  getSessionMemoryForPrompt(sessionFile: string): string | undefined;
-
   onTurnComplete(sessionFile: string, messages: AgentMessage[]): Promise<void>;
 
   resolveModel(config: Record<string, unknown> | undefined): ResolvedMemoryModel | undefined;
