@@ -69,8 +69,12 @@ type SessionDefaultsSnapshot = {
 };
 
 const CHAT_DEBUG_FLAG = "openclaw:chat:debug";
-const shouldDebugChat = () =>
-  typeof localStorage !== "undefined" && localStorage.getItem(CHAT_DEBUG_FLAG) === "1";
+const shouldDebugChat = () => {
+  if (typeof window === "undefined") return false;
+  const fromStorage = typeof localStorage !== "undefined" && localStorage.getItem(CHAT_DEBUG_FLAG) === "1";
+  const fromUrl = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("chat") === "debug";
+  return fromStorage || fromUrl;
+};
 
 function normalizeSessionKeyForDefaults(
   value: string | undefined,
@@ -156,16 +160,22 @@ export function connectGateway(host: GatewayHost) {
       host.lastError = null;
       host.hello = hello;
       applySnapshot(host, hello);
+      if (shouldDebugChat()) {
+        console.debug("[chat][debug] enabled — sessionKey=", host.sessionKey, "(add ?chat=debug to URL or localStorage openclaw:chat:debug=1)");
+      }
       ensureMainActivity(host as unknown as Parameters<typeof ensureMainActivity>[0]);
-      // Always resync chat history on reconnect. Even when no run was active at
-      // disconnect time, the server may have started one (e.g., cron/Telegram) or
-      // an event-gap may have occurred. Clearing state here is safe because
-      // loadChatHistory will restore the correct state from the server.
+      // Resync chat history on reconnect. When a run was active at disconnect,
+      // preserve stream state so the UI keeps showing in-flight content until
+      // new events arrive or loadChatHistory restores. Clearing on every reconnect
+      // caused streaming to appear broken during brief reconnects (proxy blips,
+      // gateway restarts).
       const hadActiveRun = host.pendingChatResync;
-      host.chatRunId = null;
-      (host as unknown as { chatStream: string | null }).chatStream = null;
-      (host as unknown as { chatStreamStartedAt: number | null }).chatStreamStartedAt = null;
-      resetToolStream(host as unknown as Parameters<typeof resetToolStream>[0]);
+      if (!hadActiveRun) {
+        host.chatRunId = null;
+        (host as unknown as { chatStream: string | null }).chatStream = null;
+        (host as unknown as { chatStreamStartedAt: number | null }).chatStreamStartedAt = null;
+        resetToolStream(host as unknown as Parameters<typeof resetToolStream>[0]);
+      }
       host.pendingChatResync = false;
       void loadAssistantIdentity(host as unknown as OpenClawApp);
       void loadAgents(host as unknown as OpenClawApp);
@@ -240,21 +250,29 @@ function handleGatewayEventUnsafe(host: GatewayHost, evt: GatewayEventFrame) {
         .lastChatSendRunId;
       const recentSend = typeof lastSendAt === "number" && Date.now() - lastSendAt < 120_000;
       const matchesRecentRun = recentSend && currentRun && lastSendRunId === currentRun;
-      if ((matchesSession && runMatches) || matchesRunOnly || matchesRecentRun) {
-        if (shouldDebugChat()) {
-          console.debug("[chat][agent] event", {
-            stream: payload.stream,
-            runId: payload.runId,
-            sessionKey,
-            activeSession,
-            matchesSession,
-            runMatches,
-            matchesRunOnly,
-            matchesRecentRun,
-            hasText: typeof payload.data?.text === "string",
-            hasDelta: typeof payload.data?.delta === "string",
-          });
+      const accepted =
+        (matchesSession && runMatches) || matchesRunOnly || matchesRecentRun;
+      if (shouldDebugChat()) {
+        const debugInfo = {
+          stream: payload.stream,
+          runId: payload.runId,
+          sessionKey: sessionKey || "(empty)",
+          activeSession,
+          matchesSession,
+          runMatches,
+          matchesRunOnly,
+          matchesRecentRun,
+          accepted,
+          hasText: typeof payload.data?.text === "string",
+          hasDelta: typeof payload.data?.delta === "string",
+        };
+        if (accepted) {
+          console.debug("[chat][agent] ACCEPTED", debugInfo);
+        } else if (payload.stream === "assistant" || payload.stream === "lifecycle") {
+          console.warn("[chat][agent] REJECTED (stream won't update)", debugInfo);
         }
+      }
+      if (accepted) {
         if (!host.chatRunId) {
           host.chatRunId = payload.runId;
         }
@@ -269,8 +287,15 @@ function handleGatewayEventUnsafe(host: GatewayHost, evt: GatewayEventFrame) {
             (host as unknown as { chatStream: string | null }).chatStream = "";
           }
         }
-        if (payload.stream === "assistant" && typeof payload.data?.text === "string") {
-          (host as unknown as { chatStream: string | null }).chatStream = payload.data.text;
+        if (payload.stream === "assistant") {
+          const text = payload.data?.text;
+          const delta = payload.data?.delta;
+          if (typeof text === "string") {
+            (host as unknown as { chatStream: string | null }).chatStream = text;
+          } else if (typeof delta === "string" && delta.length > 0) {
+            const current = (host as unknown as { chatStream: string | null }).chatStream ?? "";
+            (host as unknown as { chatStream: string | null }).chatStream = current + delta;
+          }
         } else if (payload.stream === "lifecycle" && payload.data?.phase === "end") {
           if (host.chatRunId === payload.runId) {
             host.chatRunId = null;
@@ -296,14 +321,22 @@ function handleGatewayEventUnsafe(host: GatewayHost, evt: GatewayEventFrame) {
   if (evt.event === "chat") {
     const payload = evt.payload as ChatEventPayload | undefined;
     if (shouldDebugChat()) {
+      const sessionMismatch = payload?.sessionKey && payload.sessionKey !== host.sessionKey;
       console.debug("[chat][event]", {
         hasPayload: Boolean(payload),
         runId: payload?.runId,
         sessionKey: payload?.sessionKey,
         activeSession: host.sessionKey,
+        sessionMismatch,
         state: payload?.state,
         hasDeltaText: typeof payload?.deltaText === "string",
       });
+      if (sessionMismatch && payload?.state === "delta") {
+        console.warn("[chat][event] sessionKey mismatch — chat stream won't update", {
+          payloadSessionKey: payload.sessionKey,
+          activeSession: host.sessionKey,
+        });
+      }
     }
     noteChatActivity(host as unknown as Parameters<typeof noteChatActivity>[0], payload);
     if (payload?.sessionKey) {

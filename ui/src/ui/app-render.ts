@@ -134,6 +134,7 @@ function renderIntelligenceMenu(state: AppViewState) {
         <span class="nav-label__chevron">${isCollapsed ? "+" : "−"}</span>
       </button>
       <div class="nav-group__items">
+        ${renderTab(state, "activity-hud")}
         ${isOnline
           ? menu.items.map((item: IntelligenceMenuItem) => {
               const href = `${menu.baseUrl}${item.path === "/" ? "" : item.path}`;

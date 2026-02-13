@@ -107,6 +107,13 @@ export async function sendChatMessage(
   state.lastChatSendAt = now;
   state.lastChatSendRunId = runId;
 
+  const chatDebug =
+    (typeof localStorage !== "undefined" && localStorage.getItem("openclaw:chat:debug") === "1") ||
+    (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("chat") === "debug");
+  if (chatDebug) {
+    console.debug("[chat][send] sessionKey=", state.sessionKey, "runId=", runId);
+  }
+
   // Convert attachments to API format
   const apiAttachments = hasAttachments
     ? attachments
