@@ -35,6 +35,111 @@ export function readSessionMessages(
   return messages;
 }
 
+// ── Retry artifact deduplication ─────────────────────────────────────────
+// When model fallback / overflow retries occur, the raw JSONL transcript
+// contains retry pairs:
+//   user(A) → error_assistant → user(A) → real_assistant
+//
+// readSessionMessages reads the flat file and returns ALL entries including
+// dead‑branch duplicates. This function collapses them so chat.history
+// only shows the final user prompt + the real assistant response.
+// ─────────────────────────────────────────────────────────────────────────
+
+export function collapseRetryArtifacts(messages: unknown[]): unknown[] {
+  if (messages.length < 3) return messages;
+
+  const result: unknown[] = [];
+  let i = 0;
+
+  while (i < messages.length) {
+    const msg = messages[i] as Record<string, unknown>;
+
+    // Pattern: user(A) → error_assistant → user(B) with same content
+    if (msg.role === "user" && i + 2 < messages.length) {
+      const next = messages[i + 1] as Record<string, unknown>;
+      const afterNext = messages[i + 2] as Record<string, unknown>;
+
+      if (
+        next.role === "assistant" &&
+        isRetryErrorAssistant(next) &&
+        afterNext.role === "user" &&
+        sameUserContent(msg, afterNext)
+      ) {
+        // Skip this user + error assistant — the retry user follows at i+2
+        i += 2;
+        continue;
+      }
+    }
+
+    result.push(messages[i]);
+    i++;
+  }
+
+  return result;
+}
+
+/** True for assistant messages that are error-only (no meaningful text/tool content). */
+function isRetryErrorAssistant(msg: Record<string, unknown>): boolean {
+  if (msg.role !== "assistant") return false;
+
+  // Explicit error/cancelled stop reason
+  if (msg.stopReason === "error" || msg.stopReason === "cancelled") return true;
+
+  // Has errorMessage with no meaningful content
+  if (typeof msg.errorMessage === "string" && msg.errorMessage.trim()) {
+    if (!hasNonEmptyAssistantContent(msg)) return true;
+  }
+
+  return false;
+}
+
+function hasNonEmptyAssistantContent(msg: Record<string, unknown>): boolean {
+  const content = msg.content;
+  if (!content) return false;
+  if (typeof content === "string") return content.trim().length > 0;
+  if (Array.isArray(content)) {
+    return content.some((item) => {
+      if (!item || typeof item !== "object") return false;
+      const entry = item as Record<string, unknown>;
+      // Text content with actual text
+      if (entry.type === "text" && typeof entry.text === "string") {
+        return entry.text.trim().length > 0;
+      }
+      // Tool usage is meaningful content — never collapse these
+      return entry.type === "tool_use" || entry.type === "tool_result";
+    });
+  }
+  return false;
+}
+
+function sameUserContent(a: Record<string, unknown>, b: Record<string, unknown>): boolean {
+  const aText = extractUserTextForDedup(a);
+  const bText = extractUserTextForDedup(b);
+  return aText === bText && aText.length > 0;
+}
+
+function extractUserTextForDedup(msg: Record<string, unknown>): string {
+  const content = msg.content;
+  if (typeof content === "string") return content.trim();
+  if (Array.isArray(content)) {
+    return content
+      .map((item) => {
+        if (!item || typeof item !== "object") return "";
+        const entry = item as Record<string, unknown>;
+        if (
+          (entry.type === "text" || entry.type === "input_text") &&
+          typeof entry.text === "string"
+        ) {
+          return entry.text;
+        }
+        return "";
+      })
+      .join("")
+      .trim();
+  }
+  return "";
+}
+
 export function resolveSessionTranscriptCandidates(
   sessionId: string,
   storePath: string | undefined,

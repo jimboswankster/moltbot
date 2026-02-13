@@ -39,6 +39,7 @@ export {
   readLastMessagePreviewFromTranscript,
   readSessionPreviewItemsFromTranscript,
   readSessionMessages,
+  collapseRetryArtifacts,
   resolveSessionTranscriptCandidates,
 } from "./session-utils.fs.js";
 export type {

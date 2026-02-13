@@ -32,6 +32,7 @@ import {
 import { getMaxChatHistoryMessagesBytes } from "../server-constants.js";
 import {
   capArrayByJsonBytes,
+  collapseRetryArtifacts,
   loadSessionEntry,
   readSessionMessages,
   resolveSessionModelRef,
@@ -220,11 +221,13 @@ export const chatHandlers: GatewayRequestHandlers = {
     const sessionId = entry?.sessionId;
     const rawMessages =
       sessionId && storePath ? readSessionMessages(sessionId, storePath, entry?.sessionFile) : [];
+    // Collapse retry artifacts (user → error_assistant → user duplicates from model fallback)
+    const deduped = collapseRetryArtifacts(rawMessages);
     const hardMax = 1000;
     const defaultLimit = 200;
     const requested = typeof limit === "number" ? limit : defaultLimit;
     const max = Math.min(hardMax, requested);
-    const sliced = rawMessages.length > max ? rawMessages.slice(-max) : rawMessages;
+    const sliced = deduped.length > max ? deduped.slice(-max) : deduped;
     const sanitized = stripEnvelopeFromMessages(sliced);
     const capped = capArrayByJsonBytes(sanitized, getMaxChatHistoryMessagesBytes()).items;
     let thinkingLevel = entry?.thinkingLevel;
