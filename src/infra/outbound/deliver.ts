@@ -24,6 +24,7 @@ import {
 import { markdownToSignalTextChunks, type SignalTextStyleRange } from "../../signal/format.js";
 import { sendMessageSignal } from "../../signal/send.js";
 import { normalizeReplyPayloadsForDelivery } from "./payloads.js";
+import { emitOutboundSanitizedDeskSignal, sanitizeOutboundText } from "./sanitize.js";
 
 export type { NormalizedOutboundPayload } from "./payloads.js";
 export { normalizeOutboundPayloads } from "./payloads.js";
@@ -319,6 +320,25 @@ export async function deliverOutboundPayloads(params: {
   };
   const normalizedPayloads = normalizeReplyPayloadsForDelivery(payloads);
   for (const payload of normalizedPayloads) {
+    // Unified outbound sanitizer gate (all channels): strip internal-only blocks.
+    if (typeof payload.text === "string" && payload.text) {
+      const sanitized = sanitizeOutboundText(payload.text);
+      if (sanitized.changed) {
+        const beforeBytes = Buffer.byteLength(payload.text, "utf8");
+        const afterBytes = Buffer.byteLength(sanitized.text, "utf8");
+        payload.text = sanitized.text;
+        // Desk-route an internal event for observability (best-effort).
+        void emitOutboundSanitizedDeskSignal({
+          agentId: params.mirror?.agentId,
+          sessionKey: params.mirror?.sessionKey,
+          channel,
+          removedTags: sanitized.removedTags,
+          beforeBytes,
+          afterBytes,
+        });
+      }
+    }
+
     const payloadSummary: NormalizedOutboundPayload = {
       text: payload.text ?? "",
       mediaUrls: payload.mediaUrls ?? (payload.mediaUrl ? [payload.mediaUrl] : []),
