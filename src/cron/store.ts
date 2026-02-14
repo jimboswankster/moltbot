@@ -35,12 +35,21 @@ export async function loadCronStore(storePath: string): Promise<CronStoreFile> {
 
 export async function saveCronStore(storePath: string, store: CronStoreFile) {
   await fs.promises.mkdir(path.dirname(storePath), { recursive: true });
-  const tmp = `${storePath}.${process.pid}.${Math.random().toString(16).slice(2)}.tmp`;
+  let writePath = storePath;
+  try {
+    const stat = await fs.promises.lstat(storePath);
+    if (stat.isSymbolicLink()) {
+      writePath = await fs.promises.realpath(storePath);
+    }
+  } catch {
+    // If storePath does not exist yet, write directly to it.
+  }
+  const tmp = `${writePath}.${process.pid}.${Math.random().toString(16).slice(2)}.tmp`;
   const json = JSON.stringify(store, null, 2);
   await fs.promises.writeFile(tmp, json, "utf-8");
-  await fs.promises.rename(tmp, storePath);
+  await fs.promises.rename(tmp, writePath);
   try {
-    await fs.promises.copyFile(storePath, `${storePath}.bak`);
+    await fs.promises.copyFile(writePath, `${writePath}.bak`);
   } catch {
     // best-effort
   }
