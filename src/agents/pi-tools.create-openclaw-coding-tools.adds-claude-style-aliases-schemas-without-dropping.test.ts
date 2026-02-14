@@ -98,6 +98,38 @@ describe("createOpenClawCodingTools", () => {
 
       expect(execute).toHaveBeenCalledWith("tool-fp-1", { path: "foo.txt" }, undefined, undefined);
     });
+
+    it("normalizes wrapped input.filepath to path", async () => {
+      const execute = vi.fn(async (_id, args) => args);
+      const tool: AgentTool = {
+        name: "read",
+        description: "test",
+        parameters: {
+          type: "object",
+          required: ["path"],
+          properties: {
+            path: { type: "string" },
+          },
+        },
+        execute,
+      };
+
+      const wrapped = __testing.wrapToolParamNormalization(tool, [
+        { keys: ["path", "file_path", "filepath"] },
+      ]);
+      await wrapped.execute("tool-fp-2", {
+        action: "read",
+        tool_id: "cli-read",
+        input: { filepath: "foo.txt" },
+      });
+
+      expect(execute).toHaveBeenCalledWith(
+        "tool-fp-2",
+        { action: "read", tool_id: "cli-read", path: "foo.txt" },
+        undefined,
+        undefined,
+      );
+    });
   });
 
   it("keeps browser tool schema OpenAI-compatible without normalization", () => {

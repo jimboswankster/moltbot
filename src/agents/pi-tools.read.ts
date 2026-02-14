@@ -134,6 +134,22 @@ export function normalizeToolParams(params: unknown): Record<string, unknown> | 
   }
   const record = params as Record<string, unknown>;
   const normalized = { ...record };
+  // Some providers/agent wrappers emit tool args under an `input` envelope.
+  // Flatten known wrapped args before alias normalization.
+  if (
+    "input" in normalized &&
+    normalized.input &&
+    typeof normalized.input === "object" &&
+    !Array.isArray(normalized.input)
+  ) {
+    const input = normalized.input as Record<string, unknown>;
+    for (const [key, value] of Object.entries(input)) {
+      if (!(key in normalized)) {
+        normalized[key] = value;
+      }
+    }
+    delete normalized.input;
+  }
   // file_path/filepath → path (read, write, edit)
   if ("file_path" in normalized && !("path" in normalized)) {
     normalized.path = normalized.file_path;
