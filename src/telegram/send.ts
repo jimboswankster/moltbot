@@ -205,6 +205,16 @@ function removeMessageThreadIdParam(
   return Object.keys(next).length > 0 ? next : undefined;
 }
 
+function stripInternalA2ABlocks(value: string): string {
+  if (!value.includes("TRANSITIONAL_A2A_INBOX")) {
+    return value;
+  }
+  // Remove any internal A2A inbox blocks that should never be sent to end users.
+  // Pattern: from TRANSITIONAL_A2A_INBOX to the next blank line boundary.
+  const re = /(?:^|\n)TRANSITIONAL_A2A_INBOX[\s\S]*?(?:\n\s*\n|$)/g;
+  return value.replace(re, "\n").trim();
+}
+
 export function buildInlineKeyboard(
   buttons?: TelegramSendOpts["buttons"],
 ): InlineKeyboardMarkup | undefined {
@@ -234,6 +244,8 @@ export async function sendMessageTelegram(
   text: string,
   opts: TelegramSendOpts = {},
 ): Promise<TelegramSendResult> {
+  // Safety: strip internal context blocks that must not reach user channels.
+  text = stripInternalA2ABlocks(text);
   const cfg = loadConfig();
   const account = resolveTelegramAccount({
     cfg,
