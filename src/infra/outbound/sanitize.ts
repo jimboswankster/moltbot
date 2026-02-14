@@ -19,6 +19,17 @@ export function sanitizeOutboundText(text: string): OutboundSanitizeResult {
       next = replaced;
       removedTags.push("TRANSITIONAL_A2A_INBOX");
     }
+
+    // Strip internal announce-queue prompts. These are meant to be agent-only
+    // meta-instructions and should never reach user channels.
+    if (next.includes("[Queued announce messages while agent was busy]")) {
+      const re = /(?:^|\n)\[Queued announce messages while agent was busy\][\s\S]*$/g;
+      const replaced = next.replace(re, "");
+      if (replaced !== next) {
+        next = replaced;
+        removedTags.push("QUEUED_ANNOUNCE_MESSAGES");
+      }
+    }
   }
 
   if (removedTags.length > 0) {
