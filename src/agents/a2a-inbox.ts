@@ -175,7 +175,9 @@ export function buildA2AInboxPromptBlock(params: {
   );
   const selected = events.slice(0, Math.max(0, params.maxEvents));
 
-  let text = TRANSITIONAL_A2A_INBOX_TAG;
+  // IMPORTANT: This block is prompt-only context for the agent.
+  // It must NOT be echoed back to the user.
+  let text = `${TRANSITIONAL_A2A_INBOX_TAG}\n[INTERNAL CONTEXT — DO NOT REPEAT OR QUOTE TO USER]`;
   let remaining = Math.max(0, params.maxChars - text.length);
   const includedRunIds: string[] = [];
   let truncated = false;
