@@ -17,6 +17,28 @@ const ENVELOPE_CHANNELS = [
 
 const MESSAGE_ID_LINE = /^\s*\[message_id:\s*[^\]]+\]\s*$/i;
 
+function stripInternalBlocks(text: string): string {
+  let next = text;
+
+  if (next.includes("TRANSITIONAL_A2A_INBOX")) {
+    // Remove internal A2A inbox prompt blocks.
+    const re = /(?:^|\n)TRANSITIONAL_A2A_INBOX[\s\S]*?(?:\n\s*\n|$)/g;
+    next = next.replace(re, "\n");
+  }
+
+  if (next.includes("[Queued announce messages while agent was busy]")) {
+    // Remove internal announce-queue prompts.
+    const re = /(?:^|\n)\[Queued announce messages while agent was busy\][\s\S]*$/g;
+    next = next.replace(re, "");
+  }
+
+  if (next !== text) {
+    next = next.replace(/\n{3,}/g, "\n\n").trim();
+  }
+
+  return next;
+}
+
 function looksLikeEnvelopeHeader(header: string): boolean {
   if (/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}Z\b/.test(header)) {
     return true;
@@ -48,7 +70,10 @@ function stripMessageIdHints(text: string): string {
   return filtered.length === lines.length ? text : filtered.join("\n");
 }
 
-function stripEnvelopeFromContent(content: unknown[]): { content: unknown[]; changed: boolean } {
+function stripFromContent(
+  content: unknown[],
+  role: string,
+): { content: unknown[]; changed: boolean } {
   let changed = false;
   const next = content.map((item) => {
     if (!item || typeof item !== "object") {
@@ -58,10 +83,14 @@ function stripEnvelopeFromContent(content: unknown[]): { content: unknown[]; cha
     if (entry.type !== "text" || typeof entry.text !== "string") {
       return item;
     }
-    const stripped = stripMessageIdHints(stripEnvelope(entry.text));
+
+    const base = role === "user" ? stripEnvelope(entry.text) : entry.text;
+    const stripped = stripInternalBlocks(stripMessageIdHints(base));
+
     if (stripped === entry.text) {
       return item;
     }
+
     changed = true;
     return {
       ...entry,
@@ -77,27 +106,26 @@ export function stripEnvelopeFromMessage(message: unknown): unknown {
   }
   const entry = message as Record<string, unknown>;
   const role = typeof entry.role === "string" ? entry.role.toLowerCase() : "";
-  if (role !== "user") {
-    return message;
-  }
 
   let changed = false;
   const next: Record<string, unknown> = { ...entry };
 
   if (typeof entry.content === "string") {
-    const stripped = stripMessageIdHints(stripEnvelope(entry.content));
+    const base = role === "user" ? stripEnvelope(entry.content) : entry.content;
+    const stripped = stripInternalBlocks(stripMessageIdHints(base));
     if (stripped !== entry.content) {
       next.content = stripped;
       changed = true;
     }
   } else if (Array.isArray(entry.content)) {
-    const updated = stripEnvelopeFromContent(entry.content);
+    const updated = stripFromContent(entry.content, role);
     if (updated.changed) {
       next.content = updated.content;
       changed = true;
     }
   } else if (typeof entry.text === "string") {
-    const stripped = stripMessageIdHints(stripEnvelope(entry.text));
+    const base = role === "user" ? stripEnvelope(entry.text) : entry.text;
+    const stripped = stripInternalBlocks(stripMessageIdHints(base));
     if (stripped !== entry.text) {
       next.text = stripped;
       changed = true;
