@@ -42,7 +42,7 @@ function makeText(length: number, char = "x"): string {
 describe("capToolResultSize", () => {
   // -- Function identity --
 
-  it("is a function with arity 4 (messages, maxChars, headChars, tailChars)", () => {
+  it("is a function with arity 5 (messages, maxChars, headChars, tailChars, policy)", () => {
     // Observable: function signature of capToolResultSize
     expect(typeof capToolResultSize).toBe("function");
     expect(capToolResultSize.name).toBe("capToolResultSize");
@@ -321,5 +321,16 @@ describe("capToolResultSize", () => {
     // Each reports different truncated counts
     expect(text1).toContain("truncated 14000 chars"); // 30000 - 8000 - 8000
     expect(text2).toContain("truncated 64000 chars"); // 80000 - 8000 - 8000
+  });
+
+  it("applies stricter max chars to noisy tools when policy is configured", () => {
+    const execResult = makeToolResult("exec", makeText(9_000, "G"), "tc-exec");
+    const calendarResult = makeToolResult("calendar", makeText(9_000, "H"), "tc-calendar");
+    const result = capToolResultSize([execResult, calendarResult], 12_000, 2_000, 2_000, {
+      noisyTools: ["exec"],
+      noisyToolMaxChars: 5_000,
+    });
+    expect((result[0] as any).content[0].text).toContain("[...truncated");
+    expect((result[1] as any).content[0].text).toBe(makeText(9_000, "H"));
   });
 });

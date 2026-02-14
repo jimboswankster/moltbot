@@ -5,6 +5,7 @@ import { createAgentSession, SessionManager, SettingsManager } from "@mariozechn
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
+import type { UsageLike } from "../../usage.js";
 import type { EmbeddedRunAttemptParams, EmbeddedRunAttemptResult } from "./types.js";
 import { resolveHeartbeatPrompt } from "../../../auto-reply/heartbeat.js";
 import { resolveChannelCapabilities } from "../../../config/channel-capabilities.js";
@@ -79,6 +80,7 @@ import {
   limitHistoryTurns,
   limitToolResults,
   stripLegacySessionMemoryBlocks,
+  type ToolResultCapPolicy,
 } from "../history.js";
 import { log } from "../logger.js";
 import { buildModelAliasLines } from "../model.js";
@@ -95,9 +97,12 @@ import {
   buildEmbeddedSystemPrompt,
   createSystemPromptOverride,
 } from "../system-prompt.js";
-import { deriveContextLimits, fitToTokenBudget } from "../token-budget.js";
+import {
+  deriveContextLimits,
+  fitToTokenBudget,
+  resolveProviderInputCapRule,
+} from "../token-budget.js";
 import { splitSdkTools } from "../tool-split.js";
-import type { UsageLike } from "../../usage.js";
 import { describeUnknownError, mapThinkingLevel } from "../utils.js";
 import { detectAndLoadPromptImages } from "./images.js";
 
@@ -599,6 +604,13 @@ export async function runEmbeddedAttempt(
 
         // ── Budget-derived first-pass limits (from model context window) ──
         const ctxLimits = deriveContextLimits(params.contextWindowTokens);
+        const configuredToolCaps = params.config?.agents?.defaults?.tokenBudget?.toolResultCaps;
+        const toolResultCapPolicy: ToolResultCapPolicy | undefined = configuredToolCaps
+          ? {
+              noisyTools: configuredToolCaps.noisyTools,
+              noisyToolMaxChars: configuredToolCaps.noisyToolMaxChars,
+            }
+          : undefined;
         const channelHistoryLimit = getDmHistoryLimitFromSessionKey(
           params.sessionKey,
           params.config,
@@ -627,7 +639,13 @@ export async function runEmbeddedAttempt(
         }
 
         const toolLimited = limitToolResults(limitedHistory, ctxLimits.toolResultsKept);
-        const capped = capToolResultSize(toolLimited, ctxLimits.toolResultMaxChars);
+        const capped = capToolResultSize(
+          toolLimited,
+          ctxLimits.toolResultMaxChars,
+          undefined,
+          undefined,
+          toolResultCapPolicy,
+        );
         cacheTrace?.recordStage("session:limited", { messages: capped });
 
         // ── Token Budget Gate — hard guarantee against context overflow ──
@@ -641,31 +659,62 @@ export async function runEmbeddedAttempt(
         const budgetResult = fitToTokenBudget(capped, params.contextWindowTokens, {
           outputReserveTokens: params.streamParams?.maxTokens ?? 4096,
           systemPromptTokens,
+          toolResultCapPolicy,
         });
+        const inputCapRules = params.config?.agents?.defaults?.tokenBudget?.inputCaps;
+        const providerInputCapRule = resolveProviderInputCapRule(
+          inputCapRules,
+          params.provider,
+          params.modelId,
+        );
+        const providerBudgetResult = providerInputCapRule
+          ? fitToTokenBudget(budgetResult.messages, providerInputCapRule.maxInputTokens, {
+              outputReserveTokens: 0,
+              systemPromptTokens,
+              toolResultCapPolicy,
+            })
+          : null;
+        const effectiveBudgetResult = providerBudgetResult ?? budgetResult;
 
-        if (budgetResult.actions.length > 0) {
+        if (effectiveBudgetResult.actions.length > 0) {
+          const capLabel = providerInputCapRule
+            ? ` providerInputCap=${providerInputCapRule.provider}/${providerInputCapRule.model ?? "*"}:${providerInputCapRule.maxInputTokens}`
+            : "";
           log.warn(
-            `[token-budget] ${budgetResult.actions.join("; ")} | ` +
-              `estimated=${budgetResult.estimatedTokens} budget=${budgetResult.budgetTokens} ` +
-              `contextWindow=${params.contextWindowTokens} messages=${budgetResult.messages.length} ` +
+            `[token-budget] ${effectiveBudgetResult.actions.join("; ")} | ` +
+              `estimated=${effectiveBudgetResult.estimatedTokens} budget=${effectiveBudgetResult.budgetTokens} ` +
+              `contextWindow=${params.contextWindowTokens} messages=${effectiveBudgetResult.messages.length}${capLabel} ` +
               `runId=${params.runId} sessionId=${params.sessionId}`,
           );
         } else {
           log.debug(
-            `[token-budget] within budget: estimated=${budgetResult.estimatedTokens} budget=${budgetResult.budgetTokens} ` +
-              `contextWindow=${params.contextWindowTokens} messages=${budgetResult.messages.length}`,
+            `[token-budget] within budget: estimated=${effectiveBudgetResult.estimatedTokens} budget=${effectiveBudgetResult.budgetTokens} ` +
+              `contextWindow=${params.contextWindowTokens} messages=${effectiveBudgetResult.messages.length}`,
+          );
+        }
+        const normalizedProvider = params.provider.trim().toLowerCase();
+        const normalizedModelId = params.modelId.trim().toLowerCase();
+        const isGeminiFlash =
+          normalizedProvider === "google" &&
+          normalizedModelId.includes("gemini") &&
+          normalizedModelId.includes("flash");
+        if (isGeminiFlash && effectiveBudgetResult.estimatedTokens >= 120_000) {
+          log.warn(
+            `[token-throughput] high estimated input for ${params.provider}/${params.modelId}: ` +
+              `${effectiveBudgetResult.estimatedTokens} tokens. Large requests can rapidly consume per-minute quotas. ` +
+              `runId=${params.runId} sessionId=${params.sessionId}`,
           );
         }
         cacheTrace?.recordStage("session:budget", {
-          messages: budgetResult.messages,
+          messages: effectiveBudgetResult.messages,
           options: {
-            estimatedTokens: budgetResult.estimatedTokens,
-            budgetTokens: budgetResult.budgetTokens,
-            actions: budgetResult.actions,
+            estimatedTokens: effectiveBudgetResult.estimatedTokens,
+            budgetTokens: effectiveBudgetResult.budgetTokens,
+            actions: effectiveBudgetResult.actions,
           },
         });
 
-        const limited = budgetResult.messages;
+        const limited = effectiveBudgetResult.messages;
 
         // Validate message format before sending to model — catch malformed content early and loudly.
         for (let mi = 0; mi < limited.length; mi++) {
@@ -685,10 +734,10 @@ export async function runEmbeddedAttempt(
         }
 
         // ── Proactive compaction: if budget gate says we're still over, bail early ──
-        if (budgetResult.shouldCompact) {
+        if (effectiveBudgetResult.shouldCompact) {
           log.warn(
             `[token-budget] proactive compaction requested — skipping model call ` +
-              `(estimated=${budgetResult.estimatedTokens} budget=${budgetResult.budgetTokens}) ` +
+              `(estimated=${effectiveBudgetResult.estimatedTokens} budget=${effectiveBudgetResult.budgetTokens}) ` +
               `runId=${params.runId} sessionId=${params.sessionId}`,
           );
           sessionManager.flushPendingToolResults?.();
@@ -1042,12 +1091,7 @@ export async function runEmbeddedAttempt(
         // state but then failed to compact (e.g., "Already compacted"), session.prompt()
         // resolves with no error and no response. Detect this and surface it so the
         // run loop can trigger reactive compaction.
-        if (
-          !promptError &&
-          !aborted &&
-          messagesSnapshot.length > 0 &&
-          getCompactionCount() > 0
-        ) {
+        if (!promptError && !aborted && messagesSnapshot.length > 0 && getCompactionCount() > 0) {
           const lastMsg = messagesSnapshot[messagesSnapshot.length - 1];
           // If the last message is NOT an assistant message after a compaction ran,
           // it means the SDK ate an error and failed to retry successfully.
@@ -1122,17 +1166,23 @@ export async function runEmbeddedAttempt(
       // Use the model's actual usage data (much more accurate than char/4 estimate).
       // If context tokens >= 80% of the window, advise the caller to compact before
       // the next user message to avoid overflow.
-      const POST_RESPONSE_COMPACT_THRESHOLD = 0.80;
+      const POST_RESPONSE_COMPACT_THRESHOLD = 0.8;
       let postResponseCompactAdvised = false;
       if (lastAssistant && !promptError && !aborted && params.contextWindowTokens > 0) {
         const usage = lastAssistant.usage as UsageLike | undefined;
         if (usage) {
           const input = (usage.input ?? usage.inputTokens ?? usage.promptTokens ?? 0) as number;
-          const output = (usage.output ?? usage.outputTokens ?? usage.completionTokens ?? 0) as number;
-          const cacheRead = ((usage.cacheRead ?? 0) as number);
-          const cacheWrite = ((usage.cacheWrite ?? 0) as number);
+          const output = (usage.output ??
+            usage.outputTokens ??
+            usage.completionTokens ??
+            0) as number;
+          const cacheRead = (usage.cacheRead ?? 0) as number;
+          const cacheWrite = (usage.cacheWrite ?? 0) as number;
           const contextTokens = input + output + cacheRead + cacheWrite;
-          if (contextTokens > 0 && contextTokens >= params.contextWindowTokens * POST_RESPONSE_COMPACT_THRESHOLD) {
+          if (
+            contextTokens > 0 &&
+            contextTokens >= params.contextWindowTokens * POST_RESPONSE_COMPACT_THRESHOLD
+          ) {
             log.info(
               `[post-response] context at ${((contextTokens / params.contextWindowTokens) * 100).toFixed(1)}% ` +
                 `(${contextTokens}/${params.contextWindowTokens}); advising compaction ` +

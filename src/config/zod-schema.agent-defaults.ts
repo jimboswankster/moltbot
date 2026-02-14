@@ -87,6 +87,29 @@ export const AgentDefaultsSchema = z
       })
       .strict()
       .optional(),
+    tokenBudget: z
+      .object({
+        inputCaps: z
+          .array(
+            z
+              .object({
+                provider: z.string().min(1),
+                model: z.string().min(1).optional(),
+                maxInputTokens: z.number().int().positive(),
+              })
+              .strict(),
+          )
+          .optional(),
+        toolResultCaps: z
+          .object({
+            noisyTools: z.array(z.string().min(1)).optional(),
+            noisyToolMaxChars: z.number().int().positive().optional(),
+          })
+          .strict()
+          .optional(),
+      })
+      .strict()
+      .optional(),
     compaction: z
       .object({
         mode: z.union([z.literal("default"), z.literal("safeguard")]).optional(),

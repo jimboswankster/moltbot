@@ -16,6 +16,7 @@
  */
 
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
+import type { ToolResultCapPolicy } from "./history.js";
 import { estimateMessagesTokens, SAFETY_MARGIN } from "../compaction.js";
 import { capToolResultSize, limitToolResults } from "./history.js";
 
@@ -50,6 +51,63 @@ export interface TokenBudgetOptions {
   outputReserveTokens?: number;
   /** Tokens already consumed by system prompt (subtracted from budget). */
   systemPromptTokens?: number;
+  /** Optional policy to cap noisy tool outputs more aggressively. */
+  toolResultCapPolicy?: ToolResultCapPolicy;
+}
+
+export type ProviderInputCapRule = {
+  provider: string;
+  model?: string;
+  maxInputTokens: number;
+};
+
+function modelMatcherScore(matcher: string, modelId: string): number {
+  const normalizedMatcher = matcher.trim().toLowerCase();
+  if (!normalizedMatcher) {
+    return -1;
+  }
+  const normalizedModel = modelId.trim().toLowerCase();
+  if (!normalizedModel) {
+    return -1;
+  }
+  if (normalizedMatcher.endsWith("*")) {
+    const prefix = normalizedMatcher.slice(0, -1);
+    if (!prefix) return -1;
+    return normalizedModel.startsWith(prefix) ? 100 + prefix.length : -1;
+  }
+  return normalizedMatcher === normalizedModel ? 1_000 + normalizedMatcher.length : -1;
+}
+
+/**
+ * Resolve the most specific provider/model input cap rule.
+ * Priority: exact model > prefix model > provider-only.
+ */
+export function resolveProviderInputCapRule(
+  rules: ProviderInputCapRule[] | undefined,
+  provider: string,
+  modelId: string,
+): ProviderInputCapRule | undefined {
+  if (!rules?.length) return undefined;
+  const normalizedProvider = provider.trim().toLowerCase();
+  if (!normalizedProvider) return undefined;
+  let best: { rule: ProviderInputCapRule; score: number } | undefined;
+  for (const rule of rules) {
+    if (!rule || !Number.isFinite(rule.maxInputTokens) || rule.maxInputTokens <= 0) {
+      continue;
+    }
+    if (rule.provider.trim().toLowerCase() !== normalizedProvider) {
+      continue;
+    }
+    const score =
+      typeof rule.model === "string" && rule.model.trim().length > 0
+        ? modelMatcherScore(rule.model, modelId)
+        : 10;
+    if (score < 0) continue;
+    if (!best || score > best.score) {
+      best = { rule, score };
+    }
+  }
+  return best?.rule;
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -177,7 +235,13 @@ export function fitToTokenBudget(
 
   // ── Step 1: Tighten tool result size caps ──
   for (const maxChars of TOOL_SIZE_STEPS) {
-    const recapped = capToolResultSize(current, maxChars);
+    const recapped = capToolResultSize(
+      current,
+      maxChars,
+      undefined,
+      undefined,
+      options?.toolResultCapPolicy,
+    );
     const newEstimated = estimateMessagesTokens(recapped);
     if (newEstimated < estimated) {
       actions.push(
@@ -279,6 +343,14 @@ export function deriveContextLimits(contextWindowTokens: number): ContextDerived
   if (contextWindowTokens <= 128_000) {
     return { historyTurns: 30, toolResultsKept: 10, toolResultMaxChars: 15_000 };
   }
-  // 128K+ (most current models)
-  return { historyTurns: 50, toolResultsKept: 15, toolResultMaxChars: 20_000 };
+  // 128K-256K: keep high capability while avoiding oversized per-turn payload spikes.
+  if (contextWindowTokens <= 256_000) {
+    return { historyTurns: 35, toolResultsKept: 8, toolResultMaxChars: 10_000 };
+  }
+  // 256K-512K: moderate expansion.
+  if (contextWindowTokens <= 512_000) {
+    return { historyTurns: 40, toolResultsKept: 10, toolResultMaxChars: 12_000 };
+  }
+  // 512K+: large-window models still get generous limits.
+  return { historyTurns: 50, toolResultsKept: 12, toolResultMaxChars: 15_000 };
 }

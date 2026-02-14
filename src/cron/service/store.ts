@@ -6,6 +6,31 @@ import { inferLegacyName, normalizeOptionalText } from "./normalize.js";
 
 const storeCache = new Map<string, { version: 1; jobs: CronJob[] }>();
 
+function ensureDeskPostbackForIsolatedAgentTurn(raw: Record<string, unknown>) {
+  const sessionTarget = raw.sessionTarget;
+  const payload = raw.payload;
+  if (sessionTarget !== "isolated") {
+    return false;
+  }
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return false;
+  }
+  if ((payload as { kind?: unknown }).kind !== "agentTurn") {
+    return false;
+  }
+  const isolationRaw = raw.isolation;
+  if (!isolationRaw || typeof isolationRaw !== "object" || Array.isArray(isolationRaw)) {
+    raw.isolation = { postbackStrategy: "desk" };
+    return true;
+  }
+  const isolation = isolationRaw as Record<string, unknown>;
+  if (typeof isolation.postbackStrategy !== "string") {
+    isolation.postbackStrategy = "desk";
+    return true;
+  }
+  return false;
+}
+
 /**
  * Reload jobs from disk, clearing any in-memory cache. Use after external edits to
  * jobs.json so new/updated/removed jobs are picked up without a gateway restart.
@@ -51,6 +76,9 @@ export async function ensureLoaded(state: CronServiceState) {
       if (migrateLegacyCronPayload(payload as Record<string, unknown>)) {
         mutated = true;
       }
+    }
+    if (ensureDeskPostbackForIsolatedAgentTurn(raw)) {
+      mutated = true;
     }
   }
   state.store = { version: 1, jobs: jobs as unknown as CronJob[] };

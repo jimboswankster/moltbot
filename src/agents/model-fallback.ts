@@ -38,6 +38,60 @@ type FallbackAttempt = {
   code?: string;
 };
 
+const candidateCooldownUntil = new Map<string, number>();
+
+function candidateKey(provider: string, model: string): string {
+  return `${provider.trim().toLowerCase()}/${model.trim().toLowerCase()}`;
+}
+
+function getCandidateCooldownRemainingMs(provider: string, model: string): number | null {
+  const key = candidateKey(provider, model);
+  const until = candidateCooldownUntil.get(key);
+  if (!until) {
+    return null;
+  }
+  const remaining = until - Date.now();
+  if (remaining <= 0) {
+    candidateCooldownUntil.delete(key);
+    return null;
+  }
+  return remaining;
+}
+
+function setCandidateCooldown(provider: string, model: string, cooldownMs: number): void {
+  const safeMs = Math.max(1_000, Math.min(cooldownMs, 15 * 60 * 1000));
+  candidateCooldownUntil.set(candidateKey(provider, model), Date.now() + safeMs);
+}
+
+function parseRetryDelayMs(message: string): number | null {
+  if (!message) {
+    return null;
+  }
+  const patterns = [
+    /please retry in\s+([0-9]+(?:\.[0-9]+)?)s/i,
+    /"retryDelay"\s*:\s*"([0-9]+(?:\.[0-9]+)?)s"/i,
+  ];
+  for (const pattern of patterns) {
+    const match = message.match(pattern);
+    if (!match?.[1]) {
+      continue;
+    }
+    const seconds = Number.parseFloat(match[1]);
+    if (!Number.isFinite(seconds) || seconds <= 0) {
+      continue;
+    }
+    return Math.round(seconds * 1000);
+  }
+  return null;
+}
+
+function resolveRateLimitCooldownMs(message: string): number {
+  const retryDelayMs = parseRetryDelayMs(message);
+  // Default mirrors auth-profile first cooldown step when provider doesn't expose retry delay.
+  const fallbackMs = 60_000;
+  return retryDelayMs ? Math.max(5_000, retryDelayMs + 1_000) : fallbackMs;
+}
+
 export class AllModelsInCooldownError extends Error {
   attempts: FallbackAttempt[];
 
@@ -283,6 +337,31 @@ export async function runWithModelFallback<T>(params: {
 
   for (let i = 0; i < candidates.length; i += 1) {
     const candidate = candidates[i];
+    const candidateCooldownMs = getCandidateCooldownRemainingMs(
+      candidate.provider,
+      candidate.model,
+    );
+    if (candidateCooldownMs !== null) {
+      const cooldownSeconds = Math.ceil(candidateCooldownMs / 1000);
+      logWarn(
+        `model fallback skipped for ${candidate.provider}/${candidate.model}: cooldown active (${cooldownSeconds}s remaining)`,
+      );
+      attempts.push({
+        provider: candidate.provider,
+        model: candidate.model,
+        error: `Provider/model in cooldown (${cooldownSeconds}s remaining)`,
+        reason: "rate_limit",
+      });
+      const recorded = recordFallbackAttempt({
+        provider: candidate.provider,
+        model: candidate.model,
+        reason: "rate_limit",
+      });
+      if (recorded.warned) {
+        maybeWarnFallbackRate(params.cfg, recorded.countLastHour);
+      }
+      continue;
+    }
     if (authStore) {
       const profileIds = resolveAuthProfileOrder({
         cfg: params.cfg,
@@ -341,6 +420,13 @@ export async function runWithModelFallback<T>(params: {
         status: described.status,
         code: described.code,
       });
+      if (described.reason === "rate_limit") {
+        const cooldownMs = resolveRateLimitCooldownMs(described.message);
+        setCandidateCooldown(candidate.provider, candidate.model, cooldownMs);
+        logWarn(
+          `model fallback cooldown set for ${candidate.provider}/${candidate.model}: ${Math.ceil(cooldownMs / 1000)}s`,
+        );
+      }
       const recorded = recordFallbackAttempt({
         provider: candidate.provider,
         model: candidate.model,
@@ -395,6 +481,11 @@ export async function runWithModelFallback<T>(params: {
   throw new Error(`All models failed (${attempts.length || candidates.length}): ${summary}`, {
     cause: lastError instanceof Error ? lastError : undefined,
   });
+}
+
+// Test-only helper.
+export function resetModelCandidateCooldownsForTest() {
+  candidateCooldownUntil.clear();
 }
 
 export async function runWithImageModelFallback<T>(params: {

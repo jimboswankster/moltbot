@@ -1,6 +1,11 @@
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { OpenClawConfig } from "../../config/config.js";
 
+export type ToolResultCapPolicy = {
+  noisyTools?: string[];
+  noisyToolMaxChars?: number;
+};
+
 const THREAD_SUFFIX_REGEX = /^(.*)(?::(?:thread|topic):\d+)$/i;
 
 function stripThreadSuffix(value: string): string {
@@ -99,8 +104,29 @@ export function capToolResultSize(
   maxChars: number = 20_000,
   headChars: number = 8_000,
   tailChars: number = 8_000,
+  policy?: ToolResultCapPolicy,
 ): AgentMessage[] {
   if (maxChars <= 0) return messages;
+
+  const noisyToolMatchers = (policy?.noisyTools ?? [])
+    .map((entry) => entry.trim().toLowerCase())
+    .filter((entry) => entry.length > 0);
+  const noisyToolMaxChars =
+    policy?.noisyToolMaxChars && policy.noisyToolMaxChars > 0
+      ? Math.min(maxChars, policy.noisyToolMaxChars)
+      : undefined;
+  const isNoisyTool = (toolName: string | undefined): boolean => {
+    if (!toolName || noisyToolMatchers.length === 0) return false;
+    const normalized = toolName.trim().toLowerCase();
+    if (!normalized) return false;
+    return noisyToolMatchers.some((matcher) => {
+      if (matcher.endsWith("*")) {
+        const prefix = matcher.slice(0, -1);
+        return prefix.length > 0 && normalized.startsWith(prefix);
+      }
+      return normalized === matcher;
+    });
+  };
 
   const result = [...messages];
   let cappedCount = 0;
@@ -117,7 +143,9 @@ export function capToolResultSize(
       }
     }
 
-    if (totalChars <= maxChars) continue;
+    const effectiveMaxChars =
+      noisyToolMaxChars && isNoisyTool(msg.toolName) ? noisyToolMaxChars : maxChars;
+    if (totalChars <= effectiveMaxChars) continue;
 
     // Cap: concatenate all text, then take head + marker + tail
     const allText = msg.content

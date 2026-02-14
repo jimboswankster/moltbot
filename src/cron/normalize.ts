@@ -61,6 +61,28 @@ function coercePayload(payload: UnknownRecord) {
   return next;
 }
 
+function coerceIsolationWithDefaults(
+  existing: unknown,
+  options: { sessionTarget: unknown; payload: unknown; applyDefaults: boolean },
+): UnknownRecord | undefined {
+  const normalized = isRecord(existing) ? { ...existing } : undefined;
+  if (!options.applyDefaults) {
+    return normalized;
+  }
+  const isIsolatedAgentTurn =
+    options.sessionTarget === "isolated" &&
+    isRecord(options.payload) &&
+    options.payload.kind === "agentTurn";
+  if (!isIsolatedAgentTurn) {
+    return normalized;
+  }
+  const next = normalized ?? {};
+  if (typeof next.postbackStrategy !== "string") {
+    next.postbackStrategy = "desk";
+  }
+  return next;
+}
+
 function unwrapJob(raw: UnknownRecord) {
   if (isRecord(raw.data)) {
     return raw.data;
@@ -131,6 +153,15 @@ export function normalizeCronJobInput(
         next.sessionTarget = "isolated";
       }
     }
+  }
+
+  const isolation = coerceIsolationWithDefaults(base.isolation, {
+    sessionTarget: next.sessionTarget,
+    payload: next.payload,
+    applyDefaults: options.applyDefaults ?? false,
+  });
+  if (isolation) {
+    next.isolation = isolation;
   }
 
   return next;

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const callGatewayMock = vi.fn();
 vi.mock("../gateway/call.js", () => ({
@@ -27,7 +27,10 @@ import { emitAgentEvent } from "../infra/agent-events.js";
 import "./test-helpers/fast-core-tools.js";
 import { sleep } from "../utils.js";
 import { createOpenClawTools } from "./openclaw-tools.js";
-import { resetSubagentRegistryForTests } from "./subagent-registry.js";
+import {
+  listSubagentRunsForRequester,
+  resetSubagentRegistryForTests,
+} from "./subagent-registry.js";
 
 describe("openclaw-tools: subagents", () => {
   let loadAuthProfileStoreMock!: ReturnType<typeof vi.spyOn>;
@@ -118,6 +121,45 @@ describe("openclaw-tools: subagents", () => {
       error: expect.stringContaining("Quota stress"),
     });
     expect(callGatewayMock).not.toHaveBeenCalled();
+  });
+
+  it("defaults announceStrategy to desk for cron requesters", async () => {
+    resetSubagentRegistryForTests();
+    callGatewayMock.mockReset();
+
+    callGatewayMock.mockImplementation(async (opts: unknown) => {
+      const request = opts as { method?: string };
+      if (request.method === "agent") {
+        return { runId: "run-cron-1", status: "accepted", acceptedAt: 1111 };
+      }
+      if (request.method === "agent.wait") {
+        return { runId: "run-cron-1", status: "ok", startedAt: 1000, endedAt: 2000 };
+      }
+      if (request.method === "sessions.patch" || request.method === "sessions.delete") {
+        return { ok: true };
+      }
+      return {};
+    });
+
+    const tool = createOpenClawTools({
+      agentSessionKey: "cron:librarian-test",
+      requesterAgentIdOverride: "main",
+    }).find((candidate) => candidate.name === "sessions_spawn");
+    if (!tool) {
+      throw new Error("missing sessions_spawn tool");
+    }
+
+    const result = await tool.execute("call-cron-default-desk", {
+      task: "remediate frontmatter for os/User_Info",
+      label: "librarian-test-batch-001-retry-2",
+      runTimeoutSeconds: 1,
+      cleanup: "keep",
+    });
+
+    expect(result.details).toMatchObject({ status: "accepted", runId: "run-cron-1" });
+    const runs = listSubagentRunsForRequester("cron:librarian-test");
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.announceStrategy).toBe("desk");
   });
 
   it("sessions_spawn normalizes allowlisted agent ids", async () => {

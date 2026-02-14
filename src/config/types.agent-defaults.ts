@@ -46,6 +46,39 @@ export type AgentContextPruningConfig = {
   };
 };
 
+export type AgentTokenBudgetInputCapConfig = {
+  /** Provider id (e.g. "google", "openai"). */
+  provider: string;
+  /**
+   * Optional model matcher.
+   * - exact: "gemini-3-flash"
+   * - prefix: "gemini-3-flash*"
+   */
+  model?: string;
+  /** Maximum input tokens for this provider/model. */
+  maxInputTokens: number;
+};
+
+export type AgentTokenBudgetToolResultCapsConfig = {
+  /**
+   * Tool names that tend to produce verbose output.
+   * Matching is case-insensitive; entries ending with "*" are treated as prefixes.
+   */
+  noisyTools?: string[];
+  /** Max chars per noisy tool result before capping. */
+  noisyToolMaxChars?: number;
+};
+
+export type AgentTokenBudgetConfig = {
+  /**
+   * Optional second-stage input token caps by provider/model.
+   * Applied after model context-window budgeting.
+   */
+  inputCaps?: AgentTokenBudgetInputCapConfig[];
+  /** Optional policy for capping verbose tool results more aggressively. */
+  toolResultCaps?: AgentTokenBudgetToolResultCapsConfig;
+};
+
 export type CliBackendConfig = {
   /** CLI command to execute (absolute path or on PATH). */
   command: string;
@@ -130,6 +163,8 @@ export type AgentDefaultsConfig = {
   cliBackends?: Record<string, CliBackendConfig>;
   /** Opt-in: prune old tool results from the LLM context to reduce token usage. */
   contextPruning?: AgentContextPruningConfig;
+  /** Token budget controls layered on top of model context windows. */
+  tokenBudget?: AgentTokenBudgetConfig;
   /** Compaction tuning and pre-compaction memory flush behavior. */
   compaction?: AgentCompactionConfig;
   /** Vector memory search configuration (per-agent overrides supported). */

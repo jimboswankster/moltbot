@@ -391,7 +391,8 @@ async function runJobCore(
     }
   }
 
-  state.deps.enqueueSystemEvent(`: `, {
+  const postbackText = `${statusPrefix}: ${body}`;
+  state.deps.enqueueSystemEvent(postbackText, {
     agentId: job.agentId,
   });
   // Telemetry: isolated job postback (system event to main lane)
@@ -403,14 +404,14 @@ async function runJobCore(
     process_id: job.id,
     process_name: job.name ?? null,
     agent_id: job.agentId ?? null,
-    message: `: `.slice(0, 240),
+    message: postbackText.slice(0, 240),
     details: {
       cronJobId: job.id,
       cronJobName: job.name,
       sessionTarget: job.sessionTarget,
       wakeMode: job.wakeMode,
       postbackMode: mode,
-      textChars: `: `.length,
+      textChars: postbackText.length,
     },
   });
   if (job.wakeMode === "now") {

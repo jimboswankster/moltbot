@@ -292,6 +292,14 @@ const FIELD_LABELS: Record<string, string> = {
   "agents.defaults.humanDelay.minMs": "Human Delay Min (ms)",
   "agents.defaults.humanDelay.maxMs": "Human Delay Max (ms)",
   "agents.defaults.cliBackends": "CLI Backends",
+  "agents.defaults.tokenBudget": "Token Budget",
+  "agents.defaults.tokenBudget.inputCaps": "Provider Input Caps",
+  "agents.defaults.tokenBudget.inputCaps[].provider": "Input Cap Provider",
+  "agents.defaults.tokenBudget.inputCaps[].model": "Input Cap Model Matcher",
+  "agents.defaults.tokenBudget.inputCaps[].maxInputTokens": "Input Cap Max Tokens",
+  "agents.defaults.tokenBudget.toolResultCaps": "Tool Result Caps",
+  "agents.defaults.tokenBudget.toolResultCaps.noisyTools": "Noisy Tools",
+  "agents.defaults.tokenBudget.toolResultCaps.noisyToolMaxChars": "Noisy Tool Max Chars",
   "commands.native": "Native Commands",
   "commands.nativeSkills": "Native Skill Commands",
   "commands.text": "Text Commands",
@@ -645,6 +653,22 @@ const FIELD_HELP: Record<string, string> = {
     "Optional image model (provider/model) used when the primary model lacks image input.",
   "agents.defaults.imageModel.fallbacks": "Ordered fallback image models (provider/model).",
   "agents.defaults.cliBackends": "Optional CLI backends for text-only fallback (claude-cli, etc.).",
+  "agents.defaults.tokenBudget":
+    "Second-stage token budget controls layered on top of model context window budgeting.",
+  "agents.defaults.tokenBudget.inputCaps":
+    "Provider/model-specific max input token caps to reduce quota-spike rate limits.",
+  "agents.defaults.tokenBudget.inputCaps[].provider":
+    "Provider id to match (for example: google, openai, anthropic).",
+  "agents.defaults.tokenBudget.inputCaps[].model":
+    'Optional model matcher (exact id or prefix ending with "*").',
+  "agents.defaults.tokenBudget.inputCaps[].maxInputTokens":
+    "Maximum input tokens allowed for the matching provider/model.",
+  "agents.defaults.tokenBudget.toolResultCaps":
+    "Tool result capping policy for verbose tools; trims token spikes without disabling tools.",
+  "agents.defaults.tokenBudget.toolResultCaps.noisyTools":
+    'Tool names treated as verbose (case-insensitive; entries ending with "*" match prefixes).',
+  "agents.defaults.tokenBudget.toolResultCaps.noisyToolMaxChars":
+    "Max chars per verbose tool result before capping.",
   "agents.defaults.humanDelay.mode": 'Delay style for block replies ("off", "natural", "custom").',
   "agents.defaults.humanDelay.minMs": "Minimum delay in ms for custom humanDelay (default: 800).",
   "agents.defaults.humanDelay.maxMs": "Maximum delay in ms for custom humanDelay (default: 2500).",

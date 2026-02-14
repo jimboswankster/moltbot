@@ -8,7 +8,11 @@
  */
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import { describe, expect, it } from "vitest";
-import { deriveContextLimits, fitToTokenBudget } from "./token-budget.js";
+import {
+  deriveContextLimits,
+  fitToTokenBudget,
+  resolveProviderInputCapRule,
+} from "./token-budget.js";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -183,6 +187,19 @@ describe("fitToTokenBudget", () => {
     // Estimated tokens must fit within budget * safety margin
     expect(result.estimatedTokens * 1.2).toBeLessThanOrEqual(result.budgetTokens);
   });
+
+  it("applies noisy tool cap policy during budget fitting", () => {
+    const noisy = makeToolResult(textOfTokens(7000), "exec", "tc-noisy");
+    const quiet = makeToolResult(textOfTokens(7000), "calendar", "tc-quiet");
+    const msgs = [makeUser("run tools"), noisy, quiet];
+    const result = fitToTokenBudget(msgs, 20_000, {
+      toolResultCapPolicy: {
+        noisyTools: ["exec"],
+        noisyToolMaxChars: 2_000,
+      },
+    });
+    expect(result.actions.some((a) => a.includes("recapped tool results"))).toBe(true);
+  });
 });
 
 // ─── deriveContextLimits ────────────────────────────────────────────────────
@@ -209,11 +226,25 @@ describe("deriveContextLimits", () => {
     expect(limits.toolResultMaxChars).toBeLessThanOrEqual(15_000);
   });
 
-  it("returns generous limits for large models (200K+)", () => {
+  it("returns balanced limits for 200K models", () => {
     const limits = deriveContextLimits(200_000);
-    expect(limits.historyTurns).toBeGreaterThanOrEqual(50);
-    expect(limits.toolResultsKept).toBeGreaterThanOrEqual(15);
-    expect(limits.toolResultMaxChars).toBeGreaterThanOrEqual(20_000);
+    expect(limits.historyTurns).toBe(35);
+    expect(limits.toolResultsKept).toBe(8);
+    expect(limits.toolResultMaxChars).toBe(10_000);
+  });
+
+  it("returns expanded limits for 300K models", () => {
+    const limits = deriveContextLimits(300_000);
+    expect(limits.historyTurns).toBe(40);
+    expect(limits.toolResultsKept).toBe(10);
+    expect(limits.toolResultMaxChars).toBe(12_000);
+  });
+
+  it("returns generous limits for ultra-large models (512K+)", () => {
+    const limits = deriveContextLimits(600_000);
+    expect(limits.historyTurns).toBe(50);
+    expect(limits.toolResultsKept).toBe(12);
+    expect(limits.toolResultMaxChars).toBe(15_000);
   });
 
   it("scales monotonically — larger window never gets tighter limits", () => {
@@ -224,5 +255,41 @@ describe("deriveContextLimits", () => {
     expect(large.historyTurns).toBeGreaterThanOrEqual(medium.historyTurns);
     expect(medium.toolResultsKept).toBeGreaterThanOrEqual(small.toolResultsKept);
     expect(large.toolResultsKept).toBeGreaterThanOrEqual(medium.toolResultsKept);
+  });
+});
+
+describe("resolveProviderInputCapRule", () => {
+  it("returns provider-level rule when no model-specific rule matches", () => {
+    const rule = resolveProviderInputCapRule(
+      [
+        { provider: "google", maxInputTokens: 700_000 },
+        { provider: "openai", maxInputTokens: 900_000 },
+      ],
+      "google",
+      "gemini-3-flash",
+    );
+    expect(rule?.maxInputTokens).toBe(700_000);
+  });
+
+  it("prefers exact model rule over prefix and provider-level rules", () => {
+    const rule = resolveProviderInputCapRule(
+      [
+        { provider: "google", maxInputTokens: 700_000 },
+        { provider: "google", model: "gemini-3*", maxInputTokens: 600_000 },
+        { provider: "google", model: "gemini-3-flash", maxInputTokens: 500_000 },
+      ],
+      "google",
+      "gemini-3-flash",
+    );
+    expect(rule?.maxInputTokens).toBe(500_000);
+  });
+
+  it("matches model prefixes with wildcard", () => {
+    const rule = resolveProviderInputCapRule(
+      [{ provider: "google", model: "gemini-3*", maxInputTokens: 600_000 }],
+      "google",
+      "gemini-3-flash-preview",
+    );
+    expect(rule?.maxInputTokens).toBe(600_000);
   });
 });

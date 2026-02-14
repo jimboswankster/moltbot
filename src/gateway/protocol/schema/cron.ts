@@ -80,6 +80,7 @@ export const CronIsolationSchema = Type.Object(
     postToMainPrefix: Type.Optional(Type.String()),
     postToMainMode: Type.Optional(Type.Union([Type.Literal("summary"), Type.Literal("full")])),
     postToMainMaxChars: Type.Optional(Type.Integer({ minimum: 0 })),
+    postbackStrategy: Type.Optional(Type.Union([Type.Literal("direct"), Type.Literal("desk")])),
   },
   { additionalProperties: false },
 );

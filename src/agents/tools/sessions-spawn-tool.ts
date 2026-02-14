@@ -51,7 +51,7 @@ const SessionsSpawnToolSchema = Type.Object({
   cleanup: optionalStringEnum(["delete", "keep"] as const),
   idempotencyKey: Type.Optional(Type.String({ minLength: 1 })),
   idempotencyKeySeed: Type.Optional(Type.String({ minLength: 1 })),
-  /** How to announce sub-agent results: "direct" (interrupt, default) or "desk" (async signal). */
+  /** How to announce sub-agent results: "direct" (interrupt) or "desk" (async signal). */
   announceStrategy: Type.Optional(optionalStringEnum(ANNOUNCE_STRATEGIES)),
   /**
    * Persistent worker mode. When true:
@@ -356,6 +356,11 @@ export function createSessionsSpawnTool(opts?: {
         });
       }
 
+      const configuredAnnounceStrategy =
+        targetAgentConfig?.subagents?.announceStrategy ??
+        cfg.agents?.defaults?.subagents?.announceStrategy;
+      const requesterIsAutomated =
+        requesterInternalKey.startsWith("cron:") || requesterInternalKey.startsWith("hook:");
       const announceStrategyParam =
         params.announceStrategy === "desk"
           ? ("desk" as const)
@@ -364,7 +369,13 @@ export function createSessionsSpawnTool(opts?: {
             : // Persistent workers default to desk announce (non-interrupting)
               isPersistent
               ? ("desk" as const)
-              : undefined;
+              : requesterIsAutomated
+                ? ("desk" as const)
+                : configuredAnnounceStrategy === "desk"
+                  ? ("desk" as const)
+                  : configuredAnnounceStrategy === "direct"
+                    ? ("direct" as const)
+                    : undefined;
 
       // Persistent workers force cleanup to "keep" (session survives completion)
       const effectiveCleanup = isPersistent ? ("keep" as const) : cleanup;

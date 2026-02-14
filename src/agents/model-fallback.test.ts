@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
 import type { AuthProfileStore } from "./auth-profiles.js";
 import { resolveMainSessionKey } from "../config/sessions.js";
@@ -10,7 +10,7 @@ import { getFallbackTelemetry, resetFallbackTelemetry } from "../infra/fallback-
 import { peekSystemEvents, resetSystemEventsForTest } from "../infra/system-events.js";
 import { saveAuthProfileStore } from "./auth-profiles.js";
 import { AUTH_STORE_VERSION } from "./auth-profiles/constants.js";
-import { runWithModelFallback } from "./model-fallback.js";
+import { resetModelCandidateCooldownsForTest, runWithModelFallback } from "./model-fallback.js";
 
 function makeCfg(overrides: Partial<OpenClawConfig> = {}): OpenClawConfig {
   return {
@@ -27,6 +27,14 @@ function makeCfg(overrides: Partial<OpenClawConfig> = {}): OpenClawConfig {
 }
 
 describe("runWithModelFallback", () => {
+  beforeEach(() => {
+    resetModelCandidateCooldownsForTest();
+  });
+
+  afterEach(() => {
+    resetModelCandidateCooldownsForTest();
+  });
+
   it("does not fall back on non-auth errors", async () => {
     const cfg = makeCfg();
     const run = vi.fn().mockRejectedValueOnce(new Error("bad request")).mockResolvedValueOnce("ok");
@@ -584,5 +592,48 @@ describe("runWithModelFallback", () => {
     expect(events.some((event) => event.includes("Pre-cascade warning"))).toBe(true);
 
     vi.useRealTimers();
+  });
+
+  it("skips a rate-limited provider/model on subsequent runs even without auth profiles", async () => {
+    const cfg = makeCfg({
+      agents: {
+        defaults: {
+          model: {
+            primary: "google/gemini-3-flash-preview",
+            fallbacks: ["ollama/kimi-k2.5:cloud"],
+          },
+        },
+      },
+    });
+    const run = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new Error(
+          "Quota exceeded for metric; Please retry in 24.572922388s. status=RESOURCE_EXHAUSTED",
+        ),
+      )
+      .mockResolvedValue("ok");
+
+    const first = await runWithModelFallback({
+      cfg,
+      provider: "google",
+      model: "gemini-3-flash-preview",
+      run,
+    });
+    expect(first.result).toBe("ok");
+    expect(run.mock.calls).toEqual([
+      ["google", "gemini-3-flash-preview"],
+      ["ollama", "kimi-k2.5:cloud"],
+    ]);
+
+    run.mockClear();
+    const second = await runWithModelFallback({
+      cfg,
+      provider: "google",
+      model: "gemini-3-flash-preview",
+      run,
+    });
+    expect(second.result).toBe("ok");
+    expect(run.mock.calls).toEqual([["ollama", "kimi-k2.5:cloud"]]);
   });
 });

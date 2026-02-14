@@ -110,4 +110,40 @@ describe("normalizeCronJobCreate", () => {
     expect(schedule.kind).toBe("at");
     expect(schedule.atMs).toBe(Date.parse("2026-01-12T18:00:00Z"));
   });
+
+  it("defaults isolated agentTurn jobs to desk postback", () => {
+    const normalized = normalizeCronJobCreate({
+      name: "desk-default",
+      enabled: true,
+      schedule: { kind: "cron", expr: "* * * * *" },
+      sessionTarget: "isolated",
+      wakeMode: "now",
+      payload: {
+        kind: "agentTurn",
+        message: "run task",
+      },
+    }) as unknown as Record<string, unknown>;
+
+    expect(normalized.isolation).toEqual({ postbackStrategy: "desk" });
+  });
+
+  it("preserves explicit isolation postbackStrategy", () => {
+    const normalized = normalizeCronJobCreate({
+      name: "explicit-direct",
+      enabled: true,
+      schedule: { kind: "cron", expr: "* * * * *" },
+      sessionTarget: "isolated",
+      wakeMode: "now",
+      payload: {
+        kind: "agentTurn",
+        message: "run task",
+      },
+      isolation: {
+        postbackStrategy: "direct",
+      },
+    }) as unknown as Record<string, unknown>;
+
+    const isolation = normalized.isolation as Record<string, unknown>;
+    expect(isolation.postbackStrategy).toBe("direct");
+  });
 });
