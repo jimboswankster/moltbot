@@ -7,6 +7,10 @@ import { wrapExternalContent, wrapWebContent } from "../../security/external-con
 import { stringEnum } from "../schema/typebox.js";
 import { jsonResult, readNumberParam, readStringParam } from "./common.js";
 import {
+  readFromToolArtifactCache,
+  writeToToolArtifactCache,
+} from "./tool-artifact-cache-bridge.js";
+import {
   extractReadableContent,
   htmlToMarkdown,
   markdownToText,
@@ -382,6 +386,13 @@ async function runWebFetch(params: {
   const cacheKey = normalizeCacheKey(
     `fetch:${params.url}:${params.extractMode}:${params.maxChars}`,
   );
+  const tacHit = await readFromToolArtifactCache({
+    toolName: "web_fetch",
+    cacheParams: { legacyKey: cacheKey },
+  });
+  if (tacHit) {
+    return { ...tacHit.value, cached: true, cacheSource: "tac" };
+  }
   const cached = readCache(FETCH_CACHE, cacheKey);
   if (cached) {
     return { ...cached.value, cached: true };
@@ -453,6 +464,16 @@ async function runWebFetch(params: {
         warning: wrapWebFetchField(firecrawl.warning),
       };
       writeCache(FETCH_CACHE, cacheKey, payload, params.cacheTtlMs);
+      await writeToToolArtifactCache({
+        toolName: "web_fetch",
+        provider: "http",
+        artifactClass: "web_document",
+        cacheParams: { legacyKey: cacheKey },
+        value: payload,
+        ttlMs: params.cacheTtlMs,
+        summary: wrapped.text.slice(0, 500),
+        frozenCandidate: true,
+      });
       return payload;
     }
     throw error;
@@ -492,6 +513,16 @@ async function runWebFetch(params: {
           warning: wrapWebFetchField(firecrawl.warning),
         };
         writeCache(FETCH_CACHE, cacheKey, payload, params.cacheTtlMs);
+        await writeToToolArtifactCache({
+          toolName: "web_fetch",
+          provider: "http",
+          artifactClass: "web_document",
+          cacheParams: { legacyKey: cacheKey },
+          value: payload,
+          ttlMs: params.cacheTtlMs,
+          summary: wrapped.text.slice(0, 500),
+          frozenCandidate: true,
+        });
         return payload;
       }
       const rawDetail = await readResponseText(res);
@@ -568,6 +599,16 @@ async function runWebFetch(params: {
       text: wrapped.text,
     };
     writeCache(FETCH_CACHE, cacheKey, payload, params.cacheTtlMs);
+    await writeToToolArtifactCache({
+      toolName: "web_fetch",
+      provider: "http",
+      artifactClass: "web_document",
+      cacheParams: { legacyKey: cacheKey },
+      value: payload,
+      ttlMs: params.cacheTtlMs,
+      summary: wrapped.text.slice(0, 500),
+      frozenCandidate: true,
+    });
     return payload;
   } finally {
     if (release) {

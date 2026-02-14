@@ -6,6 +6,10 @@ import { wrapWebContent } from "../../security/external-content.js";
 import { normalizeSecretInput } from "../../utils/normalize-secret-input.js";
 import { jsonResult, readNumberParam, readStringParam } from "./common.js";
 import {
+  readFromToolArtifactCache,
+  writeToToolArtifactCache,
+} from "./tool-artifact-cache-bridge.js";
+import {
   CacheEntry,
   DEFAULT_CACHE_TTL_MINUTES,
   DEFAULT_TIMEOUT_SECONDS,
@@ -523,6 +527,13 @@ async function runWebSearch(params: {
         ? `${params.provider}:${params.query}:${params.perplexityBaseUrl ?? DEFAULT_PERPLEXITY_BASE_URL}:${params.perplexityModel ?? DEFAULT_PERPLEXITY_MODEL}`
         : `${params.provider}:${params.query}:${params.grokModel ?? DEFAULT_GROK_MODEL}:${String(params.grokInlineCitations ?? false)}`,
   );
+  const tacHit = await readFromToolArtifactCache({
+    toolName: "web_search",
+    cacheParams: { legacyKey: cacheKey },
+  });
+  if (tacHit) {
+    return { ...tacHit.value, cached: true, cacheSource: "tac" };
+  }
   const cached = readCache(SEARCH_CACHE, cacheKey);
   if (cached) {
     return { ...cached.value, cached: true };
@@ -548,6 +559,17 @@ async function runWebSearch(params: {
       citations,
     };
     writeCache(SEARCH_CACHE, cacheKey, payload, params.cacheTtlMs);
+    await writeToToolArtifactCache({
+      toolName: "web_search",
+      provider: params.provider,
+      model: params.perplexityModel ?? DEFAULT_PERPLEXITY_MODEL,
+      artifactClass: "search_result",
+      cacheParams: { legacyKey: cacheKey },
+      value: payload,
+      ttlMs: params.cacheTtlMs,
+      summary: content.slice(0, 500),
+      frozenCandidate: true,
+    });
     return payload;
   }
 
@@ -570,6 +592,17 @@ async function runWebSearch(params: {
       inlineCitations,
     };
     writeCache(SEARCH_CACHE, cacheKey, payload, params.cacheTtlMs);
+    await writeToToolArtifactCache({
+      toolName: "web_search",
+      provider: params.provider,
+      model: params.grokModel ?? DEFAULT_GROK_MODEL,
+      artifactClass: "search_result",
+      cacheParams: { legacyKey: cacheKey },
+      value: payload,
+      ttlMs: params.cacheTtlMs,
+      summary: content.slice(0, 500),
+      frozenCandidate: true,
+    });
     return payload;
   }
 
@@ -631,6 +664,16 @@ async function runWebSearch(params: {
     results: mapped,
   };
   writeCache(SEARCH_CACHE, cacheKey, payload, params.cacheTtlMs);
+  await writeToToolArtifactCache({
+    toolName: "web_search",
+    provider: params.provider,
+    artifactClass: "search_result",
+    cacheParams: { legacyKey: cacheKey },
+    value: payload,
+    ttlMs: params.cacheTtlMs,
+    summary: `${params.query} (${mapped.length} results)`,
+    frozenCandidate: true,
+  });
   return payload;
 }
 

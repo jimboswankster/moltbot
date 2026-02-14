@@ -106,10 +106,14 @@ type RequiredParamGroup = {
 };
 
 export const CLAUDE_PARAM_GROUPS = {
-  read: [{ keys: ["path", "file_path"], label: "path (path or file_path)" }],
-  write: [{ keys: ["path", "file_path"], label: "path (path or file_path)" }],
+  read: [
+    { keys: ["path", "file_path", "filepath"], label: "path (path or file_path or filepath)" },
+  ],
+  write: [
+    { keys: ["path", "file_path", "filepath"], label: "path (path or file_path or filepath)" },
+  ],
   edit: [
-    { keys: ["path", "file_path"], label: "path (path or file_path)" },
+    { keys: ["path", "file_path", "filepath"], label: "path (path or file_path or filepath)" },
     {
       keys: ["oldText", "old_string"],
       label: "oldText (oldText or old_string)",
@@ -130,10 +134,14 @@ export function normalizeToolParams(params: unknown): Record<string, unknown> | 
   }
   const record = params as Record<string, unknown>;
   const normalized = { ...record };
-  // file_path → path (read, write, edit)
+  // file_path/filepath → path (read, write, edit)
   if ("file_path" in normalized && !("path" in normalized)) {
     normalized.path = normalized.file_path;
     delete normalized.file_path;
+  }
+  if ("filepath" in normalized && !("path" in normalized)) {
+    normalized.path = normalized.filepath;
+    delete normalized.filepath;
   }
   // old_string → oldText (edit)
   if ("old_string" in normalized && !("oldText" in normalized)) {
@@ -166,6 +174,7 @@ export function patchToolSchemaForClaudeCompatibility(tool: AnyAgentTool): AnyAg
 
   const aliasPairs: Array<{ original: string; alias: string }> = [
     { original: "path", alias: "file_path" },
+    { original: "path", alias: "filepath" },
     { original: "oldText", alias: "old_string" },
     { original: "newText", alias: "new_string" },
   ];

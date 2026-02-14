@@ -36,8 +36,10 @@ describe("createOpenClawCodingTools", () => {
       const props = params.properties ?? {};
 
       expect(props.file_path).toEqual(props.path);
+      expect(props.filepath).toEqual(props.path);
       expect(params.required ?? []).not.toContain("path");
       expect(params.required ?? []).not.toContain("file_path");
+      expect(params.required ?? []).not.toContain("filepath");
     });
 
     it("normalizes file_path to path and enforces required groups at runtime", async () => {
@@ -72,6 +74,29 @@ describe("createOpenClawCodingTools", () => {
       await expect(wrapped.execute("tool-3", { file_path: "   ", content: "x" })).rejects.toThrow(
         /Missing required parameter/,
       );
+    });
+
+    it("normalizes filepath to path", async () => {
+      const execute = vi.fn(async (_id, args) => args);
+      const tool: AgentTool = {
+        name: "read",
+        description: "test",
+        parameters: {
+          type: "object",
+          required: ["path"],
+          properties: {
+            path: { type: "string" },
+          },
+        },
+        execute,
+      };
+
+      const wrapped = __testing.wrapToolParamNormalization(tool, [
+        { keys: ["path", "file_path", "filepath"] },
+      ]);
+      await wrapped.execute("tool-fp-1", { filepath: "foo.txt" });
+
+      expect(execute).toHaveBeenCalledWith("tool-fp-1", { path: "foo.txt" }, undefined, undefined);
     });
   });
 
