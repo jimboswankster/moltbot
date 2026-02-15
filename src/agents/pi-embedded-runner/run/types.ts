@@ -83,6 +83,11 @@ export type EmbeddedRunAttemptParams = {
   inputSource?: AgentInputSource;
   ownerNumbers?: string[];
   enforceFinalTag?: boolean;
+  /**
+   * Allow attempt-level proactive compaction short-circuiting.
+   * Caller can disable this after compaction failures to force a direct model attempt.
+   */
+  allowProactiveCompaction?: boolean;
   /** Resolved context window size in tokens for token-budget limiting. */
   contextWindowTokens: number;
 };

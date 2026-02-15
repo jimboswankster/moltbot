@@ -326,6 +326,7 @@ export async function runEmbeddedPiAgent(
 
       const MAX_COMPACTION_ATTEMPTS = 2;
       let compactionAttempts = 0;
+      let allowProactiveCompaction = true;
       try {
         while (true) {
           attemptedThinking.add(thinkLevel);
@@ -388,6 +389,7 @@ export async function runEmbeddedPiAgent(
             inputSource: params.inputSource,
             ownerNumbers: params.ownerNumbers,
             enforceFinalTag: params.enforceFinalTag,
+            allowProactiveCompaction,
             contextWindowTokens: ctxInfo.tokens,
           });
 
@@ -396,31 +398,12 @@ export async function runEmbeddedPiAgent(
           // ── Proactive compaction: token budget gate requested compaction before model call ──
           if (attempt.proactiveCompactRequested) {
             if (compactionAttempts >= MAX_COMPACTION_ATTEMPTS) {
-              // Compaction already attempted max times — return explicit error
-              // instead of silently falling through with no response (Bug 2 fix).
+              // Compaction exhausted: disable proactive compaction and allow direct model call retry.
               log.warn(
-                `proactive compaction requested but max attempts (${MAX_COMPACTION_ATTEMPTS}) exhausted for ${provider}/${modelId}`,
+                `proactive compaction requested but max attempts (${MAX_COMPACTION_ATTEMPTS}) exhausted for ${provider}/${modelId}; disabling proactive compaction and retrying direct model call`,
               );
-              return {
-                payloads: [
-                  {
-                    text:
-                      "Session too large for the model after compaction. " +
-                      "Try /new to start a fresh session, or switch to a larger-context model.",
-                    isError: true,
-                  },
-                ],
-                meta: {
-                  durationMs: Date.now() - started,
-                  agentMeta: {
-                    sessionId: sessionIdUsed,
-                    provider,
-                    model: model.id,
-                  },
-                  systemPromptReport: attempt.systemPromptReport,
-                  error: { kind: "context_overflow" as const, message: "compaction exhausted" },
-                },
-              };
+              allowProactiveCompaction = false;
+              continue;
             }
             log.warn(
               `proactive compaction triggered by token budget gate for ${provider}/${modelId} (attempt ${compactionAttempts + 1}/${MAX_COMPACTION_ATTEMPTS})`,
@@ -453,10 +436,11 @@ export async function runEmbeddedPiAgent(
               continue;
             }
             log.warn(
-              `proactive compaction failed for ${provider}/${modelId}: ${compactResult.reason ?? "nothing to compact"}; proceeding anyway`,
+              `proactive compaction failed for ${provider}/${modelId}: ${compactResult.reason ?? "nothing to compact"}; disabling proactive compaction and retrying direct model call`,
             );
-            // Fall through — the model call was skipped, so retry the attempt
-            // even if compaction failed (fitToTokenBudget already shed what it could)
+            // Fall through — model call was skipped for this attempt.
+            // Retry with proactive compaction disabled to avoid re-trigger loops.
+            allowProactiveCompaction = false;
             continue;
           }
 
@@ -796,7 +780,9 @@ export async function runEmbeddedPiAgent(
                 );
               }
             } catch (err) {
-              log.warn(`post-response compaction failed for ${provider}/${modelId}: ${describeUnknownError(err)}`);
+              log.warn(
+                `post-response compaction failed for ${provider}/${modelId}: ${describeUnknownError(err)}`,
+              );
             }
           }
 

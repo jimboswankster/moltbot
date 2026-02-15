@@ -734,7 +734,7 @@ export async function runEmbeddedAttempt(
         }
 
         // ── Proactive compaction: if budget gate says we're still over, bail early ──
-        if (effectiveBudgetResult.shouldCompact) {
+        if (effectiveBudgetResult.shouldCompact && params.allowProactiveCompaction !== false) {
           log.warn(
             `[token-budget] proactive compaction requested — skipping model call ` +
               `(estimated=${effectiveBudgetResult.estimatedTokens} budget=${effectiveBudgetResult.budgetTokens}) ` +
@@ -757,6 +757,13 @@ export async function runEmbeddedAttempt(
             cloudCodeAssistFormatError: false,
             proactiveCompactRequested: true,
           };
+        }
+        if (effectiveBudgetResult.shouldCompact && params.allowProactiveCompaction === false) {
+          log.warn(
+            `[token-budget] proactive compaction suppressed after prior compaction failure; ` +
+              `proceeding with direct model call (estimated=${effectiveBudgetResult.estimatedTokens} budget=${effectiveBudgetResult.budgetTokens}) ` +
+              `runId=${params.runId} sessionId=${params.sessionId}`,
+          );
         }
       } catch (err) {
         sessionManager.flushPendingToolResults?.();

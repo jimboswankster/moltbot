@@ -304,7 +304,9 @@ export function fitToTokenBudget(
 
   // ── Step 4: Still over budget — flag for proactive compaction ──
   actions.push(
-    `still over budget after all shedding (${estimated} est tokens vs ${budgetTokens} budget); flagging shouldCompact`,
+    `still over budget after all shedding (${estimated} est tokens × safety ${SAFETY_MARGIN} = ${Math.ceil(
+      estimated * SAFETY_MARGIN,
+    )} vs ${budgetTokens} budget); flagging shouldCompact`,
   );
 
   return {
