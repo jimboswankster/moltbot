@@ -10,6 +10,7 @@ import { getFallbackTelemetry, resetFallbackTelemetry } from "../infra/fallback-
 import { peekSystemEvents, resetSystemEventsForTest } from "../infra/system-events.js";
 import { saveAuthProfileStore } from "./auth-profiles.js";
 import { AUTH_STORE_VERSION } from "./auth-profiles/constants.js";
+import { resetKloopPolicyCacheForTest } from "./auth-profiles/kloop-policy.js";
 import { resetModelCandidateCooldownsForTest, runWithModelFallback } from "./model-fallback.js";
 
 function makeCfg(overrides: Partial<OpenClawConfig> = {}): OpenClawConfig {
@@ -27,12 +28,21 @@ function makeCfg(overrides: Partial<OpenClawConfig> = {}): OpenClawConfig {
 }
 
 describe("runWithModelFallback", () => {
+  const originalStatePath = process.env.OPENCLAW_KLOOP_STATE_PATH;
+
   beforeEach(() => {
     resetModelCandidateCooldownsForTest();
+    resetKloopPolicyCacheForTest();
   });
 
   afterEach(() => {
     resetModelCandidateCooldownsForTest();
+    if (originalStatePath === undefined) {
+      delete process.env.OPENCLAW_KLOOP_STATE_PATH;
+    } else {
+      process.env.OPENCLAW_KLOOP_STATE_PATH = originalStatePath;
+    }
+    resetKloopPolicyCacheForTest();
   });
 
   it("does not fall back on non-auth errors", async () => {
@@ -154,6 +164,96 @@ describe("runWithModelFallback", () => {
         },
       },
     };
+
+    saveAuthProfileStore(store, tempDir);
+
+    const cfg = makeCfg({
+      agents: {
+        defaults: {
+          model: {
+            primary: `${provider}/m1`,
+            fallbacks: ["fallback/ok-model"],
+          },
+        },
+      },
+    });
+    const run = vi.fn().mockImplementation(async (providerId, modelId) => {
+      if (providerId === "fallback") {
+        return "ok";
+      }
+      throw new Error(`unexpected provider: ${providerId}/${modelId}`);
+    });
+
+    try {
+      const result = await runWithModelFallback({
+        cfg,
+        provider,
+        model: "m1",
+        agentDir: tempDir,
+        run,
+      });
+
+      expect(result.result).toBe("ok");
+      expect(run.mock.calls).toEqual([["fallback", "ok-model"]]);
+      expect(result.attempts[0]?.reason).toBe("rate_limit");
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("skips providers when all profiles are breaker-open in K-loop state", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-auth-kloop-"));
+    const provider = `kloop-open-${crypto.randomUUID()}`;
+    const profileA = `${provider}:default`;
+    const profileB = `${provider}:route1`;
+    const statePath = path.join(tempDir, "free-engine-kloop-state.json");
+    const future = Date.now() + 60_000;
+
+    const store: AuthProfileStore = {
+      version: AUTH_STORE_VERSION,
+      profiles: {
+        [profileA]: {
+          type: "api_key",
+          provider,
+          key: "test-key-a",
+        },
+        [profileB]: {
+          type: "api_key",
+          provider,
+          key: "test-key-b",
+        },
+      },
+      order: {
+        [provider]: [profileA, profileB],
+      },
+    };
+
+    await fs.writeFile(
+      statePath,
+      JSON.stringify(
+        {
+          routes: {
+            [`${provider}:default`]: {
+              routeId: "default",
+              provider,
+              breakerState: "open",
+              inferredCooldownUntil: future,
+            },
+            [`${provider}:route1`]: {
+              routeId: "route1",
+              provider,
+              breakerState: "open",
+              inferredCooldownUntil: future,
+            },
+          },
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+    process.env.OPENCLAW_KLOOP_STATE_PATH = statePath;
+    resetKloopPolicyCacheForTest();
 
     saveAuthProfileStore(store, tempDir);
 

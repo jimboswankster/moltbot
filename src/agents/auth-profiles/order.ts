@@ -1,6 +1,11 @@
 import type { OpenClawConfig } from "../../config/config.js";
 import type { AuthProfileStore } from "./types.js";
 import { normalizeProviderId } from "../model-selection.js";
+import {
+  getKloopProfileCooldownUntil,
+  getKloopProfileScore,
+  isProfileBlockedByKloop,
+} from "./kloop-policy.js";
 import { listProfilesForProvider } from "./profiles.js";
 import { isProfileInCooldown } from "./usage.js";
 
@@ -123,13 +128,17 @@ export function resolveAuthProfileOrder(params: {
 
     for (const profileId of deduped) {
       const cooldownUntil = resolveProfileUnusableUntil(store.usageStats?.[profileId] ?? {}) ?? 0;
+      const kloopCooldownUntil = getKloopProfileCooldownUntil(providerKey, profileId) ?? 0;
+      const effectiveCooldownUntil = Math.max(cooldownUntil, kloopCooldownUntil);
       if (
-        typeof cooldownUntil === "number" &&
-        Number.isFinite(cooldownUntil) &&
-        cooldownUntil > 0 &&
-        now < cooldownUntil
+        typeof effectiveCooldownUntil === "number" &&
+        Number.isFinite(effectiveCooldownUntil) &&
+        effectiveCooldownUntil > 0 &&
+        now < effectiveCooldownUntil
       ) {
-        inCooldown.push({ profileId, cooldownUntil });
+        inCooldown.push({ profileId, cooldownUntil: effectiveCooldownUntil });
+      } else if (isProfileBlockedByKloop(providerKey, profileId)) {
+        inCooldown.push({ profileId, cooldownUntil: now + 60_000 });
       } else {
         available.push(profileId);
       }
@@ -168,7 +177,9 @@ function orderProfilesByMode(order: string[], store: AuthProfileStore): string[]
   const inCooldown: string[] = [];
 
   for (const profileId of order) {
-    if (isProfileInCooldown(store, profileId)) {
+    const providerId = store.profiles[profileId]?.provider ?? "";
+    const kloopBlocked = providerId ? isProfileBlockedByKloop(providerId, profileId) : false;
+    if (isProfileInCooldown(store, profileId) || kloopBlocked) {
       inCooldown.push(profileId);
     } else {
       available.push(profileId);
@@ -181,7 +192,9 @@ function orderProfilesByMode(order: string[], store: AuthProfileStore): string[]
     const type = store.profiles[profileId]?.type;
     const typeScore = type === "oauth" ? 0 : type === "token" ? 1 : type === "api_key" ? 2 : 3;
     const lastUsed = store.usageStats?.[profileId]?.lastUsed ?? 0;
-    return { profileId, typeScore, lastUsed };
+    const providerId = store.profiles[profileId]?.provider ?? "";
+    const kloopScore = providerId ? getKloopProfileScore(providerId, profileId) : null;
+    return { profileId, typeScore, lastUsed, kloopScore: kloopScore ?? Number.NEGATIVE_INFINITY };
   });
 
   // Primary sort: type preference (oauth > token > api_key).
@@ -192,6 +205,9 @@ function orderProfilesByMode(order: string[], store: AuthProfileStore): string[]
       if (a.typeScore !== b.typeScore) {
         return a.typeScore - b.typeScore;
       }
+      if (a.kloopScore !== b.kloopScore) {
+        return b.kloopScore - a.kloopScore;
+      }
       // Then by lastUsed (oldest first)
       return a.lastUsed - b.lastUsed;
     })
@@ -201,7 +217,11 @@ function orderProfilesByMode(order: string[], store: AuthProfileStore): string[]
   const cooldownSorted = inCooldown
     .map((profileId) => ({
       profileId,
-      cooldownUntil: resolveProfileUnusableUntil(store.usageStats?.[profileId] ?? {}) ?? now,
+      cooldownUntil:
+        Math.max(
+          resolveProfileUnusableUntil(store.usageStats?.[profileId] ?? {}) ?? 0,
+          getKloopProfileCooldownUntil(store.profiles[profileId]?.provider ?? "", profileId) ?? 0,
+        ) || now,
     }))
     .toSorted((a, b) => a.cooldownUntil - b.cooldownUntil)
     .map((entry) => entry.profileId);

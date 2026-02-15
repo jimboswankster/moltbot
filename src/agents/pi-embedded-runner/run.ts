@@ -780,9 +780,7 @@ export async function runEmbeddedPiAgent(
                 );
               }
             } catch (err) {
-              log.warn(
-                `post-response compaction failed for ${provider}/${modelId}: ${describeUnknownError(err)}`,
-              );
+              log.warn(`post-response compaction failed for ${provider}/${modelId}: ${describeUnknownError(err)}`);
             }
           }
 
