@@ -47,6 +47,12 @@ export type ProfileUsageStats = {
   errorCount?: number;
   failureCounts?: Partial<Record<AuthProfileFailureReason, number>>;
   lastFailureAt?: number;
+  quotaWindows?: {
+    minute?: { windowStart: number; requests: number; tokens: number };
+    hour?: { windowStart: number; requests: number; tokens: number };
+    day?: { windowStart: number; requests: number; tokens: number };
+    month?: { windowStart: number; requests: number; tokens: number };
+  };
 };
 
 export type AuthProfileStore = {

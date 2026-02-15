@@ -7,6 +7,7 @@ import {
   isProfileBlockedByKloop,
 } from "./kloop-policy.js";
 import { listProfilesForProvider } from "./profiles.js";
+import { isProfileOverQuotaByPolicy } from "./quota-policy.js";
 import { isProfileInCooldown } from "./usage.js";
 
 function resolveProfileUnusableUntil(stats: {
@@ -130,6 +131,12 @@ export function resolveAuthProfileOrder(params: {
       const cooldownUntil = resolveProfileUnusableUntil(store.usageStats?.[profileId] ?? {}) ?? 0;
       const kloopCooldownUntil = getKloopProfileCooldownUntil(providerKey, profileId) ?? 0;
       const effectiveCooldownUntil = Math.max(cooldownUntil, kloopCooldownUntil);
+      const overQuota = isProfileOverQuotaByPolicy({
+        provider: providerKey,
+        profileId,
+        store,
+        now,
+      });
       if (
         typeof effectiveCooldownUntil === "number" &&
         Number.isFinite(effectiveCooldownUntil) &&
@@ -138,6 +145,8 @@ export function resolveAuthProfileOrder(params: {
       ) {
         inCooldown.push({ profileId, cooldownUntil: effectiveCooldownUntil });
       } else if (isProfileBlockedByKloop(providerKey, profileId)) {
+        inCooldown.push({ profileId, cooldownUntil: now + 60_000 });
+      } else if (overQuota) {
         inCooldown.push({ profileId, cooldownUntil: now + 60_000 });
       } else {
         available.push(profileId);
@@ -179,7 +188,10 @@ function orderProfilesByMode(order: string[], store: AuthProfileStore): string[]
   for (const profileId of order) {
     const providerId = store.profiles[profileId]?.provider ?? "";
     const kloopBlocked = providerId ? isProfileBlockedByKloop(providerId, profileId) : false;
-    if (isProfileInCooldown(store, profileId) || kloopBlocked) {
+    const overQuota = providerId
+      ? isProfileOverQuotaByPolicy({ provider: providerId, profileId, store, now })
+      : false;
+    if (isProfileInCooldown(store, profileId) || kloopBlocked || overQuota) {
       inCooldown.push(profileId);
     } else {
       available.push(profileId);

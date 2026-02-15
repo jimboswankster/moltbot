@@ -732,6 +732,7 @@ export async function runEmbeddedPiAgent(
             await markAuthProfileUsed({
               store: authStore,
               profileId: lastProfileId,
+              usage,
               agentDir: params.agentDir,
             });
           }
@@ -780,7 +781,9 @@ export async function runEmbeddedPiAgent(
                 );
               }
             } catch (err) {
-              log.warn(`post-response compaction failed for ${provider}/${modelId}: ${describeUnknownError(err)}`);
+              log.warn(
+                `post-response compaction failed for ${provider}/${modelId}: ${describeUnknownError(err)}`,
+              );
             }
           }
 

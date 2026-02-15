@@ -1,6 +1,8 @@
 import type { OpenClawConfig } from "../../config/config.js";
+import type { NormalizedUsage } from "../usage.js";
 import type { AuthProfileFailureReason, AuthProfileStore, ProfileUsageStats } from "./types.js";
 import { normalizeProviderId } from "../model-selection.js";
+import { updateQuotaWindows } from "./quota-policy.js";
 import { saveAuthProfileStore, updateAuthProfileStoreWithLock } from "./store.js";
 
 function resolveProfileUnusableUntil(stats: ProfileUsageStats): number | null {
@@ -32,9 +34,18 @@ export function isProfileInCooldown(store: AuthProfileStore, profileId: string):
 export async function markAuthProfileUsed(params: {
   store: AuthProfileStore;
   profileId: string;
+  usage?: NormalizedUsage;
   agentDir?: string;
 }): Promise<void> {
-  const { store, profileId, agentDir } = params;
+  const { store, profileId, agentDir, usage } = params;
+  const tokensUsed = (() => {
+    if (!usage) return 0;
+    if (typeof usage.total === "number" && Number.isFinite(usage.total))
+      return Math.max(0, usage.total);
+    const sum =
+      (usage.input ?? 0) + (usage.output ?? 0) + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0);
+    return Math.max(0, sum);
+  })();
   const updated = await updateAuthProfileStoreWithLock({
     agentDir,
     updater: (freshStore) => {
@@ -42,7 +53,7 @@ export async function markAuthProfileUsed(params: {
         return false;
       }
       freshStore.usageStats = freshStore.usageStats ?? {};
-      freshStore.usageStats[profileId] = {
+      const baseStats = {
         ...freshStore.usageStats[profileId],
         lastUsed: Date.now(),
         errorCount: 0,
@@ -50,6 +61,13 @@ export async function markAuthProfileUsed(params: {
         disabledUntil: undefined,
         disabledReason: undefined,
         failureCounts: undefined,
+      };
+      freshStore.usageStats[profileId] = {
+        ...updateQuotaWindows({
+          stats: baseStats,
+          now: Date.now(),
+          tokensUsed,
+        }),
       };
       return true;
     },
@@ -63,7 +81,7 @@ export async function markAuthProfileUsed(params: {
   }
 
   store.usageStats = store.usageStats ?? {};
-  store.usageStats[profileId] = {
+  const baseStats = {
     ...store.usageStats[profileId],
     lastUsed: Date.now(),
     errorCount: 0,
@@ -71,6 +89,13 @@ export async function markAuthProfileUsed(params: {
     disabledUntil: undefined,
     disabledReason: undefined,
     failureCounts: undefined,
+  };
+  store.usageStats[profileId] = {
+    ...updateQuotaWindows({
+      stats: baseStats,
+      now: Date.now(),
+      tokensUsed,
+    }),
   };
   saveAuthProfileStore(store, agentDir);
 }

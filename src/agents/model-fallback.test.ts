@@ -11,6 +11,7 @@ import { peekSystemEvents, resetSystemEventsForTest } from "../infra/system-even
 import { saveAuthProfileStore } from "./auth-profiles.js";
 import { AUTH_STORE_VERSION } from "./auth-profiles/constants.js";
 import { resetKloopPolicyCacheForTest } from "./auth-profiles/kloop-policy.js";
+import { resetQuotaPolicyCacheForTest } from "./auth-profiles/quota-policy.js";
 import { resetModelCandidateCooldownsForTest, runWithModelFallback } from "./model-fallback.js";
 
 function makeCfg(overrides: Partial<OpenClawConfig> = {}): OpenClawConfig {
@@ -29,10 +30,12 @@ function makeCfg(overrides: Partial<OpenClawConfig> = {}): OpenClawConfig {
 
 describe("runWithModelFallback", () => {
   const originalStatePath = process.env.OPENCLAW_KLOOP_STATE_PATH;
+  const originalRoutingPolicyPath = process.env.OPENCLAW_ROUTING_POLICY_PATH;
 
   beforeEach(() => {
     resetModelCandidateCooldownsForTest();
     resetKloopPolicyCacheForTest();
+    resetQuotaPolicyCacheForTest();
   });
 
   afterEach(() => {
@@ -42,7 +45,13 @@ describe("runWithModelFallback", () => {
     } else {
       process.env.OPENCLAW_KLOOP_STATE_PATH = originalStatePath;
     }
+    if (originalRoutingPolicyPath === undefined) {
+      delete process.env.OPENCLAW_ROUTING_POLICY_PATH;
+    } else {
+      process.env.OPENCLAW_ROUTING_POLICY_PATH = originalRoutingPolicyPath;
+    }
     resetKloopPolicyCacheForTest();
+    resetQuotaPolicyCacheForTest();
   });
 
   it("does not fall back on non-auth errors", async () => {
@@ -419,6 +428,55 @@ describe("runWithModelFallback", () => {
       { provider: "anthropic", model: "claude-opus-4-5" },
       { provider: "openai", model: "gpt-4.1" },
     ]);
+  });
+
+  it("skips a provider blocked by budget tier policy", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-budget-tier-"));
+    const policyPath = path.join(tempDir, "routing-budget-policy.json");
+    await fs.writeFile(
+      policyPath,
+      JSON.stringify(
+        {
+          enabled: true,
+          activeTier: "free",
+          providerTiers: {
+            openai: "frontier",
+            groq: "free",
+          },
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+    process.env.OPENCLAW_ROUTING_POLICY_PATH = policyPath;
+    resetQuotaPolicyCacheForTest();
+
+    const calls: Array<{ provider: string; model: string }> = [];
+    const res = await runWithModelFallback({
+      cfg: makeCfg({
+        agents: {
+          defaults: {
+            model: {
+              primary: "openai/gpt-4.1-mini",
+              fallbacks: ["groq/llama-3.3-70b-versatile"],
+            },
+          },
+        },
+      }),
+      provider: "openai",
+      model: "gpt-4.1-mini",
+      run: async (provider, model) => {
+        calls.push({ provider, model });
+        if (provider === "groq") return "ok";
+        throw new Error(`blocked provider should not run: ${provider}/${model}`);
+      },
+    });
+
+    expect(res.result).toBe("ok");
+    expect(calls).toEqual([{ provider: "groq", model: "llama-3.3-70b-versatile" }]);
+    expect(res.attempts[0]?.provider).toBe("openai");
+    expect(res.attempts[0]?.reason).toBe("billing");
   });
 
   it("treats an empty fallbacksOverride as disabling global fallbacks", async () => {

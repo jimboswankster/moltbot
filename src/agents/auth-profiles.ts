@@ -4,6 +4,12 @@ export { formatAuthDoctorHint } from "./auth-profiles/doctor.js";
 export { resolveApiKeyForProfile } from "./auth-profiles/oauth.js";
 export { resolveAuthProfileOrder } from "./auth-profiles/order.js";
 export { isProfileBlockedByKloop } from "./auth-profiles/kloop-policy.js";
+export {
+  isProfileOverQuotaByPolicy,
+  isProviderAllowedByBudget,
+  resetQuotaPolicyCacheForTest,
+  updateQuotaWindows,
+} from "./auth-profiles/quota-policy.js";
 export { resolveAuthStorePathForDisplay } from "./auth-profiles/paths.js";
 export {
   listProfilesForProvider,

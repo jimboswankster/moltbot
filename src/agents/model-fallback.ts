@@ -8,6 +8,8 @@ import {
   ensureAuthProfileStore,
   isProfileBlockedByKloop,
   isProfileInCooldown,
+  isProfileOverQuotaByPolicy,
+  isProviderAllowedByBudget,
   resolveAuthProfileOrder,
 } from "./auth-profiles.js";
 import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "./defaults.js";
@@ -338,6 +340,15 @@ export async function runWithModelFallback<T>(params: {
 
   for (let i = 0; i < candidates.length; i += 1) {
     const candidate = candidates[i];
+    if (!isProviderAllowedByBudget(candidate.provider)) {
+      attempts.push({
+        provider: candidate.provider,
+        model: candidate.model,
+        error: `Provider ${candidate.provider} blocked by active budget tier policy`,
+        reason: "billing",
+      });
+      continue;
+    }
     const candidateCooldownMs = getCandidateCooldownRemainingMs(
       candidate.provider,
       candidate.model,
@@ -371,7 +382,13 @@ export async function runWithModelFallback<T>(params: {
       });
       const isAnyProfileAvailable = profileIds.some(
         (id) =>
-          !isProfileInCooldown(authStore, id) && !isProfileBlockedByKloop(candidate.provider, id),
+          !isProfileInCooldown(authStore, id) &&
+          !isProfileBlockedByKloop(candidate.provider, id) &&
+          !isProfileOverQuotaByPolicy({
+            provider: candidate.provider,
+            profileId: id,
+            store: authStore,
+          }),
       );
 
       if (profileIds.length > 0 && !isAnyProfileAvailable) {
