@@ -654,26 +654,20 @@ async function runWebSearch(params: {
     } else if (res.status === 403) {
       hint = "Hint: Invalid Brave Search API key. Check your configuration.";
     }
-    throw new Error(
-      `Brave Search API error (${res.status}): ${detail || res.statusText}${hint ? `\n\n${hint}` : ""}`,
-    );
+    throw new Error(`Brave Search API error (${res.status}): ${detail || res.statusText}${hint ? `\n\n${hint}` : ""}`);
   }
 
   const data = (await res.json()) as BraveSearchResponse;
   const results = Array.isArray(data.web?.results) ? (data.web?.results ?? []) : [];
   if (results.length === 0) {
-    return withCacheMeta(
-      {
-        query: params.query,
-        provider: params.provider,
-        count: 0,
-        tookMs: Date.now() - start,
-        results: [],
-        hint: "Hint: No results found. Try less specific keywords or remove filters (country/freshness).",
-      },
-      "miss",
-      "none",
-    );
+    return withCacheMeta({
+      query: params.query,
+      provider: params.provider,
+      count: 0,
+      tookMs: Date.now() - start,
+      results: [],
+      hint: "Hint: No results found. Try less specific keywords or remove filters (country/freshness).",
+    }, "miss", "none");
   }
   const mapped = results.map((entry) => {
     const description = entry.description ?? "";

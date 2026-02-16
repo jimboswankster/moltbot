@@ -5,6 +5,7 @@ import { createAgentSession, SessionManager, SettingsManager } from "@mariozechn
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
+import path from "node:path";
 import type { UsageLike } from "../../usage.js";
 import type { EmbeddedRunAttemptParams, EmbeddedRunAttemptResult } from "./types.js";
 import { resolveHeartbeatPrompt } from "../../../auto-reply/heartbeat.js";
@@ -152,6 +153,149 @@ export function injectHistoryImagesIntoMessages(
   }
 
   return didMutate;
+}
+
+type TokenBudgetBreakdown = {
+  systemPromptTokens: number;
+  messageTokens: number;
+  userTokens: number;
+  assistantTokens: number;
+  toolResultTokens: number;
+  otherTokens: number;
+  totalInputTokens: number;
+};
+
+type ToolTokenShare = {
+  toolName: string;
+  tokens: number;
+  sharePct: number;
+};
+
+type TokenBudgetTelemetryEvent = {
+  ts: string;
+  runId: string;
+  sessionId: string;
+  provider: string;
+  modelId: string;
+  contextWindowTokens: number;
+  estimatedTokens: number;
+  budgetTokens: number;
+  shouldCompact: boolean;
+  overflow: boolean;
+  actions: string[];
+  breakdown: TokenBudgetBreakdown;
+  topTools: ToolTokenShare[];
+};
+
+function estimateMessageContentChars(content: unknown): number {
+  if (content == null) return 0;
+  if (typeof content === "string") return content.length;
+  if (Array.isArray(content)) {
+    let chars = 0;
+    for (const item of content) {
+      if (typeof item === "string") {
+        chars += item.length;
+        continue;
+      }
+      if (item && typeof item === "object") {
+        const maybeText = (item as { text?: unknown }).text;
+        if (typeof maybeText === "string") {
+          chars += maybeText.length;
+          continue;
+        }
+      }
+      try {
+        chars += JSON.stringify(item).length;
+      } catch {
+        chars += String(item).length;
+      }
+    }
+    return chars;
+  }
+  if (typeof content === "object") {
+    try {
+      return JSON.stringify(content).length;
+    } catch {
+      return String(content).length;
+    }
+  }
+  return String(content).length;
+}
+
+function estimateTokenBudgetBreakdown(
+  messages: AgentMessage[],
+  systemPromptTokens: number,
+): TokenBudgetBreakdown {
+  let userChars = 0;
+  let assistantChars = 0;
+  let toolResultChars = 0;
+  let otherChars = 0;
+  for (const message of messages) {
+    const content = "content" in message ? message.content : undefined;
+    const chars = estimateMessageContentChars(content);
+    if (message.role === "user") {
+      userChars += chars;
+    } else if (message.role === "assistant") {
+      assistantChars += chars;
+    } else if (message.role === "toolResult") {
+      toolResultChars += chars;
+    } else {
+      otherChars += chars;
+    }
+  }
+  const userTokens = Math.ceil(userChars / 4);
+  const assistantTokens = Math.ceil(assistantChars / 4);
+  const toolResultTokens = Math.ceil(toolResultChars / 4);
+  const otherTokens = Math.ceil(otherChars / 4);
+  const messageTokens = userTokens + assistantTokens + toolResultTokens + otherTokens;
+  return {
+    systemPromptTokens,
+    messageTokens,
+    userTokens,
+    assistantTokens,
+    toolResultTokens,
+    otherTokens,
+    totalInputTokens: systemPromptTokens + messageTokens,
+  };
+}
+
+function estimateTopToolTokenShares(
+  messages: AgentMessage[],
+  maxItems: number = 3,
+): ToolTokenShare[] {
+  if (maxItems <= 0) return [];
+  const tokenByTool = new Map<string, number>();
+  for (const message of messages) {
+    if (message.role !== "toolResult") continue;
+    const name =
+      typeof message.toolName === "string" && message.toolName.trim().length > 0
+        ? message.toolName.trim()
+        : "unknown_tool";
+    const content = "content" in message ? message.content : undefined;
+    const tokens = Math.ceil(estimateMessageContentChars(content) / 4);
+    tokenByTool.set(name, (tokenByTool.get(name) ?? 0) + tokens);
+  }
+  const entries = [...tokenByTool.entries()]
+    .map(([toolName, tokens]) => ({ toolName, tokens }))
+    .sort((a, b) => b.tokens - a.tokens);
+  const totalToolTokens = entries.reduce((sum, entry) => sum + entry.tokens, 0);
+  if (totalToolTokens <= 0) return [];
+  return entries.slice(0, maxItems).map((entry) => ({
+    toolName: entry.toolName,
+    tokens: entry.tokens,
+    sharePct: Math.round((entry.tokens / totalToolTokens) * 100),
+  }));
+}
+
+async function appendTokenBudgetTelemetryEvent(
+  workspaceDir: string,
+  event: TokenBudgetTelemetryEvent,
+): Promise<void> {
+  const day = new Date().toISOString().slice(0, 10);
+  const eventsDir = path.join(workspaceDir, "os", "audits", "tool-telemetry", "events");
+  const filePath = path.join(eventsDir, `token-budget-${day}.jsonl`);
+  await fs.mkdir(eventsDir, { recursive: true });
+  await fs.appendFile(filePath, `${JSON.stringify(event)}\n`, "utf8");
 }
 
 export async function runEmbeddedAttempt(
@@ -675,6 +819,39 @@ export async function runEmbeddedAttempt(
             })
           : null;
         const effectiveBudgetResult = providerBudgetResult ?? budgetResult;
+        const budgetBreakdown = estimateTokenBudgetBreakdown(
+          effectiveBudgetResult.messages,
+          systemPromptTokens,
+        );
+        const topToolShares = estimateTopToolTokenShares(effectiveBudgetResult.messages, 3);
+        const toolShareLog =
+          topToolShares.length > 0
+            ? ` topTools=${topToolShares
+                .map((entry) => `${entry.toolName}:${entry.tokens}t(${entry.sharePct}%)`)
+                .join(",")}`
+            : "";
+        const breakdownLog = `breakdown=system:${budgetBreakdown.systemPromptTokens},history:${budgetBreakdown.messageTokens},user:${budgetBreakdown.userTokens},assistant:${budgetBreakdown.assistantTokens},tool:${budgetBreakdown.toolResultTokens},other:${budgetBreakdown.otherTokens},totalInput:${budgetBreakdown.totalInputTokens}`;
+        const overflow =
+          effectiveBudgetResult.actions.length > 0 || effectiveBudgetResult.shouldCompact;
+        try {
+          await appendTokenBudgetTelemetryEvent(effectiveWorkspace, {
+            ts: new Date().toISOString(),
+            runId: params.runId,
+            sessionId: params.sessionId,
+            provider: params.provider,
+            modelId: params.modelId,
+            contextWindowTokens: params.contextWindowTokens,
+            estimatedTokens: effectiveBudgetResult.estimatedTokens,
+            budgetTokens: effectiveBudgetResult.budgetTokens,
+            shouldCompact: effectiveBudgetResult.shouldCompact,
+            overflow,
+            actions: [...effectiveBudgetResult.actions],
+            breakdown: budgetBreakdown,
+            topTools: topToolShares,
+          });
+        } catch (err) {
+          log.debug(`[token-budget] telemetry write failed: ${String(err)}`);
+        }
 
         if (effectiveBudgetResult.actions.length > 0) {
           const capLabel = providerInputCapRule
@@ -683,13 +860,13 @@ export async function runEmbeddedAttempt(
           log.warn(
             `[token-budget] ${effectiveBudgetResult.actions.join("; ")} | ` +
               `estimated=${effectiveBudgetResult.estimatedTokens} budget=${effectiveBudgetResult.budgetTokens} ` +
-              `contextWindow=${params.contextWindowTokens} messages=${effectiveBudgetResult.messages.length}${capLabel} ` +
+              `contextWindow=${params.contextWindowTokens} messages=${effectiveBudgetResult.messages.length} ${breakdownLog}${toolShareLog}${capLabel} ` +
               `runId=${params.runId} sessionId=${params.sessionId}`,
           );
         } else {
           log.debug(
             `[token-budget] within budget: estimated=${effectiveBudgetResult.estimatedTokens} budget=${effectiveBudgetResult.budgetTokens} ` +
-              `contextWindow=${params.contextWindowTokens} messages=${effectiveBudgetResult.messages.length}`,
+              `contextWindow=${params.contextWindowTokens} messages=${effectiveBudgetResult.messages.length} ${breakdownLog}${toolShareLog}`,
           );
         }
         const normalizedProvider = params.provider.trim().toLowerCase();
@@ -711,6 +888,8 @@ export async function runEmbeddedAttempt(
             estimatedTokens: effectiveBudgetResult.estimatedTokens,
             budgetTokens: effectiveBudgetResult.budgetTokens,
             actions: effectiveBudgetResult.actions,
+            breakdown: budgetBreakdown,
+            topTools: topToolShares,
           },
         });
 
