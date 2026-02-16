@@ -520,6 +520,17 @@ async function runWebSearch(params: {
   grokModel?: string;
   grokInlineCitations?: boolean;
 }): Promise<Record<string, unknown>> {
+  const withCacheMeta = (
+    payload: Record<string, unknown>,
+    cacheState: "hit" | "miss",
+    cacheSource: "tac" | "memory" | "none",
+  ): Record<string, unknown> => ({
+    ...payload,
+    cached: cacheState === "hit",
+    cacheState,
+    cacheSource,
+  });
+
   const cacheKey = normalizeCacheKey(
     params.provider === "brave"
       ? `${params.provider}:${params.query}:${params.count}:${params.country || "default"}:${params.search_lang || "default"}:${params.ui_lang || "default"}:${params.freshness || "default"}`
@@ -532,11 +543,11 @@ async function runWebSearch(params: {
     cacheParams: { legacyKey: cacheKey },
   });
   if (tacHit) {
-    return { ...tacHit.value, cached: true, cacheSource: "tac" };
+    return withCacheMeta({ ...(tacHit.value as Record<string, unknown>) }, "hit", "tac");
   }
   const cached = readCache(SEARCH_CACHE, cacheKey);
   if (cached) {
-    return { ...cached.value, cached: true };
+    return withCacheMeta({ ...(cached.value as Record<string, unknown>) }, "hit", "memory");
   }
 
   const start = Date.now();
@@ -570,7 +581,7 @@ async function runWebSearch(params: {
       summary: content.slice(0, 500),
       frozenCandidate: true,
     });
-    return payload;
+    return withCacheMeta(payload, "miss", "none");
   }
 
   if (params.provider === "grok") {
@@ -603,7 +614,7 @@ async function runWebSearch(params: {
       summary: content.slice(0, 500),
       frozenCandidate: true,
     });
-    return payload;
+    return withCacheMeta(payload, "miss", "none");
   }
 
   if (params.provider !== "brave") {
@@ -637,11 +648,33 @@ async function runWebSearch(params: {
 
   if (!res.ok) {
     const detail = await readResponseText(res);
-    throw new Error(`Brave Search API error (${res.status}): ${detail || res.statusText}`);
+    let hint = "";
+    if (res.status === 429) {
+      hint = "Hint: Brave Search rate limit exceeded. Wait a moment or check your plan.";
+    } else if (res.status === 403) {
+      hint = "Hint: Invalid Brave Search API key. Check your configuration.";
+    }
+    throw new Error(
+      `Brave Search API error (${res.status}): ${detail || res.statusText}${hint ? `\n\n${hint}` : ""}`,
+    );
   }
 
   const data = (await res.json()) as BraveSearchResponse;
   const results = Array.isArray(data.web?.results) ? (data.web?.results ?? []) : [];
+  if (results.length === 0) {
+    return withCacheMeta(
+      {
+        query: params.query,
+        provider: params.provider,
+        count: 0,
+        tookMs: Date.now() - start,
+        results: [],
+        hint: "Hint: No results found. Try less specific keywords or remove filters (country/freshness).",
+      },
+      "miss",
+      "none",
+    );
+  }
   const mapped = results.map((entry) => {
     const description = entry.description ?? "";
     const title = entry.title ?? "";
@@ -674,7 +707,7 @@ async function runWebSearch(params: {
     summary: `${params.query} (${mapped.length} results)`,
     frozenCandidate: true,
   });
-  return payload;
+  return withCacheMeta(payload, "miss", "none");
 }
 
 export function createWebSearchTool(options?: {

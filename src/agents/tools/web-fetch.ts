@@ -383,6 +383,17 @@ async function runWebFetch(params: {
   firecrawlStoreInCache: boolean;
   firecrawlTimeoutSeconds: number;
 }): Promise<Record<string, unknown>> {
+  const withCacheMeta = (
+    payload: Record<string, unknown>,
+    cacheState: "hit" | "miss",
+    cacheSource: "tac" | "memory" | "none",
+  ): Record<string, unknown> => ({
+    ...payload,
+    cached: cacheState === "hit",
+    cacheState,
+    cacheSource,
+  });
+
   const cacheKey = normalizeCacheKey(
     `fetch:${params.url}:${params.extractMode}:${params.maxChars}`,
   );
@@ -391,11 +402,11 @@ async function runWebFetch(params: {
     cacheParams: { legacyKey: cacheKey },
   });
   if (tacHit) {
-    return { ...tacHit.value, cached: true, cacheSource: "tac" };
+    return withCacheMeta({ ...(tacHit.value as Record<string, unknown>) }, "hit", "tac");
   }
   const cached = readCache(FETCH_CACHE, cacheKey);
   if (cached) {
-    return { ...cached.value, cached: true };
+    return withCacheMeta({ ...(cached.value as Record<string, unknown>) }, "hit", "memory");
   }
 
   let parsedUrl: URL;
@@ -474,7 +485,7 @@ async function runWebFetch(params: {
         summary: wrapped.text.slice(0, 500),
         frozenCandidate: true,
       });
-      return payload;
+      return withCacheMeta(payload, "miss", "none");
     }
     throw error;
   }
@@ -523,7 +534,7 @@ async function runWebFetch(params: {
           summary: wrapped.text.slice(0, 500),
           frozenCandidate: true,
         });
-        return payload;
+        return withCacheMeta(payload, "miss", "none");
       }
       const rawDetail = await readResponseText(res);
       const detail = formatWebFetchErrorDetail({
@@ -609,7 +620,7 @@ async function runWebFetch(params: {
       summary: wrapped.text.slice(0, 500),
       frozenCandidate: true,
     });
-    return payload;
+    return withCacheMeta(payload, "miss", "none");
   } finally {
     if (release) {
       await release();
