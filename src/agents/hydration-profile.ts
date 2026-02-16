@@ -120,7 +120,8 @@ export function resolveHydrationProfile(params: {
   workspaceDir?: string;
 }): HydrationProfileResolution | undefined {
   if (!params.workspaceDir) return undefined;
-  const protocolRefs = parseProtocolRefs(params.messages);
+  const safeMessages = Array.isArray(params.messages) ? params.messages : [];
+  const protocolRefs = parseProtocolRefs(safeMessages);
   if (protocolRefs.length === 0) {
     return { protocolRefs, matchedProtocols: [] };
   }
