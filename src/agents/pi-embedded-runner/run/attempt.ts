@@ -812,18 +812,40 @@ export async function runEmbeddedAttempt(
           ? systemPromptText.length + mcSessionMemory.length + 80 // 80 chars for [SESSION MEMORY] wrapper
           : systemPromptText.length;
         const systemPromptTokens = Math.ceil(effectiveSystemPromptChars / 4);
-
-        const budgetResult = fitToTokenBudget(capped, params.contextWindowTokens, {
-          outputReserveTokens: params.streamParams?.maxTokens ?? 4096,
-          systemPromptTokens,
-          toolResultCapPolicy,
-        });
+        const outputReserveTokens = params.streamParams?.maxTokens ?? 4096;
         const inputCapRules = params.config?.agents?.defaults?.tokenBudget?.inputCaps;
         const providerInputCapRule = resolveProviderInputCapRule(
           inputCapRules,
           params.provider,
           params.modelId,
         );
+        const systemPromptBudgetTokens = Math.max(
+          0,
+          Math.floor(params.contextWindowTokens - outputReserveTokens),
+        );
+        if (systemPromptTokens > systemPromptBudgetTokens) {
+          throw new Error(
+            "Context overflow: prompt too large for the model. " +
+              `System prompt requires ${systemPromptTokens} tokens, ` +
+              `budget=${systemPromptBudgetTokens} (contextWindow=${params.contextWindowTokens}, outputReserve=${outputReserveTokens}).`,
+          );
+        }
+        if (
+          providerInputCapRule &&
+          systemPromptTokens > Math.max(0, Math.floor(providerInputCapRule.maxInputTokens))
+        ) {
+          throw new Error(
+            "Context overflow: prompt too large for the model. " +
+              `System prompt requires ${systemPromptTokens} tokens, ` +
+              `provider input cap=${providerInputCapRule.maxInputTokens}.`,
+          );
+        }
+
+        const budgetResult = fitToTokenBudget(capped, params.contextWindowTokens, {
+          outputReserveTokens,
+          systemPromptTokens,
+          toolResultCapPolicy,
+        });
         const providerBudgetResult = providerInputCapRule
           ? fitToTokenBudget(budgetResult.messages, providerInputCapRule.maxInputTokens, {
               outputReserveTokens: 0,
