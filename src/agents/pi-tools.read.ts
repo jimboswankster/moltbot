@@ -1,5 +1,8 @@
 import type { AgentToolResult } from "@mariozechner/pi-agent-core";
 import { createEditTool, createReadTool, createWriteTool } from "@mariozechner/pi-coding-agent";
+import crypto from "node:crypto";
+import fs from "node:fs/promises";
+import path from "node:path";
 import type { AnyAgentTool } from "./pi-tools.types.js";
 import { detectMime } from "../media/mime.js";
 import { assertSandboxPath } from "./sandbox-paths.js";
@@ -327,7 +330,7 @@ function wrapSandboxPathGuard(tool: AnyAgentTool, root: string): AnyAgentTool {
 
 export function createSandboxedReadTool(root: string) {
   const base = createReadTool(root) as unknown as AnyAgentTool;
-  return wrapSandboxPathGuard(createOpenClawReadTool(base), root);
+  return wrapSandboxPathGuard(createOpenClawReadTool(base, { workspaceRoot: root }), root);
 }
 
 export function createSandboxedWriteTool(root: string) {
@@ -340,7 +343,52 @@ export function createSandboxedEditTool(root: string) {
   return wrapSandboxPathGuard(wrapToolParamNormalization(base, CLAUDE_PARAM_GROUPS.edit), root);
 }
 
-export function createOpenClawReadTool(base: AnyAgentTool): AnyAgentTool {
+async function resolveReadSnapshot(
+  filePath: string,
+  workspaceRoot?: string,
+): Promise<
+  | {
+      path: string;
+      resolvedPath: string;
+      sizeBytes: number;
+      mtimeMs: number;
+      snapshotKey: string;
+    }
+  | undefined
+> {
+  const resolvedPath = path.isAbsolute(filePath)
+    ? filePath
+    : path.resolve(workspaceRoot ?? process.cwd(), filePath);
+  try {
+    const stat = await fs.stat(resolvedPath);
+    if (!stat.isFile()) {
+      return undefined;
+    }
+    const snapshotKey = crypto
+      .createHash("sha256")
+      .update(resolvedPath)
+      .update("|")
+      .update(String(stat.size))
+      .update("|")
+      .update(String(stat.mtimeMs))
+      .digest("hex")
+      .slice(0, 16);
+    return {
+      path: filePath,
+      resolvedPath,
+      sizeBytes: stat.size,
+      mtimeMs: stat.mtimeMs,
+      snapshotKey,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+export function createOpenClawReadTool(
+  base: AnyAgentTool,
+  opts?: { workspaceRoot?: string },
+): AnyAgentTool {
   const patched = patchToolSchemaForClaudeCompatibility(base);
   return {
     ...patched,
@@ -355,7 +403,27 @@ export function createOpenClawReadTool(base: AnyAgentTool): AnyAgentTool {
         const result = await base.execute(toolCallId, normalized ?? params, signal);
         const filePath = typeof record?.path === "string" ? String(record.path) : "<unknown>";
         const normalizedResult = await normalizeReadImageResult(result, filePath);
-        return sanitizeToolResultImages(normalizedResult, `read:${filePath}`);
+        const sanitized = await sanitizeToolResultImages(normalizedResult, `read:${filePath}`);
+        const snapshot = await resolveReadSnapshot(filePath, opts?.workspaceRoot);
+        if (!snapshot) {
+          return sanitized;
+        }
+        const details =
+          sanitized &&
+          typeof sanitized === "object" &&
+          typeof (sanitized as { details?: unknown }).details === "object"
+            ? ({ ...(sanitized as { details: Record<string, unknown> }).details } as Record<
+                string,
+                unknown
+              >)
+            : {};
+        return {
+          ...sanitized,
+          details: {
+            ...details,
+            readSnapshot: snapshot,
+          },
+        };
       } catch (err) {
         throw enhanceFsError(
           err,

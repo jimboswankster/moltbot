@@ -1330,6 +1330,7 @@ export function createExecTool(
           ],
           details: {
             status: success ? "completed" : "failed",
+            command: params.command,
             exitCode,
             durationMs: Date.now() - startedAt,
             aggregated: [stdout, stderr, errorText].filter(Boolean).join("\n"),
@@ -1675,6 +1676,7 @@ export function createExecTool(
               ],
               details: {
                 status: "completed",
+                command: params.command,
                 exitCode: outcome.exitCode ?? 0,
                 durationMs: outcome.durationMs,
                 aggregated: outcome.aggregated,
