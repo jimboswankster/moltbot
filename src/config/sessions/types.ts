@@ -157,6 +157,12 @@ export type SessionSystemPromptReport = {
     contextPolicy?: string;
     protocolRefs?: string[];
     matchedProtocols?: string[];
+    promptBudgetPlan?: {
+      profile?: string;
+      budgets?: Record<string, number>;
+      shrinkOrder?: string[];
+      neverDrop?: string[];
+    };
   };
   bootstrapMaxChars?: number;
   sandbox?: {

@@ -36,7 +36,7 @@ import {
 } from "../../channel-tools.js";
 import { resolveOpenClawDocsPath } from "../../docs-path.js";
 import { isTimeoutError } from "../../failover-error.js";
-import { resolveHydrationProfile } from "../../hydration-profile.js";
+import { resolveHydrationProfile, resolvePromptBudgetPlan } from "../../hydration-profile.js";
 import { resolveModelAuthMode } from "../../model-auth.js";
 import { resolveDefaultModelForAgent } from "../../model-selection.js";
 import {
@@ -542,6 +542,14 @@ export async function runEmbeddedAttempt(
       contextFiles,
       memoryCitationsMode: params.config?.memory?.citations,
     });
+    const hydration = resolveHydrationProfile({
+      messages: params.messages,
+      workspaceDir: effectiveWorkspace,
+    });
+    const promptBudgetPlan = resolvePromptBudgetPlan({
+      workspaceDir: effectiveWorkspace,
+      hydrationProfile: hydration?.hydrationProfile,
+    });
     const systemPromptReport = buildSystemPromptReport({
       source: "run",
       generatedAt: Date.now(),
@@ -550,10 +558,10 @@ export async function runEmbeddedAttempt(
       provider: params.provider,
       model: params.modelId,
       workspaceDir: effectiveWorkspace,
-      hydration: resolveHydrationProfile({
-        messages: params.messages,
-        workspaceDir: effectiveWorkspace,
-      }),
+      hydration: {
+        ...hydration,
+        promptBudgetPlan,
+      },
       bootstrapMaxChars: resolveBootstrapMaxChars(params.config),
       sandbox: (() => {
         const runtime = resolveSandboxRuntimeStatus({

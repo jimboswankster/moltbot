@@ -23,6 +23,19 @@ export type HydrationProfileResolution = {
   matchedProtocols: string[];
 };
 
+export type PromptBudgetManifest = {
+  sections: Record<string, { label?: string; never_drop?: boolean }>;
+  shrink_order: string[];
+  profiles: Record<string, { budgets_chars: Record<string, number> }>;
+};
+
+export type PromptBudgetResolution = {
+  profile?: string;
+  budgets?: Record<string, number>;
+  shrinkOrder?: string[];
+  neverDrop?: string[];
+};
+
 type CachedIndex = {
   mtimeMs: number;
   index: ProtocolIndexEntry[];
@@ -128,5 +141,51 @@ export function resolveHydrationProfile(params: {
     contextPolicy: selected.context_policy,
     protocolRefs,
     matchedProtocols: matches.map((entry) => entry.path),
+  };
+}
+
+function loadBudgetManifest(workspaceDir: string): PromptBudgetManifest | null {
+  const manifestPath = path.join(
+    workspaceDir,
+    "os",
+    "vault",
+    "systems",
+    "llm-runtime-optimization",
+    "prompt-assembly-budgets.yaml",
+  );
+  if (!fs.existsSync(manifestPath)) {
+    return null;
+  }
+  const raw = fs.readFileSync(manifestPath, "utf-8");
+  const parsed = YAML.parse(raw) as PromptBudgetManifest | null;
+  if (!parsed || typeof parsed !== "object") {
+    return null;
+  }
+  return parsed;
+}
+
+export function resolvePromptBudgetPlan(params: {
+  workspaceDir?: string;
+  hydrationProfile?: string;
+}): PromptBudgetResolution | undefined {
+  if (!params.workspaceDir || !params.hydrationProfile) {
+    return undefined;
+  }
+  const manifest = loadBudgetManifest(params.workspaceDir);
+  if (!manifest) {
+    return undefined;
+  }
+  const profile = manifest.profiles?.[params.hydrationProfile];
+  if (!profile) {
+    return undefined;
+  }
+  const neverDrop = Object.entries(manifest.sections ?? {})
+    .filter(([, info]) => Boolean(info?.never_drop))
+    .map(([key]) => key);
+  return {
+    profile: params.hydrationProfile,
+    budgets: profile.budgets_chars,
+    shrinkOrder: manifest.shrink_order ?? [],
+    neverDrop,
   };
 }
