@@ -106,6 +106,7 @@ export function buildSystemPromptReport(params: {
   provider?: string;
   model?: string;
   workspaceDir?: string;
+  hydration?: SessionSystemPromptReport["hydration"];
   bootstrapMaxChars: number;
   sandbox?: SessionSystemPromptReport["sandbox"];
   systemPrompt: string;
@@ -135,6 +136,7 @@ export function buildSystemPromptReport(params: {
     provider: params.provider,
     model: params.model,
     workspaceDir: params.workspaceDir,
+    hydration: params.hydration,
     bootstrapMaxChars: params.bootstrapMaxChars,
     sandbox: params.sandbox,
     systemPrompt: {

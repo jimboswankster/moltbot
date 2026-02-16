@@ -151,6 +151,13 @@ export type SessionSystemPromptReport = {
   provider?: string;
   model?: string;
   workspaceDir?: string;
+  hydration?: {
+    profile?: string;
+    agentRole?: string;
+    contextPolicy?: string;
+    protocolRefs?: string[];
+    matchedProtocols?: string[];
+  };
   bootstrapMaxChars?: number;
   sandbox?: {
     mode?: string;

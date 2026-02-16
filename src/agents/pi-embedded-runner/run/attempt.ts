@@ -36,6 +36,7 @@ import {
 } from "../../channel-tools.js";
 import { resolveOpenClawDocsPath } from "../../docs-path.js";
 import { isTimeoutError } from "../../failover-error.js";
+import { resolveHydrationProfile } from "../../hydration-profile.js";
 import { resolveModelAuthMode } from "../../model-auth.js";
 import { resolveDefaultModelForAgent } from "../../model-selection.js";
 import {
@@ -549,6 +550,10 @@ export async function runEmbeddedAttempt(
       provider: params.provider,
       model: params.modelId,
       workspaceDir: effectiveWorkspace,
+      hydration: resolveHydrationProfile({
+        messages: params.messages,
+        workspaceDir: effectiveWorkspace,
+      }),
       bootstrapMaxChars: resolveBootstrapMaxChars(params.config),
       sandbox: (() => {
         const runtime = resolveSandboxRuntimeStatus({
