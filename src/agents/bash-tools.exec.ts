@@ -769,7 +769,7 @@ async function runExecProcess(opts: {
               `consider splitting work into smaller chunks or increasing the limit ` +
               `via memoryLimitMB parameter)`
             : "";
-        const reason = timedOut
+        const reasonMsg = timedOut
           ? `Command timed out after ${opts.timeoutSec} seconds`
           : wasSignal && exitSignal
             ? `Command killed by signal ${exitSignal}${memoryKillHint}`
@@ -778,7 +778,19 @@ async function runExecProcess(opts: {
               : code === 137
                 ? `Command killed (exit code 137)${memoryKillHint}`
                 : `Command exited with code ${code}`;
-        const message = aggregated ? `${aggregated}\n\n${reason}` : reason;
+        let finalReason = aggregated ? `${aggregated}\n\n${reasonMsg}` : reasonMsg;
+
+        // Hinting for command not found
+        if (
+          aggregated.includes("command not found") ||
+          aggregated.includes("no such file or directory") ||
+          aggregated.includes("zsh: command not found") ||
+          aggregated.includes("bash: command not found")
+        ) {
+          const cmd = opts.command.split(" ")[0];
+          finalReason += `\n\nHint: The command '${cmd}' failed. Verify it exists with 'which ${cmd}' or use the absolute path.`;
+        }
+
         settle({
           status: "failed",
           exitCode: code ?? null,
@@ -786,7 +798,7 @@ async function runExecProcess(opts: {
           durationMs,
           aggregated,
           timedOut,
-          reason: message,
+          reason: finalReason,
         });
         return;
       }

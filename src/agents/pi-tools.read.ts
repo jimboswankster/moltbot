@@ -255,6 +255,29 @@ export function assertRequiredParams(
   }
 }
 
+function enhanceFsError(err: unknown, toolName: string, path?: string): unknown {
+  if (!(err instanceof Error)) return err;
+
+  const msg = err.message;
+  let hint = "";
+
+  if (msg.includes("ENOENT") || msg.includes("no such file")) {
+    hint = `Hint: File not found at '${path || "path"}'. Use 'ls -R' or 'find' to locate it.`;
+  } else if (msg.includes("EACCES") || msg.includes("permission denied")) {
+    hint = `Hint: Permission denied for '${path || "path"}'. Check file permissions.`;
+  } else if (msg.includes("EISDIR") || msg.includes("illegal operation on a directory")) {
+    hint = `Hint: '${path || "path"}' is a directory, not a file.`;
+  } else if (toolName === "edit" && msg.includes("Could not find the exact text")) {
+    hint =
+      "Hint: The 'oldText' must match EXACTLY, including whitespace and newlines. Use 'read' to get the exact content first.";
+  }
+
+  if (hint) {
+    err.message = `${msg}\n\n${hint}`;
+  }
+  return err;
+}
+
 // Generic wrapper to normalize parameters for any tool
 export function wrapToolParamNormalization(
   tool: AnyAgentTool,
@@ -268,10 +291,19 @@ export function wrapToolParamNormalization(
       const record =
         normalized ??
         (params && typeof params === "object" ? (params as Record<string, unknown>) : undefined);
-      if (requiredParamGroups?.length) {
-        assertRequiredParams(record, requiredParamGroups, tool.name);
+
+      try {
+        if (requiredParamGroups?.length) {
+          assertRequiredParams(record, requiredParamGroups, tool.name);
+        }
+        return await tool.execute(toolCallId, normalized ?? params, signal, onUpdate);
+      } catch (err) {
+        throw enhanceFsError(
+          err,
+          tool.name,
+          typeof record?.path === "string" ? String(record.path) : undefined,
+        );
       }
-      return tool.execute(toolCallId, normalized ?? params, signal, onUpdate);
     },
   };
 }
@@ -317,11 +349,20 @@ export function createOpenClawReadTool(base: AnyAgentTool): AnyAgentTool {
       const record =
         normalized ??
         (params && typeof params === "object" ? (params as Record<string, unknown>) : undefined);
-      assertRequiredParams(record, CLAUDE_PARAM_GROUPS.read, base.name);
-      const result = await base.execute(toolCallId, normalized ?? params, signal);
-      const filePath = typeof record?.path === "string" ? String(record.path) : "<unknown>";
-      const normalizedResult = await normalizeReadImageResult(result, filePath);
-      return sanitizeToolResultImages(normalizedResult, `read:${filePath}`);
+
+      try {
+        assertRequiredParams(record, CLAUDE_PARAM_GROUPS.read, base.name);
+        const result = await base.execute(toolCallId, normalized ?? params, signal);
+        const filePath = typeof record?.path === "string" ? String(record.path) : "<unknown>";
+        const normalizedResult = await normalizeReadImageResult(result, filePath);
+        return sanitizeToolResultImages(normalizedResult, `read:${filePath}`);
+      } catch (err) {
+        throw enhanceFsError(
+          err,
+          base.name,
+          typeof record?.path === "string" ? record.path : undefined,
+        );
+      }
     },
   };
 }

@@ -1,8 +1,10 @@
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import type { OpenClawConfig } from "../../config/config.js";
 import { resolveOpenClawAgentDir } from "../../agents/agent-paths.js";
-import { resolveAgentWorkspaceDir, resolveDefaultAgentId } from "../../agents/agent-scope.js";
+import { resolveDefaultAgentId } from "../../agents/agent-scope.js";
 import {
   ensureAuthProfileStore,
   listProfilesForProvider,
@@ -14,7 +16,6 @@ import { getCustomProviderApiKey, resolveEnvApiKey } from "../../agents/model-au
 import { loadModelCatalog } from "../../agents/model-catalog.js";
 import { normalizeProviderId, parseModelRef } from "../../agents/model-selection.js";
 import { runEmbeddedPiAgent } from "../../agents/pi-embedded.js";
-import { resolveDefaultAgentWorkspaceDir } from "../../agents/workspace.js";
 import {
   resolveSessionTranscriptPath,
   resolveSessionTranscriptsDirForAgent,
@@ -374,47 +375,50 @@ async function runTargetsWithConcurrency(params: {
 
   const agentId = resolveDefaultAgentId(cfg);
   const agentDir = resolveOpenClawAgentDir();
-  const workspaceDir = resolveAgentWorkspaceDir(cfg, agentId) ?? resolveDefaultAgentWorkspaceDir();
+  // Use an isolated probe workspace to avoid injecting full agent bootstrap context (SOUL, etc).
+  // Probes should validate auth + basic model reachability, not full-session prompt viability.
+  const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-probe-workspace-"));
   const sessionDir = resolveSessionTranscriptsDirForAgent(agentId);
 
-  await fs.mkdir(workspaceDir, { recursive: true });
+  try {
+    let completed = 0;
+    const results: Array<AuthProbeResult | undefined> = Array.from({ length: targets.length });
+    let cursor = 0;
 
-  let completed = 0;
-  const results: Array<AuthProbeResult | undefined> = Array.from({ length: targets.length });
-  let cursor = 0;
-
-  const worker = async () => {
-    while (true) {
-      const index = cursor;
-      cursor += 1;
-      if (index >= targets.length) {
-        return;
+    const worker = async () => {
+      while (true) {
+        const index = cursor;
+        cursor += 1;
+        if (index >= targets.length) {
+          return;
+        }
+        const target = targets[index];
+        onProgress?.({
+          completed,
+          total: targets.length,
+          label: `Probing ${target.provider}${target.profileId ? ` (${target.label})` : ""}`,
+        });
+        const result = await probeTarget({
+          cfg,
+          agentId,
+          agentDir,
+          workspaceDir,
+          sessionDir,
+          target,
+          timeoutMs,
+          maxTokens,
+        });
+        results[index] = result;
+        completed += 1;
+        onProgress?.({ completed, total: targets.length });
       }
-      const target = targets[index];
-      onProgress?.({
-        completed,
-        total: targets.length,
-        label: `Probing ${target.provider}${target.profileId ? ` (${target.label})` : ""}`,
-      });
-      const result = await probeTarget({
-        cfg,
-        agentId,
-        agentDir,
-        workspaceDir,
-        sessionDir,
-        target,
-        timeoutMs,
-        maxTokens,
-      });
-      results[index] = result;
-      completed += 1;
-      onProgress?.({ completed, total: targets.length });
-    }
-  };
+    };
 
-  await Promise.all(Array.from({ length: concurrency }, () => worker()));
-
-  return results.filter((entry): entry is AuthProbeResult => Boolean(entry));
+    await Promise.all(Array.from({ length: concurrency }, () => worker()));
+    return results.filter((entry): entry is AuthProbeResult => Boolean(entry));
+  } finally {
+    await fs.rm(workspaceDir, { recursive: true, force: true });
+  }
 }
 
 export async function runAuthProbes(params: {
