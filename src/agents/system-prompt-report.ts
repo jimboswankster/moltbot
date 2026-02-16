@@ -98,6 +98,167 @@ function extractToolListText(systemPrompt: string): string {
   return extracted.text.replace(markerA, "").trim();
 }
 
+type PromptSection = {
+  name: string;
+  category: string;
+  chars: number;
+};
+
+function normalizeHeaderName(header: string): string {
+  return header
+    .replace(/\([^)]*\)/g, "")
+    .replace(/[:.]+$/g, "")
+    .trim()
+    .toLowerCase();
+}
+
+function mapHeaderToCategory(header: string): string {
+  const normalized = normalizeHeaderName(header);
+  if (!normalized) {
+    return "unmapped";
+  }
+  if (normalized === "project context") return "optional_context";
+  if (normalized === "runtime") return "core_identity";
+
+  const toolInventory = new Set([
+    "tooling",
+    "tool call style",
+    "openclaw cli quick reference",
+    "openclaw self-update",
+    "model aliases",
+  ]);
+  if (toolInventory.has(normalized)) return "tool_inventory";
+
+  const protocolHarness = new Set([
+    "safety",
+    "skills",
+    "memory recall",
+    "reply tags",
+    "messaging",
+    "voice",
+    "reactions",
+    "reasoning format",
+    "silent replies",
+    "heartbeats",
+  ]);
+  if (protocolHarness.has(normalized)) return "protocol_harness";
+
+  const taskEnvelope = new Set([
+    "workspace",
+    "documentation",
+    "sandbox",
+    "user identity",
+    "current date & time",
+    "workspace files",
+    "group chat context",
+    "subagent context",
+  ]);
+  if (taskEnvelope.has(normalized)) return "task_envelope";
+
+  return "unmapped";
+}
+
+function buildPromptSections(systemPrompt: string): PromptSection[] {
+  const lines = systemPrompt.split(/\r?\n/);
+  const sections: Array<{ name: string; lines: string[]; category: string }> = [];
+  let currentName = "(preamble)";
+  let currentLines: string[] = [];
+  let currentCategory = "core_identity";
+  let inProjectContext = false;
+
+  const flush = () => {
+    const text = currentLines.join("\n");
+    if (text.trim().length === 0) {
+      currentLines = [];
+      return;
+    }
+    sections.push({
+      name: currentName,
+      lines: currentLines,
+      category: currentCategory,
+    });
+    currentLines = [];
+  };
+
+  const projectContextExitHeaders = new Set(["silent replies", "heartbeats", "runtime"]);
+
+  for (const line of lines) {
+    const headerMatch = line.match(/^(#{1,2})\s+(.*)$/);
+    if (!headerMatch) {
+      currentLines.push(line);
+      continue;
+    }
+    const headerName = headerMatch[2]?.trim() || "(unknown)";
+    const normalizedHeader = normalizeHeaderName(headerName);
+    if (inProjectContext && !projectContextExitHeaders.has(normalizedHeader)) {
+      currentLines.push(line);
+      continue;
+    }
+
+    flush();
+    currentName = headerName;
+    currentCategory = mapHeaderToCategory(headerName);
+    inProjectContext = normalizedHeader === "project context";
+    currentLines.push(line);
+  }
+
+  flush();
+
+  return sections.map((section) => ({
+    name: section.name,
+    category: section.category,
+    chars: section.lines.join("\n").length,
+  }));
+}
+
+function buildPromptBudgetReport(params: {
+  systemPrompt: string;
+  promptBudgetPlan?: SessionSystemPromptReport["hydration"]["promptBudgetPlan"];
+}): SessionSystemPromptReport["promptBudgetReport"] | undefined {
+  const promptBudgetPlan = params.promptBudgetPlan;
+  const budgets = promptBudgetPlan?.budgets ?? {};
+  const sections = buildPromptSections(params.systemPrompt);
+  const totalsByCategory = new Map<string, number>();
+  for (const section of sections) {
+    totalsByCategory.set(
+      section.category,
+      (totalsByCategory.get(section.category) ?? 0) + section.chars,
+    );
+  }
+
+  const orderedCategories = [
+    "core_identity",
+    "protocol_harness",
+    "task_envelope",
+    "tool_inventory",
+    "optional_context",
+    "unmapped",
+  ];
+  const totals = orderedCategories
+    .filter((category) => totalsByCategory.has(category))
+    .map((category) => {
+      const chars = totalsByCategory.get(category) ?? 0;
+      const budget = budgets[category];
+      const overBy = budget !== undefined ? Math.max(0, chars - budget) : undefined;
+      return {
+        category,
+        chars,
+        budget,
+        overBy,
+      };
+    });
+
+  return {
+    profile: promptBudgetPlan?.profile,
+    totals,
+    sections: sections.map((section) => ({
+      name: section.name,
+      category: section.category,
+      chars: section.chars,
+    })),
+  };
+}
+
 export function buildSystemPromptReport(params: {
   source: SessionSystemPromptReport["source"];
   generatedAt: number;
@@ -127,6 +288,10 @@ export function buildSystemPromptReport(params: {
   const toolsEntries = buildToolsEntries(params.tools);
   const toolsSchemaChars = toolsEntries.reduce((sum, t) => sum + (t.schemaChars ?? 0), 0);
   const skillsEntries = parseSkillBlocks(params.skillsPrompt);
+  const promptBudgetReport = buildPromptBudgetReport({
+    systemPrompt,
+    promptBudgetPlan: params.hydration?.promptBudgetPlan,
+  });
 
   return {
     source: params.source,
@@ -158,5 +323,6 @@ export function buildSystemPromptReport(params: {
       schemaChars: toolsSchemaChars,
       entries: toolsEntries,
     },
+    promptBudgetReport,
   };
 }
