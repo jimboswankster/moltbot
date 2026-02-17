@@ -129,6 +129,47 @@ const APPROVAL_SLUG_LENGTH = 8;
 const REPAIRABLE_SIMPLE_EXEC_COMMANDS = new Set(["ls", "stat", "cat", "cp", "file"]);
 const QUOTED_ABSOLUTE_PATH_PATTERN = /(["'])(\/[^"'\n]+)\1/g;
 const SHELL_COMPLEXITY_PATTERN = /(?:&&|\|\||[|;`<>]|\$\(|\n)/;
+const HEAVY_AUTO_BACKGROUND_BINS = new Set([
+  "pnpm",
+  "npm",
+  "yarn",
+  "bun",
+  "npx",
+  "uv",
+  "pip",
+  "pip3",
+  "poetry",
+  "cargo",
+  "go",
+  "make",
+  "cmake",
+  "gradle",
+  "mvn",
+  "pytest",
+  "vitest",
+  "jest",
+  "tsc",
+  "vite",
+  "webpack",
+  "rollup",
+  "docker",
+]);
+const HEAVY_AUTO_BACKGROUND_KEYWORD_PATTERN =
+  /\b(install|build|test|typecheck|compile|check|audit|upgrade|migrate|sync)\b/i;
+const EXEC_RETRY_BRAKE_WINDOW_MS = 10 * 60 * 1000;
+const EXEC_RETRY_BRAKE_COOLDOWN_MS = 5 * 60 * 1000;
+const EXEC_RETRY_BRAKE_THRESHOLD = 2;
+
+type RetryBrakeFailureClass = "resource_kill" | "timeout" | "path_missing";
+type RetryBrakeEntry = {
+  failureClass: RetryBrakeFailureClass;
+  consecutive: number;
+  lastFailureAt: number;
+  cooldownUntilMs: number;
+  sampleReason?: string;
+};
+
+const execRetryBrake = new Map<string, RetryBrakeEntry>();
 
 type PtyExitEvent = { exitCode: number; signal?: number };
 type PtyListener<T> = (event: T) => void;
@@ -422,6 +463,104 @@ function parseLeadingToken(command: string): string | null {
 
 function isComplexShellCommand(command: string): boolean {
   return SHELL_COMPLEXITY_PATTERN.test(command);
+}
+
+function isLikelyHeavyExecCommand(command: string): boolean {
+  const verb = parseLeadingToken(command);
+  const normalized = command.trim();
+  if (!verb || !normalized) return false;
+  if (HEAVY_AUTO_BACKGROUND_BINS.has(verb)) {
+    return true;
+  }
+  if (
+    (verb === "bash" || verb === "zsh" || verb === "sh") &&
+    HEAVY_AUTO_BACKGROUND_KEYWORD_PATTERN.test(normalized)
+  ) {
+    return true;
+  }
+  if (HEAVY_AUTO_BACKGROUND_KEYWORD_PATTERN.test(normalized) && normalized.length >= 180) {
+    return true;
+  }
+  if (normalized.length >= 1200 && isComplexShellCommand(normalized)) {
+    return true;
+  }
+  return false;
+}
+
+function normalizeCommandFingerprint(command: string): string {
+  return command.trim().toLowerCase().replace(/\s+/g, " ").slice(0, 512);
+}
+
+function classifyRetryBrakeFailure(reason: string | undefined): RetryBrakeFailureClass | null {
+  if (!reason) return null;
+  const text = reason.toLowerCase();
+  if (text.includes("timed out")) return "timeout";
+  if (text.includes("sigkill") || text.includes("killed by signal") || text.includes("code 137")) {
+    return "resource_kill";
+  }
+  if (text.includes("path not found:") || text.includes("no such file or directory")) {
+    return "path_missing";
+  }
+  return null;
+}
+
+function checkExecRetryBrake(
+  command: string,
+  nowMs = Date.now(),
+): {
+  blocked: boolean;
+  waitMs: number;
+  failureClass?: RetryBrakeFailureClass;
+  sampleReason?: string;
+} {
+  const key = normalizeCommandFingerprint(command);
+  if (!key) return { blocked: false, waitMs: 0 };
+  const entry = execRetryBrake.get(key);
+  if (!entry) return { blocked: false, waitMs: 0 };
+  if (entry.cooldownUntilMs <= nowMs) {
+    if (nowMs - entry.lastFailureAt > EXEC_RETRY_BRAKE_WINDOW_MS) {
+      execRetryBrake.delete(key);
+    }
+    return { blocked: false, waitMs: 0 };
+  }
+  return {
+    blocked: true,
+    waitMs: entry.cooldownUntilMs - nowMs,
+    failureClass: entry.failureClass,
+    sampleReason: entry.sampleReason,
+  };
+}
+
+function recordExecRetryBrakeFailure(
+  command: string,
+  reason: string | undefined,
+  nowMs = Date.now(),
+): void {
+  const failureClass = classifyRetryBrakeFailure(reason);
+  if (!failureClass) return;
+  const key = normalizeCommandFingerprint(command);
+  if (!key) return;
+  const previous = execRetryBrake.get(key);
+  const withinWindow =
+    previous &&
+    previous.failureClass === failureClass &&
+    nowMs - previous.lastFailureAt <= EXEC_RETRY_BRAKE_WINDOW_MS;
+  const consecutive = withinWindow ? previous.consecutive + 1 : 1;
+  const cooldownUntilMs =
+    consecutive >= EXEC_RETRY_BRAKE_THRESHOLD ? nowMs + EXEC_RETRY_BRAKE_COOLDOWN_MS : 0;
+  execRetryBrake.set(key, {
+    failureClass,
+    consecutive,
+    lastFailureAt: nowMs,
+    cooldownUntilMs,
+    sampleReason: reason,
+  });
+}
+
+function clearExecRetryBrake(command: string): void {
+  const key = normalizeCommandFingerprint(command);
+  if (!key) return;
+  execRetryBrake.delete(key);
 }
 
 function collectQuotedAbsolutePathMatches(command: string): QuotedAbsolutePathMatch[] {
@@ -1162,6 +1301,15 @@ export function createExecTool(
       }
       const repairedCommand = repairExecCommandUnicodeSpacePaths(params.command);
       const command = repairedCommand.command;
+      const retryBrake = checkExecRetryBrake(command);
+      if (retryBrake.blocked) {
+        const waitSeconds = Math.max(1, Math.ceil(retryBrake.waitMs / 1000));
+        const failureClass = retryBrake.failureClass ?? "recent";
+        throw new Error(
+          `Exec retry brake active for this command (${failureClass}) for ${waitSeconds}s. ` +
+            "Adjust command scope or timeout/memoryLimitMB before retrying.",
+        );
+      }
 
       // Memory limit: explicit param overrides config default. 0 = disabled.
       const effectiveMemoryLimitMB =
@@ -1174,11 +1322,21 @@ export function createExecTool(
       const warnings: string[] = [...repairedCommand.warnings];
       const backgroundRequested = params.background === true;
       const yieldRequested = typeof params.yieldMs === "number";
+      const autoBackgroundRequested =
+        allowBackground &&
+        !backgroundRequested &&
+        !yieldRequested &&
+        isLikelyHeavyExecCommand(command);
+      if (autoBackgroundRequested) {
+        warnings.push(
+          "Auto-background enabled: heavy command detected; follow with process poll/log for progress.",
+        );
+      }
       if (!allowBackground && (backgroundRequested || yieldRequested)) {
         warnings.push("Warning: background execution is disabled; running synchronously.");
       }
       const yieldWindow = allowBackground
-        ? backgroundRequested
+        ? backgroundRequested || autoBackgroundRequested
           ? 0
           : clampNumber(params.yieldMs ?? defaultBackgroundMs, defaultBackgroundMs, 10, 120_000)
         : null;
@@ -1833,6 +1991,11 @@ export function createExecTool(
             if (runningTimer) {
               clearTimeout(runningTimer);
             }
+            if (outcome.status === "completed") {
+              clearExecRetryBrake(commandText);
+            } else {
+              recordExecRetryBrakeFailure(commandText, outcome.reason);
+            }
             const output = normalizeNotifyOutput(
               tail(outcome.aggregated || "", DEFAULT_NOTIFY_TAIL_CHARS),
             );
@@ -1993,9 +2156,11 @@ export function createExecTool(
               return;
             }
             if (outcome.status === "failed") {
+              recordExecRetryBrakeFailure(command, outcome.reason);
               reject(new Error(outcome.reason ?? "Command failed."));
               return;
             }
+            clearExecRetryBrake(command);
             resolve({
               content: [
                 {
@@ -2020,6 +2185,7 @@ export function createExecTool(
             if (yielded || run.session.backgrounded) {
               return;
             }
+            recordExecRetryBrakeFailure(command, String(err));
             reject(err as Error);
           });
       });
