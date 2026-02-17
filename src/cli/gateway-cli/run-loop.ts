@@ -5,6 +5,7 @@ import {
   consumeGatewaySigusr1RestartAuthorization,
   isGatewaySigusr1RestartExternallyAllowed,
 } from "../../infra/restart.js";
+import { recordRuntimeTelemetryEvent } from "../../infra/runtime-telemetry.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 
 const gatewayLog = createSubsystemLogger("gateway");
@@ -34,6 +35,17 @@ export async function runGatewayLoop(params: {
     shuttingDown = true;
     const isRestart = action === "restart";
     gatewayLog.info(`received ${signal}; ${isRestart ? "restarting" : "shutting down"}`);
+    recordRuntimeTelemetryEvent({
+      event: "gateway.signal",
+      subsystem: "gateway",
+      severity: signal === "SIGTERM" || signal === "SIGINT" ? "warning" : "info",
+      status: signal === "SIGTERM" || signal === "SIGINT" ? "degraded" : "ok",
+      details: {
+        signal,
+        action,
+        restart: isRestart,
+      },
+    });
 
     const forceExitTimer = setTimeout(() => {
       gatewayLog.error("shutdown timed out; exiting without full cleanup");

@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import type { ThinkLevel } from "../../auto-reply/thinking.js";
 import type { RunEmbeddedPiAgentParams } from "./run/params.js";
 import type { EmbeddedPiAgentMeta, EmbeddedPiRunResult } from "./types.js";
+import { recordRuntimeTelemetryEvent } from "../../infra/runtime-telemetry.js";
 import { enqueueCommandInLane } from "../../process/command-queue.js";
 import { resolveUserPath } from "../../utils.js";
 import { isMarkdownCapableMessageChannel } from "../../utils/message-channel.js";
@@ -644,6 +645,21 @@ export async function runEmbeddedPiAgent(
                 timedOut || assistantFailoverReason === "timeout"
                   ? "timeout"
                   : (assistantFailoverReason ?? "unknown");
+              recordRuntimeTelemetryEvent({
+                event: timedOut ? "agent.profile_timeout" : "agent.profile_failover",
+                subsystem: "agent-embedded",
+                severity: reason === "rate_limit" || reason === "timeout" ? "warning" : "info",
+                status: reason === "rate_limit" || reason === "timeout" ? "degraded" : "ok",
+                details: {
+                  provider,
+                  model: modelId,
+                  profileId: lastProfileId,
+                  reason,
+                  timedOut,
+                  runId: params.runId,
+                  sessionId: params.sessionId,
+                },
+              });
               await markAuthProfileFailure({
                 store: authStore,
                 profileId: lastProfileId,

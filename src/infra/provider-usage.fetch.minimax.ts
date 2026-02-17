@@ -1,6 +1,7 @@
 import type { ProviderUsageSnapshot, UsageWindow } from "./provider-usage.types.js";
 import { fetchJson } from "./provider-usage.fetch.shared.js";
 import { clampPercent, PROVIDER_LABELS } from "./provider-usage.shared.js";
+import { recordRuntimeTelemetryEvent } from "./runtime-telemetry.js";
 
 type MinimaxBaseResp = {
   status_code?: number;
@@ -307,6 +308,22 @@ function deriveUsedPercent(payload: Record<string, unknown>): number | null {
   return fromCounts;
 }
 
+function firstHeader(headers: Headers, keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = headers.get(key);
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return undefined;
+}
+
+function toNumber(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
 export async function fetchMinimaxUsage(
   apiKey: string,
   timeoutMs: number,
@@ -327,6 +344,23 @@ export async function fetchMinimaxUsage(
   );
 
   if (!res.ok) {
+    recordRuntimeTelemetryEvent({
+      event: "minimax.usage_probe",
+      subsystem: "provider-usage",
+      severity: "warning",
+      status: "failed",
+      details: {
+        provider: "minimax",
+        httpStatus: res.status,
+        retryAfter: firstHeader(res.headers, ["retry-after"]),
+        rateLimitLimit: firstHeader(res.headers, ["x-ratelimit-limit", "ratelimit-limit"]),
+        rateLimitRemaining: firstHeader(res.headers, [
+          "x-ratelimit-remaining",
+          "ratelimit-remaining",
+        ]),
+        rateLimitReset: firstHeader(res.headers, ["x-ratelimit-reset", "ratelimit-reset"]),
+      },
+    });
     return {
       provider: "minimax",
       displayName: PROVIDER_LABELS.minimax,
@@ -347,6 +381,18 @@ export async function fetchMinimaxUsage(
 
   const baseResp = isRecord(data.base_resp) ? data.base_resp : undefined;
   if (baseResp && typeof baseResp.status_code === "number" && baseResp.status_code !== 0) {
+    recordRuntimeTelemetryEvent({
+      event: "minimax.usage_probe",
+      subsystem: "provider-usage",
+      severity: "warning",
+      status: "failed",
+      details: {
+        provider: "minimax",
+        httpStatus: res.status,
+        apiStatusCode: baseResp.status_code,
+        apiStatusMessage: baseResp.status_msg?.trim() || "",
+      },
+    });
     return {
       provider: "minimax",
       displayName: PROVIDER_LABELS.minimax,
@@ -371,6 +417,17 @@ export async function fetchMinimaxUsage(
     usedPercent = deriveUsedPercent(payload);
   }
   if (usedPercent === null) {
+    recordRuntimeTelemetryEvent({
+      event: "minimax.usage_probe",
+      subsystem: "provider-usage",
+      severity: "warning",
+      status: "failed",
+      details: {
+        provider: "minimax",
+        httpStatus: res.status,
+        reason: "unsupported_response_shape",
+      },
+    });
     return {
       provider: "minimax",
       displayName: PROVIDER_LABELS.minimax,
@@ -391,6 +448,31 @@ export async function fetchMinimaxUsage(
       resetAt,
     },
   ];
+
+  const rateLimitLimitRaw = firstHeader(res.headers, ["x-ratelimit-limit", "ratelimit-limit"]);
+  const rateLimitRemainingRaw = firstHeader(res.headers, [
+    "x-ratelimit-remaining",
+    "ratelimit-remaining",
+  ]);
+  const rateLimitResetRaw = firstHeader(res.headers, ["x-ratelimit-reset", "ratelimit-reset"]);
+  const retryAfterRaw = firstHeader(res.headers, ["retry-after"]);
+  recordRuntimeTelemetryEvent({
+    event: "minimax.usage_probe",
+    subsystem: "provider-usage",
+    severity: "info",
+    status: "ok",
+    details: {
+      provider: "minimax",
+      httpStatus: res.status,
+      usedPercent,
+      resetAt,
+      plan: pickString(usageRecord, PLAN_KEYS) ?? pickString(payload, PLAN_KEYS) ?? null,
+      rateLimitLimit: toNumber(rateLimitLimitRaw) ?? rateLimitLimitRaw ?? null,
+      rateLimitRemaining: toNumber(rateLimitRemainingRaw) ?? rateLimitRemainingRaw ?? null,
+      rateLimitReset: toNumber(rateLimitResetRaw) ?? rateLimitResetRaw ?? null,
+      retryAfter: toNumber(retryAfterRaw) ?? retryAfterRaw ?? null,
+    },
+  });
 
   return {
     provider: "minimax",

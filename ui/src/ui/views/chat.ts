@@ -147,6 +147,15 @@ function getSlashSuggestions(draft: string, commands: SlashCommand[]) {
   return { active: matches.length > 0, items: matches };
 }
 
+function formatQueuedPreview(item: ChatQueueItem) {
+  const normalized = item.text.replace(/\s+/g, " ").trim();
+  if (normalized.length > 0) {
+    return normalized;
+  }
+  const count = item.attachments?.length ?? 0;
+  return count > 0 ? `Image (${count})` : "(empty)";
+}
+
 function handlePaste(e: ClipboardEvent, props: ChatProps) {
   const items = e.clipboardData?.items;
   if (!items || !props.onAttachmentsChange) {
@@ -264,7 +273,9 @@ export function renderChat(props: ChatProps) {
   const composePlaceholder = props.connected
     ? hasAttachments
       ? "Add a message or paste more images..."
-      : "Message (↩ to send, Shift+↩ for line breaks, paste images)"
+      : isBusy
+        ? "Message (↩/Tab to queue, Shift+↩ for line breaks, paste images)"
+        : "Message (↩ to send, Shift+↩ for line breaks, paste images)"
     : "Connect to the gateway to start chatting…";
 
   const splitRatio = props.splitRatio ?? 0.6;
@@ -384,10 +395,7 @@ export function renderChat(props: ChatProps) {
                   (item) => html`
                     <div class="chat-queue__item">
                       <div class="chat-queue__text">
-                        ${
-                          item.text ||
-                          (item.attachments?.length ? `Image (${item.attachments.length})` : "")
-                        }
+                        ${formatQueuedPreview(item)}
                       </div>
                       <button
                         class="btn chat-queue__remove"
@@ -526,6 +534,22 @@ export function renderChat(props: ChatProps) {
                   }
                 }
                 if (e.key !== "Enter") {
+                  if (
+                    e.key === "Tab" &&
+                    !e.shiftKey &&
+                    !e.altKey &&
+                    !e.metaKey &&
+                    !e.ctrlKey &&
+                    isBusy
+                  ) {
+                    const hasQueuedContent =
+                      props.draft.trim().length > 0 || (props.attachments?.length ?? 0) > 0;
+                    if (!hasQueuedContent || !props.connected) {
+                      return;
+                    }
+                    e.preventDefault();
+                    props.onSend();
+                  }
                   return;
                 }
                 if (e.isComposing || e.keyCode === 229) {

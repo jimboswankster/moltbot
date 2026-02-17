@@ -3,6 +3,7 @@ import { getLogger } from "../logging.js";
 import { ignoreCiaoCancellationRejection } from "./bonjour-ciao.js";
 import { formatBonjourError } from "./bonjour-errors.js";
 import { isTruthyEnvValue } from "./env.js";
+import { recordRuntimeTelemetryEvent } from "./runtime-telemetry.js";
 import { registerUnhandledRejectionHandler } from "./unhandled-rejections.js";
 
 export type GatewayBonjourAdvertiser = {
@@ -177,12 +178,34 @@ export async function startGatewayBonjourAdvertiser(
       svc.on("name-change", (name: unknown) => {
         const next = typeof name === "string" ? name : String(name);
         logWarn(`bonjour: ${label} name conflict resolved; newName=${JSON.stringify(next)}`);
+        recordRuntimeTelemetryEvent({
+          event: "gateway.bonjour_conflict",
+          subsystem: "gateway-discovery",
+          severity: "warning",
+          status: "degraded",
+          details: {
+            label,
+            conflictType: "name-change",
+            value: next,
+          },
+        });
       });
       svc.on("hostname-change", (nextHostname: unknown) => {
         const next = typeof nextHostname === "string" ? nextHostname : String(nextHostname);
         logWarn(
           `bonjour: ${label} hostname conflict resolved; newHostname=${JSON.stringify(next)}`,
         );
+        recordRuntimeTelemetryEvent({
+          event: "gateway.bonjour_conflict",
+          subsystem: "gateway-discovery",
+          severity: "warning",
+          status: "degraded",
+          details: {
+            label,
+            conflictType: "hostname-change",
+            value: next,
+          },
+        });
       });
     } catch (err) {
       logDebug(`bonjour: failed to attach listeners for ${label}: ${String(err)}`);
@@ -244,16 +267,48 @@ export async function startGatewayBonjourAdvertiser(
           svc,
         )})`,
       );
+      recordRuntimeTelemetryEvent({
+        event: "gateway.bonjour_watchdog_reannounce",
+        subsystem: "gateway-discovery",
+        severity: "warning",
+        status: "degraded",
+        details: {
+          label,
+          summary: serviceSummary(label, svc),
+        },
+      });
       try {
         void svc.advertise().catch((err) => {
           logWarn(
             `bonjour: watchdog advertise failed (${serviceSummary(label, svc)}): ${formatBonjourError(err)}`,
           );
+          recordRuntimeTelemetryEvent({
+            event: "gateway.bonjour_watchdog_reannounce_failed",
+            subsystem: "gateway-discovery",
+            severity: "error",
+            status: "failed",
+            details: {
+              label,
+              summary: serviceSummary(label, svc),
+              error: formatBonjourError(err),
+            },
+          });
         });
       } catch (err) {
         logWarn(
           `bonjour: watchdog advertise threw (${serviceSummary(label, svc)}): ${formatBonjourError(err)}`,
         );
+        recordRuntimeTelemetryEvent({
+          event: "gateway.bonjour_watchdog_reannounce_failed",
+          subsystem: "gateway-discovery",
+          severity: "error",
+          status: "failed",
+          details: {
+            label,
+            summary: serviceSummary(label, svc),
+            error: formatBonjourError(err),
+          },
+        });
       }
     }
   }, 60_000);

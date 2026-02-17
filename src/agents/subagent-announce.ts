@@ -9,6 +9,7 @@ import {
   resolveStorePath,
 } from "../config/sessions.js";
 import { callGateway } from "../gateway/call.js";
+import { recordRuntimeTelemetryEvent } from "../infra/runtime-telemetry.js";
 import { normalizeMainKey } from "../routing/session-key.js";
 import { defaultRuntime } from "../runtime.js";
 import {
@@ -83,6 +84,17 @@ export async function fireDeskAnnounce(params: {
   outcome?: { status: string; error?: string };
 }): Promise<boolean> {
   if (!deskAnnounceHandler) {
+    recordRuntimeTelemetryEvent({
+      event: "switchboard.desk_announce_handler_missing",
+      subsystem: "switchboard",
+      severity: "warning",
+      status: "degraded",
+      details: {
+        requesterSessionKey: params.requesterSessionKey,
+        childSessionKey: params.childSessionKey,
+        childRunId: params.childRunId,
+      },
+    });
     return false;
   }
 
@@ -94,6 +106,18 @@ export async function fireDeskAnnounce(params: {
     deskFailureWindowStart = now;
   }
   if (deskFailureCount >= DESK_FAILURE_THRESHOLD) {
+    recordRuntimeTelemetryEvent({
+      event: "switchboard.desk_announce_circuit_open",
+      subsystem: "switchboard",
+      severity: "warning",
+      status: "degraded",
+      details: {
+        deskFailureCount,
+        threshold: DESK_FAILURE_THRESHOLD,
+        windowMs: DESK_FAILURE_WINDOW_MS,
+        requesterSessionKey: params.requesterSessionKey,
+      },
+    });
     return false;
   }
 
@@ -101,11 +125,36 @@ export async function fireDeskAnnounce(params: {
     const result = await deskAnnounceHandler(params);
     if (!result) {
       deskFailureCount++;
+      recordRuntimeTelemetryEvent({
+        event: "switchboard.desk_announce_failed",
+        subsystem: "switchboard",
+        severity: "error",
+        status: "failed",
+        details: {
+          reason: "handler_returned_false",
+          requesterSessionKey: params.requesterSessionKey,
+          childSessionKey: params.childSessionKey,
+          childRunId: params.childRunId,
+        },
+      });
       return false;
     }
     return true;
-  } catch {
+  } catch (err) {
     deskFailureCount++;
+    recordRuntimeTelemetryEvent({
+      event: "switchboard.desk_announce_failed",
+      subsystem: "switchboard",
+      severity: "error",
+      status: "failed",
+      details: {
+        reason: "handler_threw",
+        error: err instanceof Error ? err.message : String(err),
+        requesterSessionKey: params.requesterSessionKey,
+        childSessionKey: params.childSessionKey,
+        childRunId: params.childRunId,
+      },
+    });
     return false;
   }
 }

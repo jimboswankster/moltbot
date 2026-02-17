@@ -188,11 +188,8 @@ export async function handleSendChat(
   }
 
   if (isChatBusy(host)) {
-    const aborted = await abortChatRun(host as unknown as OpenClawApp);
-    if (!aborted) {
-      enqueueChatMessage(host, message, attachmentsToSend, refreshSessions);
-      return;
-    }
+    enqueueChatMessage(host, message, attachmentsToSend, refreshSessions);
+    return;
   }
 
   await sendChatMessageNow(host, message, {
