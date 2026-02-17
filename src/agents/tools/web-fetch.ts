@@ -402,6 +402,8 @@ async function runWebFetch(params: {
   const tacHit = await readFromToolArtifactCache({
     toolName: "web_fetch",
     cacheParams: { legacyKey: cacheKey },
+    provider: params.policyProvider ?? "http",
+    model: params.policyModel,
   });
   if (tacHit) {
     return withCacheMeta({ ...(tacHit.value as Record<string, unknown>) }, "hit", "tac");

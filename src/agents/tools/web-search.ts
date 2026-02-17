@@ -543,6 +543,8 @@ async function runWebSearch(params: {
   const tacHit = await readFromToolArtifactCache({
     toolName: "web_search",
     cacheParams: { legacyKey: cacheKey },
+    provider: params.policyProvider ?? params.provider,
+    model: params.policyModel,
   });
   if (tacHit) {
     return withCacheMeta({ ...(tacHit.value as Record<string, unknown>) }, "hit", "tac");

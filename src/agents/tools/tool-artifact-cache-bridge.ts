@@ -1,3 +1,4 @@
+import fsPromises from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -20,6 +21,14 @@ type BridgeState = {
 };
 
 const statePromise: Promise<BridgeState> = initBridge();
+
+type TacOutcomeInput = {
+  toolName: string;
+  operation: "read" | "write";
+  outcome: "hit" | "miss" | "stored" | "policy_denied_or_rejected";
+  provider?: string;
+  model?: string;
+};
 
 function resolveDefaults() {
   const home = process.env.HOME || "";
@@ -51,6 +60,46 @@ function parseEnabled(raw: string | undefined): boolean {
 function parseMode(raw: string | undefined): Mode {
   const value = (raw || "").trim().toLowerCase();
   return value === "primary" ? "primary" : "shadow";
+}
+
+function resolveTelemetryEventsPath(): string | null {
+  const explicitPath = process.env.OPENCLAW_TOOL_TELEMETRY_EVENTS_PATH?.trim();
+  if (explicitPath) {
+    return explicitPath;
+  }
+  const workspaceDir = process.env.OPENCLAW_WORKSPACE_DIR?.trim();
+  if (!workspaceDir) {
+    return null;
+  }
+  const day = new Date().toISOString().slice(0, 10);
+  return path.join(
+    workspaceDir,
+    "os",
+    "audits",
+    "tool-telemetry",
+    "events",
+    `tool-telemetry-${day}.jsonl`,
+  );
+}
+
+function emitTacOutcome(input: TacOutcomeInput): void {
+  const outPath = resolveTelemetryEventsPath();
+  if (!outPath) return;
+  const record = {
+    ts: new Date().toISOString(),
+    hook: "tool_artifact_cache_outcome",
+    toolName: input.toolName,
+    operation: input.operation,
+    cacheOutcome: input.outcome,
+    provider: input.provider,
+    model: input.model,
+  };
+  void fsPromises
+    .mkdir(path.dirname(outPath), { recursive: true })
+    .then(() => fsPromises.appendFile(outPath, `${JSON.stringify(record)}\n`, "utf8"))
+    .catch(() => {
+      // Fail-open: cache bridge should not fail tool execution on telemetry writes.
+    });
 }
 
 async function initBridge(): Promise<BridgeState> {
@@ -108,6 +157,8 @@ async function initBridge(): Promise<BridgeState> {
 export async function readFromToolArtifactCache(input: {
   toolName: string;
   cacheParams: Record<string, unknown>;
+  provider?: string;
+  model?: string;
 }): Promise<{ value: Record<string, unknown>; cacheKey: string } | null> {
   const state = await statePromise;
   if (!state.enabled || !state.cache || state.mode !== "primary") {
@@ -122,8 +173,22 @@ export async function readFromToolArtifactCache(input: {
   const hit = state.cache.get(cacheKey);
   const value = (hit?.payloadRef as Record<string, unknown> | undefined) ?? null;
   if (!value) {
+    emitTacOutcome({
+      toolName: input.toolName,
+      operation: "read",
+      outcome: "miss",
+      provider: input.provider,
+      model: input.model,
+    });
     return null;
   }
+  emitTacOutcome({
+    toolName: input.toolName,
+    operation: "read",
+    outcome: "hit",
+    provider: input.provider,
+    model: input.model,
+  });
   return { value, cacheKey };
 }
 
@@ -154,7 +219,7 @@ export async function writeToToolArtifactCache(input: {
   const expiresAt =
     typeof input.ttlMs === "number" && input.ttlMs > 0 ? now + input.ttlMs : undefined;
 
-  state.cache.set({
+  const writeResult = state.cache.set({
     cacheKey,
     toolName: input.toolName,
     provider: input.provider,
@@ -166,5 +231,12 @@ export async function writeToToolArtifactCache(input: {
     providerHints: input.providerHints,
     estimatedChars: JSON.stringify(input.value).length,
     expiresAt,
+  });
+  emitTacOutcome({
+    toolName: input.toolName,
+    operation: "write",
+    outcome: writeResult ? "stored" : "policy_denied_or_rejected",
+    provider: input.provider,
+    model: input.model,
   });
 }
