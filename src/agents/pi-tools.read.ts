@@ -14,23 +14,26 @@ type ToolContentBlock = AgentToolResult<unknown>["content"][number];
 type ImageContentBlock = Extract<ToolContentBlock, { type: "image" }>;
 type TextContentBlock = Extract<ToolContentBlock, { type: "text" }>;
 
-async function sniffMimeFromBase64(base64: string): Promise<string | undefined> {
+async function sniffMimeFromBase64(base64: string): Promise<{
+  mimeType?: string;
+  decodeFailed?: boolean;
+}> {
   const trimmed = base64.trim();
   if (!trimmed) {
-    return undefined;
+    return {};
   }
 
   const take = Math.min(256, trimmed.length);
   const sliceLen = take - (take % 4);
   if (sliceLen < 8) {
-    return undefined;
+    return {};
   }
 
   try {
     const head = Buffer.from(trimmed.slice(0, sliceLen), "base64");
-    return await detectMime({ buffer: head });
+    return { mimeType: await detectMime({ buffer: head }) };
   } catch {
-    return undefined;
+    return { decodeFailed: true };
   }
 }
 
@@ -45,7 +48,11 @@ function rewriteReadImageHeader(text: string, mimeType: string): string {
 async function normalizeReadImageResult(
   result: AgentToolResult<unknown>,
   filePath: string,
-): Promise<AgentToolResult<unknown>> {
+): Promise<{
+  result: AgentToolResult<unknown>;
+  diagnostics: Array<{ code: string; message: string }>;
+}> {
+  const diagnostics: Array<{ code: string; message: string }> = [];
   const content = Array.isArray(result.content) ? result.content : [];
 
   const image = content.find(
@@ -57,16 +64,23 @@ async function normalizeReadImageResult(
       typeof (b as { mimeType?: unknown }).mimeType === "string",
   );
   if (!image) {
-    return result;
+    return { result, diagnostics };
   }
 
   if (!image.data.trim()) {
     throw new Error(`read: image payload is empty (${filePath})`);
   }
 
-  const sniffed = await sniffMimeFromBase64(image.data);
+  const sniff = await sniffMimeFromBase64(image.data);
+  if (sniff.decodeFailed) {
+    diagnostics.push({
+      code: "read_mime_sniff_failed",
+      message: `read: failed to decode image header for MIME sniff (${filePath})`,
+    });
+  }
+  const sniffed = sniff.mimeType;
   if (!sniffed) {
-    return result;
+    return { result, diagnostics };
   }
 
   if (!sniffed.startsWith("image/")) {
@@ -76,7 +90,7 @@ async function normalizeReadImageResult(
   }
 
   if (sniffed === image.mimeType) {
-    return result;
+    return { result, diagnostics };
   }
 
   const nextContent = content.map((block) => {
@@ -99,7 +113,7 @@ async function normalizeReadImageResult(
     return block;
   });
 
-  return { ...result, content: nextContent };
+  return { result: { ...result, content: nextContent }, diagnostics };
 }
 
 type RequiredParamGroup = {
@@ -346,23 +360,31 @@ export function createSandboxedEditTool(root: string) {
 async function resolveReadSnapshot(
   filePath: string,
   workspaceRoot?: string,
-): Promise<
-  | {
-      path: string;
-      resolvedPath: string;
-      sizeBytes: number;
-      mtimeMs: number;
-      snapshotKey: string;
-    }
-  | undefined
-> {
+): Promise<{
+  snapshot?: {
+    path: string;
+    resolvedPath: string;
+    sizeBytes: number;
+    mtimeMs: number;
+    snapshotKey: string;
+  };
+  diagnostic?: {
+    code: string;
+    message: string;
+  };
+}> {
   const resolvedPath = path.isAbsolute(filePath)
     ? filePath
     : path.resolve(workspaceRoot ?? process.cwd(), filePath);
   try {
     const stat = await fs.stat(resolvedPath);
     if (!stat.isFile()) {
-      return undefined;
+      return {
+        diagnostic: {
+          code: "read_snapshot_unavailable",
+          message: `read: snapshot unavailable because path is not a file (${filePath})`,
+        },
+      };
     }
     const snapshotKey = crypto
       .createHash("sha256")
@@ -374,14 +396,22 @@ async function resolveReadSnapshot(
       .digest("hex")
       .slice(0, 16);
     return {
-      path: filePath,
-      resolvedPath,
-      sizeBytes: stat.size,
-      mtimeMs: stat.mtimeMs,
-      snapshotKey,
+      snapshot: {
+        path: filePath,
+        resolvedPath,
+        sizeBytes: stat.size,
+        mtimeMs: stat.mtimeMs,
+        snapshotKey,
+      },
     };
-  } catch {
-    return undefined;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      diagnostic: {
+        code: "read_snapshot_unavailable",
+        message: `read: snapshot unavailable (${filePath}): ${message}`,
+      },
+    };
   }
 }
 
@@ -402,12 +432,21 @@ export function createOpenClawReadTool(
         assertRequiredParams(record, CLAUDE_PARAM_GROUPS.read, base.name);
         const result = await base.execute(toolCallId, normalized ?? params, signal);
         const filePath = typeof record?.path === "string" ? String(record.path) : "<unknown>";
-        const normalizedResult = await normalizeReadImageResult(result, filePath);
-        const sanitized = await sanitizeToolResultImages(normalizedResult, `read:${filePath}`);
-        const snapshot = await resolveReadSnapshot(filePath, opts?.workspaceRoot);
-        if (!snapshot) {
-          return sanitized;
+        const diagnostics: Array<{ code: string; message: string }> = [];
+        const normalizedRead = await normalizeReadImageResult(result, filePath);
+        diagnostics.push(...normalizedRead.diagnostics);
+        const sanitized = await sanitizeToolResultImages(
+          normalizedRead.result,
+          `read:${filePath}`,
+          {
+            diagnostics,
+          },
+        );
+        const snapshotRes = await resolveReadSnapshot(filePath, opts?.workspaceRoot);
+        if (snapshotRes?.diagnostic) {
+          diagnostics.push(snapshotRes.diagnostic);
         }
+        const snapshot = snapshotRes?.snapshot;
         const details =
           sanitized &&
           typeof sanitized === "object" &&
@@ -417,12 +456,18 @@ export function createOpenClawReadTool(
                 unknown
               >)
             : {};
+        const nextDetails: Record<string, unknown> = {
+          ...details,
+        };
+        if (snapshot) {
+          nextDetails.readSnapshot = snapshot;
+        }
+        if (diagnostics.length > 0) {
+          nextDetails.readDiagnostics = diagnostics;
+        }
         return {
           ...sanitized,
-          details: {
-            ...details,
-            readSnapshot: snapshot,
-          },
+          details: nextDetails,
         };
       } catch (err) {
         throw enhanceFsError(

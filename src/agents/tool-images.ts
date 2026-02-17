@@ -6,6 +6,14 @@ import { getImageMetadata, resizeToJpeg } from "../media/image-ops.js";
 type ToolContentBlock = AgentToolResult<unknown>["content"][number];
 type ImageContentBlock = Extract<ToolContentBlock, { type: "image" }>;
 type TextContentBlock = Extract<ToolContentBlock, { type: "text" }>;
+export type ToolImageSanitizeDiagnosticCode =
+  | "read_image_payload_omitted_empty"
+  | "read_image_payload_omitted_error";
+
+export type ToolImageSanitizeDiagnostic = {
+  code: ToolImageSanitizeDiagnosticCode;
+  message: string;
+};
 
 // Anthropic Messages API limitations (observed in OpenClaw sessions):
 // - Images over ~2000px per side can fail in multi-image requests.
@@ -148,7 +156,11 @@ async function resizeImageBase64IfNeeded(params: {
 export async function sanitizeContentBlocksImages(
   blocks: ToolContentBlock[],
   label: string,
-  opts: { maxDimensionPx?: number; maxBytes?: number } = {},
+  opts: {
+    maxDimensionPx?: number;
+    maxBytes?: number;
+    diagnostics?: Array<{ code: string; message: string }>;
+  } = {},
 ): Promise<ToolContentBlock[]> {
   const maxDimensionPx = Math.max(opts.maxDimensionPx ?? MAX_IMAGE_DIMENSION_PX, 1);
   const maxBytes = Math.max(opts.maxBytes ?? MAX_IMAGE_BYTES, 1);
@@ -162,6 +174,10 @@ export async function sanitizeContentBlocksImages(
 
     const data = block.data.trim();
     if (!data) {
+      opts.diagnostics?.push({
+        code: "read_image_payload_omitted_empty",
+        message: `[${label}] omitted empty image payload`,
+      });
       out.push({
         type: "text",
         text: `[${label}] omitted empty image payload`,
@@ -185,6 +201,10 @@ export async function sanitizeContentBlocksImages(
         mimeType: resized.resized ? resized.mimeType : mimeType,
       });
     } catch (err) {
+      opts.diagnostics?.push({
+        code: "read_image_payload_omitted_error",
+        message: `[${label}] omitted image payload: ${String(err)}`,
+      });
       out.push({
         type: "text",
         text: `[${label}] omitted image payload: ${String(err)}`,
@@ -211,7 +231,11 @@ export async function sanitizeImageBlocks(
 export async function sanitizeToolResultImages(
   result: AgentToolResult<unknown>,
   label: string,
-  opts: { maxDimensionPx?: number; maxBytes?: number } = {},
+  opts: {
+    maxDimensionPx?: number;
+    maxBytes?: number;
+    diagnostics?: Array<{ code: string; message: string }>;
+  } = {},
 ): Promise<AgentToolResult<unknown>> {
   const content = Array.isArray(result.content) ? result.content : [];
   if (!content.some((b) => isImageBlock(b) || isTextBlock(b))) {
