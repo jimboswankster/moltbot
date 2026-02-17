@@ -586,6 +586,7 @@ type DeferredExecTelemetryInput = {
   host: ExecHost;
   command: string;
   status: "completed" | "failed";
+  rolloutPlane?: string;
   sessionKey?: string;
   agentId?: string;
   approvalId?: string;
@@ -594,6 +595,26 @@ type DeferredExecTelemetryInput = {
   durationMs?: number;
   exitCode?: number | null;
 };
+
+function resolveExecRolloutPlane(): string {
+  const raw = process.env.OPENCLAW_EXEC_ROLLOUT_PLANE?.trim().toLowerCase();
+  if (raw === "primary" || raw === "shadow") {
+    return raw;
+  }
+  return "shadow";
+}
+
+function classifyDeferredExecReason(reason: string | undefined): string | undefined {
+  if (!reason) return undefined;
+  const text = reason.toLowerCase();
+  if (text.includes("killed by signal sigkill")) return "resource_kill";
+  if (text.includes("timed out")) return "timeout";
+  if (text.includes("blocked:")) return "policy_block";
+  if (text.includes("command exited with code")) return "nonzero_exit";
+  if (text.includes("no such file or directory")) return "path_missing";
+  if (text.includes("sandbox")) return "sandbox_error";
+  return "other_exec";
+}
 
 function resolveDeferredTelemetryPath(): string | null {
   const explicitPath = process.env.OPENCLAW_TOOL_TELEMETRY_EVENTS_PATH?.trim();
@@ -625,6 +646,7 @@ function emitDeferredExecTelemetry(input: DeferredExecTelemetryInput): void {
     hook: "exec_deferred_outcome",
     toolName: "exec",
     host: input.host,
+    rolloutPlane: input.rolloutPlane ?? resolveExecRolloutPlane(),
     status: input.status,
     sessionKey: input.sessionKey,
     agentId: input.agentId,
@@ -633,6 +655,7 @@ function emitDeferredExecTelemetry(input: DeferredExecTelemetryInput): void {
     commandChars: input.command.length,
     commandPreview: truncateMiddle(input.command, 240),
     reason: input.reason,
+    errorClass: classifyDeferredExecReason(input.reason),
     durationMs: input.durationMs ?? null,
     exitCode: typeof input.exitCode === "number" ? input.exitCode : null,
   };
@@ -661,6 +684,15 @@ export function wrapWithMemoryLimit(command: string, limitMB: number | undefined
   const limitKB = limitMB * 1024;
   // Use subshell so ulimit only affects the child, not the parent shell.
   return `ulimit -v ${limitKB} 2>/dev/null; ${command}`;
+}
+
+function applyShellCompatPrefixes(command: string, shellPath: string): string {
+  const shellName = path.basename(shellPath).toLowerCase();
+  if (shellName === "zsh") {
+    // Prevent zsh "no matches found" hard-fail loops on unmatched globs.
+    return `setopt nonomatch 2>/dev/null; ${command}`;
+  }
+  return command;
 }
 
 async function runExecProcess(opts: {
@@ -727,6 +759,7 @@ async function runExecProcess(opts: {
     stdin = child.stdin;
   } else if (opts.usePty) {
     const { shell, args: shellArgs } = getShellConfig();
+    const shellCommand = applyShellCompatPrefixes(effectiveCommand, shell);
     try {
       const ptyModule = (await import("@lydell/node-pty")) as unknown as {
         spawn?: PtySpawn;
@@ -736,7 +769,7 @@ async function runExecProcess(opts: {
       if (!spawnPty) {
         throw new Error("PTY support is unavailable (node-pty spawn not found).");
       }
-      pty = spawnPty(shell, [...shellArgs, effectiveCommand], {
+      pty = spawnPty(shell, [...shellArgs, shellCommand], {
         cwd: opts.workdir,
         env: opts.env,
         name: process.env.TERM ?? "xterm-256color",
@@ -768,7 +801,7 @@ async function runExecProcess(opts: {
       logWarn(`exec: PTY spawn failed (${errText}); retrying without PTY for "${opts.command}".`);
       opts.warnings.push(warning);
       const { child: spawned } = await spawnWithFallback({
-        argv: [shell, ...shellArgs, effectiveCommand],
+        argv: [shell, ...shellArgs, shellCommand],
         options: {
           cwd: opts.workdir,
           env: opts.env,
@@ -794,8 +827,9 @@ async function runExecProcess(opts: {
     }
   } else {
     const { shell, args: shellArgs } = getShellConfig();
+    const shellCommand = applyShellCompatPrefixes(effectiveCommand, shell);
     const { child: spawned } = await spawnWithFallback({
-      argv: [shell, ...shellArgs, effectiveCommand],
+      argv: [shell, ...shellArgs, shellCommand],
       options: {
         cwd: opts.workdir,
         env: opts.env,
