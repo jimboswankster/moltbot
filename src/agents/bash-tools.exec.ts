@@ -159,8 +159,10 @@ const HEAVY_AUTO_BACKGROUND_KEYWORD_PATTERN =
 const EXEC_RETRY_BRAKE_WINDOW_MS = 10 * 60 * 1000;
 const EXEC_RETRY_BRAKE_COOLDOWN_MS = 5 * 60 * 1000;
 const EXEC_RETRY_BRAKE_THRESHOLD = 2;
+const EXEC_POLICY_MODE_VALUES = new Set(["off", "shadow", "enforce"]);
 
 type RetryBrakeFailureClass = "resource_kill" | "timeout" | "path_missing";
+type ExecPolicyMode = "off" | "shadow" | "enforce";
 type RetryBrakeEntry = {
   failureClass: RetryBrakeFailureClass;
   consecutive: number;
@@ -170,6 +172,21 @@ type RetryBrakeEntry = {
 };
 
 const execRetryBrake = new Map<string, RetryBrakeEntry>();
+
+function resolveExecPolicyMode(
+  preferred: ExecPolicyMode | undefined,
+  envKey: string,
+  fallback: ExecPolicyMode,
+): ExecPolicyMode {
+  if (preferred && EXEC_POLICY_MODE_VALUES.has(preferred)) {
+    return preferred;
+  }
+  const raw = process.env[envKey]?.trim().toLowerCase();
+  if (raw && EXEC_POLICY_MODE_VALUES.has(raw)) {
+    return raw as ExecPolicyMode;
+  }
+  return fallback;
+}
 
 type PtyExitEvent = { exitCode: number; signal?: number };
 type PtyListener<T> = (event: T) => void;
@@ -201,6 +218,22 @@ type ExecProcessOutcome = {
   reason?: string;
 };
 
+type ExecPolicyDiagnostics = {
+  autoBackground: {
+    mode: ExecPolicyMode;
+    heavyCandidate: boolean;
+    wouldBackground: boolean;
+    applied: boolean;
+  };
+  retryBrake: {
+    mode: ExecPolicyMode;
+    blocked: boolean;
+    enforced: boolean;
+    waitMs: number;
+    failureClass?: RetryBrakeFailureClass;
+  };
+};
+
 type ExecProcessHandle = {
   session: ProcessSession;
   startedAt: number;
@@ -230,6 +263,8 @@ export type ExecToolDefaults = {
   cwd?: string;
   /** Default memory limit (MB) for spawned processes. 0 = disabled. */
   memoryLimitMB?: number;
+  autoBackgroundMode?: ExecPolicyMode;
+  retryBrakeMode?: ExecPolicyMode;
 };
 
 export type { BashSandboxConfig } from "./bash-tools.shared.js";
@@ -306,6 +341,7 @@ export type ExecToolDetails =
       startedAt: number;
       cwd?: string;
       tail?: string;
+      policy?: ExecPolicyDiagnostics;
     }
   | {
       status: "completed" | "failed";
@@ -313,6 +349,7 @@ export type ExecToolDetails =
       durationMs: number;
       aggregated: string;
       cwd?: string;
+      policy?: ExecPolicyDiagnostics;
     }
   | {
       status: "approval-pending";
@@ -323,6 +360,7 @@ export type ExecToolDetails =
       command: string;
       cwd?: string;
       nodeId?: string;
+      policy?: ExecPolicyDiagnostics;
     };
 
 function normalizeExecHost(value?: string | null): ExecHost | null {
@@ -561,6 +599,10 @@ function clearExecRetryBrake(command: string): void {
   const key = normalizeCommandFingerprint(command);
   if (!key) return;
   execRetryBrake.delete(key);
+}
+
+export function resetExecRetryBrakeForTests(): void {
+  execRetryBrake.clear();
 }
 
 function collectQuotedAbsolutePathMatches(command: string): QuotedAbsolutePathMatch[] {
@@ -849,6 +891,7 @@ async function runExecProcess(opts: {
   sessionKey?: string;
   timeoutSec: number;
   memoryLimitMB?: number;
+  policyDiagnostics?: ExecPolicyDiagnostics;
   onUpdate?: (partialResult: AgentToolResult<ExecToolDetails>) => void;
 }): Promise<ExecProcessHandle> {
   const startedAt = Date.now();
@@ -1087,6 +1130,7 @@ async function runExecProcess(opts: {
         startedAt,
         cwd: session.cwd,
         tail: session.tail,
+        policy: opts.policyDiagnostics,
       },
     });
   };
@@ -1267,6 +1311,16 @@ export function createExecTool(
   const notifyOnExit = defaults?.notifyOnExit !== false;
   const notifySessionKey = defaults?.sessionKey?.trim() || undefined;
   const approvalRunningNoticeMs = resolveApprovalRunningNoticeMs(defaults?.approvalRunningNoticeMs);
+  const autoBackgroundMode = resolveExecPolicyMode(
+    defaults?.autoBackgroundMode,
+    "OPENCLAW_EXEC_AUTO_BACKGROUND_MODE",
+    "enforce",
+  );
+  const retryBrakeMode = resolveExecPolicyMode(
+    defaults?.retryBrakeMode,
+    "OPENCLAW_EXEC_RETRY_BRAKE_MODE",
+    "enforce",
+  );
   // Derive agentId only when sessionKey is an agent session key.
   const parsedAgentSession = parseAgentSessionKey(defaults?.sessionKey);
   const agentId =
@@ -1301,13 +1355,23 @@ export function createExecTool(
       }
       const repairedCommand = repairExecCommandUnicodeSpacePaths(params.command);
       const command = repairedCommand.command;
+      const warnings: string[] = [...repairedCommand.warnings];
       const retryBrake = checkExecRetryBrake(command);
-      if (retryBrake.blocked) {
+      const retryBrakeBlocked = retryBrake.blocked;
+      const retryBrakeEnforced = retryBrakeMode === "enforce" && retryBrakeBlocked;
+      if (retryBrakeEnforced) {
         const waitSeconds = Math.max(1, Math.ceil(retryBrake.waitMs / 1000));
         const failureClass = retryBrake.failureClass ?? "recent";
         throw new Error(
-          `Exec retry brake active for this command (${failureClass}) for ${waitSeconds}s. ` +
+          `blocked: exec retry brake active for this command (${failureClass}) for ${waitSeconds}s. ` +
             "Adjust command scope or timeout/memoryLimitMB before retrying.",
+        );
+      }
+      if (retryBrakeBlocked && retryBrakeMode === "shadow") {
+        const waitSeconds = Math.max(1, Math.ceil(retryBrake.waitMs / 1000));
+        const failureClass = retryBrake.failureClass ?? "recent";
+        warnings.push(
+          `Shadow retry-brake: would block this command (${failureClass}) for ${waitSeconds}s, but running for comparison telemetry.`,
         );
       }
 
@@ -1319,22 +1383,41 @@ export function createExecTool(
 
       const maxOutput = DEFAULT_MAX_OUTPUT;
       const pendingMaxOutput = DEFAULT_PENDING_MAX_OUTPUT;
-      const warnings: string[] = [...repairedCommand.warnings];
       const backgroundRequested = params.background === true;
       const yieldRequested = typeof params.yieldMs === "number";
+      const heavyCandidate = isLikelyHeavyExecCommand(command);
+      const autoBackgroundWouldBackground =
+        allowBackground && !backgroundRequested && !yieldRequested && heavyCandidate;
       const autoBackgroundRequested =
-        allowBackground &&
-        !backgroundRequested &&
-        !yieldRequested &&
-        isLikelyHeavyExecCommand(command);
-      if (autoBackgroundRequested) {
+        autoBackgroundMode === "enforce" && autoBackgroundWouldBackground;
+      if (autoBackgroundWouldBackground && autoBackgroundMode === "enforce") {
         warnings.push(
           "Auto-background enabled: heavy command detected; follow with process poll/log for progress.",
+        );
+      }
+      if (autoBackgroundWouldBackground && autoBackgroundMode === "shadow") {
+        warnings.push(
+          "Shadow auto-background: heavy command detected; would background in enforce mode.",
         );
       }
       if (!allowBackground && (backgroundRequested || yieldRequested)) {
         warnings.push("Warning: background execution is disabled; running synchronously.");
       }
+      const policyDiagnostics: ExecPolicyDiagnostics = {
+        autoBackground: {
+          mode: autoBackgroundMode,
+          heavyCandidate,
+          wouldBackground: autoBackgroundWouldBackground,
+          applied: autoBackgroundRequested,
+        },
+        retryBrake: {
+          mode: retryBrakeMode,
+          blocked: retryBrakeBlocked,
+          enforced: retryBrakeEnforced,
+          waitMs: retryBrake.waitMs,
+          failureClass: retryBrake.failureClass,
+        },
+      };
       const yieldWindow = allowBackground
         ? backgroundRequested || autoBackgroundRequested
           ? 0
@@ -1751,6 +1834,7 @@ export function createExecTool(
               command: commandText,
               cwd: workdir,
               nodeId,
+              policy: policyDiagnostics,
             },
           };
         }
@@ -1784,6 +1868,7 @@ export function createExecTool(
             durationMs: Date.now() - startedAt,
             aggregated: [stdout, stderr, errorText].filter(Boolean).join("\n"),
             cwd: workdir,
+            policy: policyDiagnostics,
           } satisfies ExecToolDetails,
         };
       }
@@ -2034,6 +2119,7 @@ export function createExecTool(
               host: "gateway",
               command,
               cwd: workdir,
+              policy: policyDiagnostics,
             },
           };
         }
@@ -2079,6 +2165,7 @@ export function createExecTool(
         sessionKey: notifySessionKey,
         timeoutSec: effectiveTimeout,
         memoryLimitMB: effectiveMemoryLimitMB,
+        policyDiagnostics,
         onUpdate,
       });
 
@@ -2117,6 +2204,7 @@ export function createExecTool(
               startedAt: run.startedAt,
               cwd: run.session.cwd,
               tail: run.session.tail,
+              policy: policyDiagnostics,
             },
           });
 
@@ -2175,6 +2263,7 @@ export function createExecTool(
                 durationMs: outcome.durationMs,
                 aggregated: outcome.aggregated,
                 cwd: run.session.cwd,
+                policy: policyDiagnostics,
               },
             });
           })
