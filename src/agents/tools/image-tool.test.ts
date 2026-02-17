@@ -210,6 +210,92 @@ describe("image tool implicit imageModel config", () => {
     expect(fetch).toHaveBeenCalledTimes(1);
     expect((res.details as { rewrittenFrom?: string }).rewrittenFrom).toContain("photo.png");
   });
+
+  it("repairs unicode-space drift for absolute local image paths", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-image-unicode-"));
+    const agentDir = path.join(stateDir, "agent");
+    await fs.mkdir(agentDir, { recursive: true });
+    const fileWithUnicodeSpace = path.join(
+      stateDir,
+      "Screenshot 2026-02-17 at 9.33.26\u202fAM.png",
+    );
+    const pngB64 =
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/woAAn8B9FD5fHAAAAAASUVORK5CYII=";
+    await fs.writeFile(fileWithUnicodeSpace, Buffer.from(pngB64, "base64"));
+
+    const fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      headers: new Headers(),
+      json: async () => ({
+        content: "ok",
+        base_resp: { status_code: 0, status_msg: "" },
+      }),
+    });
+    // @ts-expect-error partial global
+    global.fetch = fetch;
+    vi.stubEnv("MINIMAX_API_KEY", "minimax-test");
+    const cfg: OpenClawConfig = {
+      agents: {
+        defaults: {
+          model: { primary: "minimax/MiniMax-M2.1" },
+          imageModel: { primary: "minimax/MiniMax-VL-01" },
+        },
+      },
+    };
+    const tool = createImageTool({ config: cfg, agentDir });
+    expect(tool).not.toBeNull();
+    if (!tool) {
+      throw new Error("expected image tool");
+    }
+
+    const asciiSpacePath = fileWithUnicodeSpace.replace("\u202f", " ");
+    const res = await tool.execute("t-unicode", {
+      prompt: "Describe the image.",
+      image: asciiSpacePath,
+    });
+
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect((res.details as { rewrittenFromUnicodeSpace?: string }).rewrittenFromUnicodeSpace).toBe(
+      asciiSpacePath,
+    );
+  });
+
+  it("returns actionable hint when local image path is missing", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-image-missing-"));
+    const agentDir = path.join(stateDir, "agent");
+    await fs.mkdir(agentDir, { recursive: true });
+
+    vi.stubEnv("MINIMAX_API_KEY", "minimax-test");
+    const cfg: OpenClawConfig = {
+      agents: {
+        defaults: {
+          model: { primary: "minimax/MiniMax-M2.1" },
+          imageModel: { primary: "minimax/MiniMax-VL-01" },
+        },
+      },
+    };
+    const tool = createImageTool({ config: cfg, agentDir });
+    expect(tool).not.toBeNull();
+    if (!tool) {
+      throw new Error("expected image tool");
+    }
+
+    const missingPath = path.join(stateDir, "Screenshot 2026-02-17 at 9.33.26 AM.png");
+    await expect(
+      tool.execute("t-missing", {
+        prompt: "Describe the image.",
+        image: missingPath,
+      }),
+    ).rejects.toThrow(/Image path not found:/i);
+    await expect(
+      tool.execute("t-missing-hint", {
+        prompt: "Describe the image.",
+        image: missingPath,
+      }),
+    ).rejects.toThrow(/ls -lb/i);
+  });
 });
 
 describe("image tool data URL support", () => {

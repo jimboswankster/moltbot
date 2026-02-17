@@ -24,6 +24,7 @@ import {
 } from "./image-tool.helpers.js";
 
 const DEFAULT_PROMPT = "Describe the image.";
+const UNICODE_SPACE_RE = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g;
 
 export const __testing = {
   decodeDataUrl,
@@ -176,6 +177,48 @@ function buildImageContext(prompt: string, base64: string, mimeType: string): Co
       },
     ],
   };
+}
+
+function normalizeFilenameSpaces(value: string): string {
+  return value.replace(UNICODE_SPACE_RE, " ");
+}
+
+async function resolveUnicodeSpaceVariantPath(filePath: string): Promise<string | null> {
+  if (!path.isAbsolute(filePath)) {
+    return null;
+  }
+  try {
+    await fs.stat(filePath);
+    return null;
+  } catch {
+    // Continue with variant lookup.
+  }
+
+  const dir = path.dirname(filePath);
+  let entries: string[];
+  try {
+    entries = await fs.readdir(dir);
+  } catch {
+    return null;
+  }
+  const targetBase = normalizeFilenameSpaces(path.basename(filePath));
+  const matches = entries.filter((name) => normalizeFilenameSpaces(name) === targetBase);
+  if (matches.length !== 1) {
+    return null;
+  }
+  return path.join(dir, matches[0] ?? "");
+}
+
+function buildMissingImagePathHint(missingPath: string): string {
+  const dir = path.dirname(missingPath);
+  const base = path.basename(missingPath);
+  return [
+    `Image path not found: ${missingPath}`,
+    "Use the exact filename from disk and retry once.",
+    "Common failure: filename contains Unicode spaces (for example before AM/PM in screenshots).",
+    `Quick check: ls -lb \"${dir}\"`,
+    `Then use the exact basename: \"${base}\"`,
+  ].join(" ");
 }
 
 async function resolveSandboxedImagePath(params: {
@@ -407,9 +450,31 @@ export function createImageTool(options?: {
             };
       const resolvedPath = isDataUrl ? null : resolvedPathInfo.resolved;
 
+      const rewrittenFromUnicodeSpace =
+        !isDataUrl && resolvedPath && path.isAbsolute(resolvedPath)
+          ? await resolveUnicodeSpaceVariantPath(resolvedPath)
+          : null;
+      const mediaSource =
+        rewrittenFromUnicodeSpace && rewrittenFromUnicodeSpace !== resolvedPath
+          ? rewrittenFromUnicodeSpace
+          : (resolvedPath ?? resolvedImage);
       const media = isDataUrl
         ? decodeDataUrl(resolvedImage)
-        : await loadWebMedia(resolvedPath ?? resolvedImage, maxBytes);
+        : await (async () => {
+            try {
+              return await loadWebMedia(mediaSource, maxBytes);
+            } catch (err) {
+              const message = err instanceof Error ? err.message : String(err);
+              if (
+                typeof mediaSource === "string" &&
+                path.isAbsolute(mediaSource) &&
+                (message.includes("ENOENT") || message.toLowerCase().includes("no such file"))
+              ) {
+                throw new Error(`${message}\n\n${buildMissingImagePathHint(mediaSource)}`);
+              }
+              throw err;
+            }
+          })();
       if (media.kind !== "image") {
         throw new Error(`Unsupported media type: ${media.kind}`);
       }
@@ -435,6 +500,9 @@ export function createImageTool(options?: {
           image: resolvedImage,
           ...(resolvedPathInfo.rewrittenFrom
             ? { rewrittenFrom: resolvedPathInfo.rewrittenFrom }
+            : {}),
+          ...(rewrittenFromUnicodeSpace && rewrittenFromUnicodeSpace !== resolvedPath
+            ? { rewrittenFromUnicodeSpace: resolvedPath }
             : {}),
           attempts: result.attempts,
         },
