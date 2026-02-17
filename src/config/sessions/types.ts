@@ -196,6 +196,22 @@ export type SessionSystemPromptReport = {
       propertiesCount?: number | null;
     }>;
   };
+  promptBudgetReport?: {
+    profile?: string;
+    totals: Array<{
+      category: string;
+      chars: number;
+      budget?: number;
+      overBy?: number;
+    }>;
+    sections: Array<{
+      name: string;
+      category: string;
+      chars: number;
+      budget?: number;
+      overBy?: number;
+    }>;
+  };
 };
 
 export const DEFAULT_RESET_TRIGGER = "/new";

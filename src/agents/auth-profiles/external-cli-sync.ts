@@ -11,6 +11,76 @@ import {
   log,
 } from "./constants.js";
 
+const OLLAMA_ENV_PREFIX = "OLLAMA_API_KEY";
+const OLLAMA_ENV_PROFILE_PREFIX = "ollama:env";
+
+function isOllamaEnvProfileId(profileId: string): boolean {
+  return (
+    profileId === OLLAMA_ENV_PROFILE_PREFIX ||
+    profileId.startsWith(`${OLLAMA_ENV_PROFILE_PREFIX}rr-`)
+  );
+}
+
+function buildOllamaEnvProfileId(envKey: string): string {
+  if (envKey === OLLAMA_ENV_PREFIX) {
+    return OLLAMA_ENV_PROFILE_PREFIX;
+  }
+  const suffix = envKey.slice(`${OLLAMA_ENV_PREFIX}_`.length).trim();
+  return suffix ? `${OLLAMA_ENV_PROFILE_PREFIX}rr-${suffix}` : OLLAMA_ENV_PROFILE_PREFIX;
+}
+
+function collectOllamaEnvProfiles(): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const [envKey, rawValue] of Object.entries(process.env)) {
+    if (!envKey || !envKey.startsWith(OLLAMA_ENV_PREFIX)) {
+      continue;
+    }
+    const value = String(rawValue ?? "").trim();
+    if (!value) {
+      continue;
+    }
+    if (envKey !== OLLAMA_ENV_PREFIX && !envKey.startsWith(`${OLLAMA_ENV_PREFIX}_`)) {
+      continue;
+    }
+    out.set(buildOllamaEnvProfileId(envKey), value);
+  }
+  return out;
+}
+
+function syncOllamaEnvProfiles(store: AuthProfileStore): boolean {
+  const desired = collectOllamaEnvProfiles();
+  let mutated = false;
+
+  for (const [profileId, key] of desired.entries()) {
+    const existing = store.profiles[profileId];
+    if (
+      !existing ||
+      existing.type !== "api_key" ||
+      existing.provider !== "ollama" ||
+      existing.key !== key
+    ) {
+      store.profiles[profileId] = {
+        type: "api_key",
+        provider: "ollama",
+        key,
+      };
+      mutated = true;
+    }
+  }
+
+  for (const profileId of Object.keys(store.profiles)) {
+    if (!isOllamaEnvProfileId(profileId)) {
+      continue;
+    }
+    if (!desired.has(profileId)) {
+      delete store.profiles[profileId];
+      mutated = true;
+    }
+  }
+
+  return mutated;
+}
+
 function shallowEqualOAuthCredentials(a: OAuthCredential | undefined, b: OAuthCredential): boolean {
   if (!a) {
     return false;
@@ -128,6 +198,10 @@ export function syncExternalCliCredentials(store: AuthProfileStore): boolean {
       now,
     )
   ) {
+    mutated = true;
+  }
+
+  if (syncOllamaEnvProfiles(store)) {
     mutated = true;
   }
 
