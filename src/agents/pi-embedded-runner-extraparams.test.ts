@@ -91,4 +91,46 @@ describe("applyExtraParamsToAgent", () => {
       "X-Custom": "1",
     });
   });
+
+  it("applies cacheRetention for minimax-portal anthropic-compatible API", () => {
+    const calls: Array<SimpleStreamOptions | undefined> = [];
+    const baseStreamFn: StreamFn = (_model, _context, options) => {
+      calls.push(options);
+      return new AssistantMessageEventStream();
+    };
+    const agent = { streamFn: baseStreamFn };
+
+    applyExtraParamsToAgent(
+      agent,
+      {
+        agents: {
+          defaults: {
+            models: {
+              "minimax-portal/MiniMax-M2.5": {
+                params: {
+                  cacheRetention: "short",
+                },
+              },
+            },
+          },
+        },
+      },
+      "minimax-portal",
+      "MiniMax-M2.5",
+      undefined,
+      "anthropic-messages",
+    );
+
+    const model = {
+      api: "anthropic-messages",
+      provider: "minimax-portal",
+      id: "MiniMax-M2.5",
+    } as Model<"anthropic-messages">;
+    const context: Context = { messages: [] };
+
+    void agent.streamFn?.(model, context, {});
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.cacheRetention).toBe("short");
+  });
 });

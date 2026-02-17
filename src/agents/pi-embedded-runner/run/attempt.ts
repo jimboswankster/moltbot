@@ -708,6 +708,7 @@ export async function runEmbeddedAttempt(
         params.provider,
         params.modelId,
         params.streamParams,
+        params.model.api,
       );
 
       if (cacheTrace) {
