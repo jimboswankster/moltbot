@@ -1,3 +1,6 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ExecApprovalsResolved } from "../infra/exec-approvals.js";
 import { sanitizeBinaryOutput } from "./shell-utils.js";
@@ -121,5 +124,79 @@ describe("exec host env validation", () => {
         env: { LD_DEBUG: "1" },
       }),
     ).rejects.toThrow(/Security Violation: Environment variable 'LD_DEBUG' is forbidden/);
+  });
+});
+
+describe("exec unicode-space path repair", () => {
+  it("repairs simple ls command when quoted absolute path has unicode-space drift", async () => {
+    if (isWin) {
+      return;
+    }
+    const { createExecTool } = await import("./bash-tools.exec.js");
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-exec-path-"));
+    const actualBase = "Screenshot 2026-02-17 at 9.33.26\u202fAM.png";
+    const actualPath = path.join(tempDir, actualBase);
+    await fs.writeFile(actualPath, "x");
+    const requestedPath = path.join(tempDir, "Screenshot 2026-02-17 at 9.33.26 AM.png");
+
+    const tool = createExecTool({ host: "sandbox" });
+    const result = await tool.execute("call1", { command: `ls "${requestedPath}"` });
+    const text = normalizeText(result.content.find((c) => c.type === "text")?.text);
+
+    expect(text).toContain(actualBase);
+    expect((result.details as { command?: string })?.command).toContain(actualBase);
+    expect((result.details as { command?: string })?.command).not.toContain("9.33.26 AM.png");
+  });
+
+  it("blocks complex commands with missing quoted absolute paths instead of rewriting", async () => {
+    if (isWin) {
+      return;
+    }
+    const { createExecTool } = await import("./bash-tools.exec.js");
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-exec-path-"));
+    const actualPath = path.join(tempDir, "Screenshot 2026-02-17 at 9.33.26\u202fAM.png");
+    await fs.writeFile(actualPath, "x");
+    const requestedPath = path.join(tempDir, "Screenshot 2026-02-17 at 9.33.26 AM.png");
+
+    const tool = createExecTool({ host: "sandbox" });
+    await expect(
+      tool.execute("call2", { command: `ls "${requestedPath}" && echo "done"` }),
+    ).rejects.toThrow(/Complex shell command was not auto-rewritten/);
+  });
+
+  it("does not rewrite non-allowlisted simple commands", async () => {
+    if (isWin) {
+      return;
+    }
+    const { createExecTool } = await import("./bash-tools.exec.js");
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-exec-path-"));
+    const requestedPath = path.join(tempDir, "Screenshot 2026-02-17 at 9.33.26 AM.png");
+
+    const tool = createExecTool({ host: "sandbox" });
+    const result = await tool.execute("call3", { command: `echo "${requestedPath}"` });
+    const commandUsed = (result.details as { command?: string })?.command ?? "";
+
+    expect(commandUsed).toContain(requestedPath);
+    expect(commandUsed).toContain("9.33.26 AM.png");
+  });
+
+  it("repairs paths when filename uses ideographic space variant", async () => {
+    if (isWin) {
+      return;
+    }
+    const { createExecTool } = await import("./bash-tools.exec.js");
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-exec-path-"));
+    const actualBase = "Report 2026-02-17 09.33.26\u3000AM.txt";
+    const actualPath = path.join(tempDir, actualBase);
+    await fs.writeFile(actualPath, "ok");
+    const requestedPath = path.join(tempDir, "Report 2026-02-17 09.33.26 AM.txt");
+
+    const tool = createExecTool({ host: "sandbox" });
+    const result = await tool.execute("call4", { command: `cat "${requestedPath}"` });
+    const text = normalizeText(result.content.find((c) => c.type === "text")?.text);
+
+    expect(text).toContain("ok");
+    expect(text).toContain("unicode-space filename match");
+    expect((result.details as { command?: string })?.command).toContain(actualBase);
   });
 });

@@ -2,6 +2,8 @@ import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { Type } from "@sinclair/typebox";
 import crypto from "node:crypto";
+import fs from "node:fs";
+import fsPromises from "node:fs/promises";
 import path from "node:path";
 import type { BashSandboxConfig } from "./bash-tools.shared.js";
 import {
@@ -124,6 +126,9 @@ const DEFAULT_APPROVAL_TIMEOUT_MS = 120_000;
 const DEFAULT_APPROVAL_REQUEST_TIMEOUT_MS = 130_000;
 const DEFAULT_APPROVAL_RUNNING_NOTICE_MS = 10_000;
 const APPROVAL_SLUG_LENGTH = 8;
+const REPAIRABLE_SIMPLE_EXEC_COMMANDS = new Set(["ls", "stat", "cat", "cp", "file"]);
+const QUOTED_ABSOLUTE_PATH_PATTERN = /(["'])(\/[^"'\n]+)\1/g;
+const SHELL_COMPLEXITY_PATTERN = /(?:&&|\|\||[|;`<>]|\$\(|\n)/;
 
 type PtyExitEvent = { exitCode: number; signal?: number };
 type PtyListener<T> = (event: T) => void;
@@ -385,6 +390,153 @@ function applyShellPath(env: Record<string, string>, shellPath?: string | null) 
   }
 }
 
+type QuotedAbsolutePathMatch = {
+  quote: '"' | "'";
+  path: string;
+  start: number;
+  end: number;
+};
+
+type ExecCommandRepair = {
+  command: string;
+  warnings: string[];
+};
+
+function normalizeFilenameSpaces(value: string): string {
+  // Normalize common Unicode space variants to ASCII space for filename matching.
+  return value.replace(/[\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000\uFEFF]/g, " ");
+}
+
+function parseLeadingToken(command: string): string | null {
+  const trimmed = command.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const match = trimmed.match(/^(?:"([^"]+)"|'([^']+)'|(\S+))/);
+  const token = match?.[1] ?? match?.[2] ?? match?.[3] ?? null;
+  if (!token) {
+    return null;
+  }
+  return path.basename(token).toLowerCase();
+}
+
+function isComplexShellCommand(command: string): boolean {
+  return SHELL_COMPLEXITY_PATTERN.test(command);
+}
+
+function collectQuotedAbsolutePathMatches(command: string): QuotedAbsolutePathMatch[] {
+  const matches: QuotedAbsolutePathMatch[] = [];
+  let match: RegExpExecArray | null = null;
+  QUOTED_ABSOLUTE_PATH_PATTERN.lastIndex = 0;
+  while ((match = QUOTED_ABSOLUTE_PATH_PATTERN.exec(command)) !== null) {
+    const full = match[0];
+    const quote = match[1] === '"' ? '"' : "'";
+    const capturedPath = match[2];
+    if (!capturedPath) {
+      continue;
+    }
+    matches.push({
+      quote,
+      path: capturedPath,
+      start: match.index,
+      end: match.index + full.length,
+    });
+  }
+  return matches;
+}
+
+function resolveUnicodeSpaceVariantAbsolutePath(rawPath: string): string | null {
+  if (fs.existsSync(rawPath)) {
+    return rawPath;
+  }
+  const dir = path.dirname(rawPath);
+  if (!fs.existsSync(dir)) {
+    return null;
+  }
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(dir);
+  } catch {
+    return null;
+  }
+  const targetBase = normalizeFilenameSpaces(path.basename(rawPath));
+  const matches = entries.filter((entry) => normalizeFilenameSpaces(entry) === targetBase);
+  if (matches.length !== 1) {
+    return null;
+  }
+  const candidate = path.join(dir, matches[0]);
+  return fs.existsSync(candidate) ? candidate : null;
+}
+
+function buildMissingPathHint(rawPath: string, complex: boolean): string {
+  const dir = path.dirname(rawPath);
+  const extra = complex
+    ? "Complex shell command was not auto-rewritten; run a path check first."
+    : "Use the exact filename from disk and retry once.";
+  return [
+    `Path not found: ${rawPath}`,
+    extra,
+    `Quick check: ls -lb "${dir}"`,
+    "Common failure: filename contains Unicode spaces (for example before AM/PM in screenshots).",
+  ].join(" ");
+}
+
+function repairExecCommandUnicodeSpacePaths(command: string): ExecCommandRepair {
+  const matches = collectQuotedAbsolutePathMatches(command);
+  if (matches.length === 0) {
+    return { command, warnings: [] };
+  }
+
+  const isComplex = isComplexShellCommand(command);
+  const verb = parseLeadingToken(command);
+  const repairAllowed = Boolean(verb && REPAIRABLE_SIMPLE_EXEC_COMMANDS.has(verb));
+  const hasMissingPath = matches.some((entry) => !fs.existsSync(entry.path));
+
+  if (hasMissingPath && isComplex) {
+    const missing = matches.find((entry) => !fs.existsSync(entry.path));
+    if (missing) {
+      throw new Error(buildMissingPathHint(missing.path, true));
+    }
+  }
+  if (!repairAllowed) {
+    return { command, warnings: [] };
+  }
+
+  const rewrittenParts: string[] = [];
+  let cursor = 0;
+  let rewroteAny = false;
+  const warnings: string[] = [];
+
+  for (const match of matches) {
+    rewrittenParts.push(command.slice(cursor, match.start));
+
+    const resolved = resolveUnicodeSpaceVariantAbsolutePath(match.path);
+    if (!resolved) {
+      if (!fs.existsSync(match.path)) {
+        throw new Error(buildMissingPathHint(match.path, false));
+      }
+      rewrittenParts.push(command.slice(match.start, match.end));
+      cursor = match.end;
+      continue;
+    }
+
+    if (resolved !== match.path) {
+      rewroteAny = true;
+      warnings.push(
+        `Adjusted quoted path for ${verb}: ${match.path} -> ${resolved} (unicode-space filename match).`,
+      );
+    }
+    rewrittenParts.push(`${match.quote}${resolved}${match.quote}`);
+    cursor = match.end;
+  }
+
+  rewrittenParts.push(command.slice(cursor));
+  if (!rewroteAny) {
+    return { command, warnings: [] };
+  }
+  return { command: rewrittenParts.join(""), warnings };
+}
+
 function maybeNotifyOnExit(session: ProcessSession, status: "completed" | "failed") {
   if (!session.backgrounded || !session.notifyOnExit || session.exitNotified) {
     return;
@@ -428,6 +580,68 @@ function emitExecSystemEvent(text: string, opts: { sessionKey?: string; contextK
   }
   enqueueSystemEvent(text, { sessionKey, contextKey: opts.contextKey });
   requestHeartbeatNow({ reason: "exec-event" });
+}
+
+type DeferredExecTelemetryInput = {
+  host: ExecHost;
+  command: string;
+  status: "completed" | "failed";
+  sessionKey?: string;
+  agentId?: string;
+  approvalId?: string;
+  nodeId?: string;
+  reason?: string;
+  durationMs?: number;
+  exitCode?: number | null;
+};
+
+function resolveDeferredTelemetryPath(): string | null {
+  const explicitPath = process.env.OPENCLAW_TOOL_TELEMETRY_EVENTS_PATH?.trim();
+  if (explicitPath) {
+    return explicitPath;
+  }
+  const workspaceDir = process.env.OPENCLAW_WORKSPACE_DIR?.trim();
+  if (!workspaceDir) {
+    return null;
+  }
+  const day = new Date().toISOString().slice(0, 10);
+  return path.join(
+    workspaceDir,
+    "os",
+    "audits",
+    "tool-telemetry",
+    "events",
+    `tool-telemetry-${day}.jsonl`,
+  );
+}
+
+function emitDeferredExecTelemetry(input: DeferredExecTelemetryInput): void {
+  const outPath = resolveDeferredTelemetryPath();
+  if (!outPath) {
+    return;
+  }
+  const record = {
+    ts: new Date().toISOString(),
+    hook: "exec_deferred_outcome",
+    toolName: "exec",
+    host: input.host,
+    status: input.status,
+    sessionKey: input.sessionKey,
+    agentId: input.agentId,
+    approvalId: input.approvalId,
+    nodeId: input.nodeId,
+    commandChars: input.command.length,
+    commandPreview: truncateMiddle(input.command, 240),
+    reason: input.reason,
+    durationMs: input.durationMs ?? null,
+    exitCode: typeof input.exitCode === "number" ? input.exitCode : null,
+  };
+  void fsPromises
+    .mkdir(path.dirname(outPath), { recursive: true })
+    .then(() => fsPromises.appendFile(outPath, `${JSON.stringify(record)}\n`, "utf8"))
+    .catch((err) => {
+      logWarn(`exec: deferred telemetry write failed (${String(err)})`);
+    });
 }
 
 /**
@@ -912,6 +1126,8 @@ export function createExecTool(
       if (!params.command) {
         throw new Error("Provide a command to start.");
       }
+      const repairedCommand = repairExecCommandUnicodeSpacePaths(params.command);
+      const command = repairedCommand.command;
 
       // Memory limit: explicit param overrides config default. 0 = disabled.
       const effectiveMemoryLimitMB =
@@ -921,7 +1137,7 @@ export function createExecTool(
 
       const maxOutput = DEFAULT_MAX_OUTPUT;
       const pendingMaxOutput = DEFAULT_PENDING_MAX_OUTPUT;
-      const warnings: string[] = [];
+      const warnings: string[] = [...repairedCommand.warnings];
       const backgroundRequested = params.background === true;
       const yieldRequested = typeof params.yieldMs === "number";
       if (!allowBackground && (backgroundRequested || yieldRequested)) {
@@ -989,7 +1205,7 @@ export function createExecTool(
         }
       }
       if (elevatedRequested) {
-        logInfo(`exec: elevated command ${truncateMiddle(params.command, 120)}`);
+        logInfo(`exec: elevated command ${truncateMiddle(command, 120)}`);
       }
       const configuredHost = defaults?.host ?? "sandbox";
       const requestedHost = normalizeExecHost(params.host) ?? null;
@@ -1103,7 +1319,7 @@ export function createExecTool(
             "exec host=node requires a node that supports system.run (companion app or node host).",
           );
         }
-        const argv = buildNodeShellCommand(params.command, nodeInfo?.platform);
+        const argv = buildNodeShellCommand(command, nodeInfo?.platform);
 
         const nodeEnv = params.env ? { ...params.env } : undefined;
 
@@ -1111,7 +1327,7 @@ export function createExecTool(
           applyPathPrepend(nodeEnv, defaultPathPrepend, { requireExisting: true });
         }
         const baseAllowlistEval = evaluateShellAllowlist({
-          command: params.command,
+          command,
           allowlist: [],
           safeBins: new Set(),
           cwd: workdir,
@@ -1138,7 +1354,7 @@ export function createExecTool(
               });
               // Allowlist-only precheck; safe bins are node-local and may diverge.
               const allowlistEval = evaluateShellAllowlist({
-                command: params.command,
+                command,
                 allowlist: resolved.allowlist,
                 safeBins: new Set(),
                 cwd: workdir,
@@ -1157,7 +1373,7 @@ export function createExecTool(
           analysisOk,
           allowlistSatisfied,
         });
-        const commandText = params.command;
+        const commandText = command;
         const invokeTimeoutMs = Math.max(
           10_000,
           (typeof params.timeout === "number" ? params.timeout : defaultTimeoutSec) * 1000 + 5_000,
@@ -1172,7 +1388,7 @@ export function createExecTool(
             command: "system.run",
             params: {
               command: argv,
-              rawCommand: params.command,
+              rawCommand: command,
               cwd: workdir,
               env: nodeEnv,
               timeoutMs: typeof params.timeout === "number" ? params.timeout * 1000 : undefined,
@@ -1218,6 +1434,16 @@ export function createExecTool(
                   : undefined;
               decision = typeof decisionValue === "string" ? decisionValue : null;
             } catch {
+              emitDeferredExecTelemetry({
+                host: "node",
+                command: commandText,
+                status: "failed",
+                sessionKey: notifySessionKey,
+                agentId,
+                approvalId,
+                nodeId,
+                reason: "approval-request-failed",
+              });
               emitExecSystemEvent(
                 `Exec denied (node=${nodeId} id=${approvalId}, approval-request-failed): ${commandText}`,
                 { sessionKey: notifySessionKey, contextKey },
@@ -1249,6 +1475,16 @@ export function createExecTool(
             }
 
             if (deniedReason) {
+              emitDeferredExecTelemetry({
+                host: "node",
+                command: commandText,
+                status: "failed",
+                sessionKey: notifySessionKey,
+                agentId,
+                approvalId,
+                nodeId,
+                reason: deniedReason,
+              });
               emitExecSystemEvent(
                 `Exec denied (node=${nodeId} id=${approvalId}, ${deniedReason}): ${commandText}`,
                 { sessionKey: notifySessionKey, contextKey },
@@ -1267,12 +1503,33 @@ export function createExecTool(
             }
 
             try {
+              const invokeStartedAt = Date.now();
               await callGatewayTool(
                 "node.invoke",
                 { timeoutMs: invokeTimeoutMs },
                 buildInvokeParams(approvedByAsk, approvalDecision, approvalId),
               );
+              emitDeferredExecTelemetry({
+                host: "node",
+                command: commandText,
+                status: "completed",
+                sessionKey: notifySessionKey,
+                agentId,
+                approvalId,
+                nodeId,
+                durationMs: Date.now() - invokeStartedAt,
+              });
             } catch {
+              emitDeferredExecTelemetry({
+                host: "node",
+                command: commandText,
+                status: "failed",
+                sessionKey: notifySessionKey,
+                agentId,
+                approvalId,
+                nodeId,
+                reason: "invoke-failed",
+              });
               emitExecSystemEvent(
                 `Exec denied (node=${nodeId} id=${approvalId}, invoke-failed): ${commandText}`,
                 { sessionKey: notifySessionKey, contextKey },
@@ -1330,7 +1587,7 @@ export function createExecTool(
           ],
           details: {
             status: success ? "completed" : "failed",
-            command: params.command,
+            command,
             exitCode,
             durationMs: Date.now() - startedAt,
             aggregated: [stdout, stderr, errorText].filter(Boolean).join("\n"),
@@ -1348,7 +1605,7 @@ export function createExecTool(
           throw new Error("exec denied: host=gateway security=deny");
         }
         const allowlistEval = evaluateShellAllowlist({
-          command: params.command,
+          command,
           allowlist: approvals.allowlist,
           safeBins,
           cwd: workdir,
@@ -1372,7 +1629,7 @@ export function createExecTool(
           const contextKey = `exec:${approvalId}`;
           const resolvedPath = allowlistEval.segments[0]?.resolution?.resolvedPath;
           const noticeSeconds = Math.max(1, Math.round(approvalRunningNoticeMs / 1000));
-          const commandText = params.command;
+          const commandText = command;
           const effectiveTimeout =
             typeof params.timeout === "number" ? params.timeout : defaultTimeoutSec;
           const warningText = warnings.length ? `${warnings.join("\n")}\n\n` : "";
@@ -1402,6 +1659,15 @@ export function createExecTool(
                   : undefined;
               decision = typeof decisionValue === "string" ? decisionValue : null;
             } catch {
+              emitDeferredExecTelemetry({
+                host: "gateway",
+                command: commandText,
+                status: "failed",
+                sessionKey: notifySessionKey,
+                agentId,
+                approvalId,
+                reason: "approval-request-failed",
+              });
               emitExecSystemEvent(
                 `Exec denied (gateway id=${approvalId}, approval-request-failed): ${commandText}`,
                 { sessionKey: notifySessionKey, contextKey },
@@ -1449,6 +1715,15 @@ export function createExecTool(
             }
 
             if (deniedReason) {
+              emitDeferredExecTelemetry({
+                host: "gateway",
+                command: commandText,
+                status: "failed",
+                sessionKey: notifySessionKey,
+                agentId,
+                approvalId,
+                reason: deniedReason,
+              });
               emitExecSystemEvent(
                 `Exec denied (gateway id=${approvalId}, ${deniedReason}): ${commandText}`,
                 { sessionKey: notifySessionKey, contextKey },
@@ -1492,6 +1767,15 @@ export function createExecTool(
                 memoryLimitMB: effectiveMemoryLimitMB,
               });
             } catch {
+              emitDeferredExecTelemetry({
+                host: "gateway",
+                command: commandText,
+                status: "failed",
+                sessionKey: notifySessionKey,
+                agentId,
+                approvalId,
+                reason: "spawn-failed",
+              });
               emitExecSystemEvent(
                 `Exec denied (gateway id=${approvalId}, spawn-failed): ${commandText}`,
                 { sessionKey: notifySessionKey, contextKey },
@@ -1522,6 +1806,17 @@ export function createExecTool(
             const summary = output
               ? `Exec finished (gateway id=${approvalId}, session=${run.session.id}, ${exitLabel})\n${output}`
               : `Exec finished (gateway id=${approvalId}, session=${run.session.id}, ${exitLabel})`;
+            emitDeferredExecTelemetry({
+              host: "gateway",
+              command: commandText,
+              status: outcome.status === "completed" ? "completed" : "failed",
+              sessionKey: notifySessionKey,
+              agentId,
+              approvalId,
+              durationMs: outcome.durationMs,
+              exitCode: outcome.exitCode,
+              reason: outcome.timedOut ? "timeout" : undefined,
+            });
             emitExecSystemEvent(summary, { sessionKey: notifySessionKey, contextKey });
           })();
 
@@ -1540,7 +1835,7 @@ export function createExecTool(
               approvalSlug,
               expiresAtMs,
               host: "gateway",
-              command: params.command,
+              command,
               cwd: workdir,
             },
           };
@@ -1561,7 +1856,7 @@ export function createExecTool(
               approvals.file,
               agentId,
               match,
-              params.command,
+              command,
               allowlistEval.segments[0]?.resolution?.resolvedPath,
             );
           }
@@ -1573,7 +1868,7 @@ export function createExecTool(
       const getWarningText = () => (warnings.length ? `${warnings.join("\n")}\n\n` : "");
       const usePty = params.pty === true && !sandbox;
       const run = await runExecProcess({
-        command: params.command,
+        command,
         workdir,
         env,
         sandbox,
@@ -1676,7 +1971,7 @@ export function createExecTool(
               ],
               details: {
                 status: "completed",
-                command: params.command,
+                command,
                 exitCode: outcome.exitCode ?? 0,
                 durationMs: outcome.durationMs,
                 aggregated: outcome.aggregated,
