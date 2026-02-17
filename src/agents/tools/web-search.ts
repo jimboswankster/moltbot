@@ -519,6 +519,8 @@ async function runWebSearch(params: {
   perplexityModel?: string;
   grokModel?: string;
   grokInlineCitations?: boolean;
+  policyProvider?: string;
+  policyModel?: string;
 }): Promise<Record<string, unknown>> {
   const withCacheMeta = (
     payload: Record<string, unknown>,
@@ -572,14 +574,18 @@ async function runWebSearch(params: {
     writeCache(SEARCH_CACHE, cacheKey, payload, params.cacheTtlMs);
     await writeToToolArtifactCache({
       toolName: "web_search",
-      provider: params.provider,
-      model: params.perplexityModel ?? DEFAULT_PERPLEXITY_MODEL,
+      provider: params.policyProvider ?? params.provider,
+      model: params.policyModel ?? params.perplexityModel ?? DEFAULT_PERPLEXITY_MODEL,
       artifactClass: "search_result",
       cacheParams: { legacyKey: cacheKey },
       value: payload,
       ttlMs: params.cacheTtlMs,
       summary: content.slice(0, 500),
       frozenCandidate: true,
+      providerHints: {
+        toolProvider: params.provider,
+        toolModel: params.perplexityModel ?? DEFAULT_PERPLEXITY_MODEL,
+      },
     });
     return withCacheMeta(payload, "miss", "none");
   }
@@ -605,14 +611,18 @@ async function runWebSearch(params: {
     writeCache(SEARCH_CACHE, cacheKey, payload, params.cacheTtlMs);
     await writeToToolArtifactCache({
       toolName: "web_search",
-      provider: params.provider,
-      model: params.grokModel ?? DEFAULT_GROK_MODEL,
+      provider: params.policyProvider ?? params.provider,
+      model: params.policyModel ?? params.grokModel ?? DEFAULT_GROK_MODEL,
       artifactClass: "search_result",
       cacheParams: { legacyKey: cacheKey },
       value: payload,
       ttlMs: params.cacheTtlMs,
       summary: content.slice(0, 500),
       frozenCandidate: true,
+      providerHints: {
+        toolProvider: params.provider,
+        toolModel: params.grokModel ?? DEFAULT_GROK_MODEL,
+      },
     });
     return withCacheMeta(payload, "miss", "none");
   }
@@ -699,13 +709,17 @@ async function runWebSearch(params: {
   writeCache(SEARCH_CACHE, cacheKey, payload, params.cacheTtlMs);
   await writeToToolArtifactCache({
     toolName: "web_search",
-    provider: params.provider,
+    provider: params.policyProvider ?? params.provider,
+    model: params.policyModel,
     artifactClass: "search_result",
     cacheParams: { legacyKey: cacheKey },
     value: payload,
     ttlMs: params.cacheTtlMs,
     summary: `${params.query} (${mapped.length} results)`,
     frozenCandidate: true,
+    providerHints: {
+      toolProvider: params.provider,
+    },
   });
   return withCacheMeta(payload, "miss", "none");
 }
@@ -713,6 +727,8 @@ async function runWebSearch(params: {
 export function createWebSearchTool(options?: {
   config?: OpenClawConfig;
   sandboxed?: boolean;
+  llmProvider?: string;
+  llmModelId?: string;
 }): AnyAgentTool | null {
   const search = resolveSearchConfig(options?.config);
   if (!resolveSearchEnabled({ search, sandboxed: options?.sandboxed })) {
@@ -779,6 +795,8 @@ export function createWebSearchTool(options?: {
         timeoutSeconds: resolveTimeoutSeconds(search?.timeoutSeconds, DEFAULT_TIMEOUT_SECONDS),
         cacheTtlMs: resolveCacheTtlMs(search?.cacheTtlMinutes, DEFAULT_CACHE_TTL_MINUTES),
         provider,
+        policyProvider: options?.llmProvider,
+        policyModel: options?.llmModelId,
         country,
         search_lang,
         ui_lang,

@@ -382,6 +382,8 @@ async function runWebFetch(params: {
   firecrawlProxy: "auto" | "basic" | "stealth";
   firecrawlStoreInCache: boolean;
   firecrawlTimeoutSeconds: number;
+  policyProvider?: string;
+  policyModel?: string;
 }): Promise<Record<string, unknown>> {
   const withCacheMeta = (
     payload: Record<string, unknown>,
@@ -477,13 +479,17 @@ async function runWebFetch(params: {
       writeCache(FETCH_CACHE, cacheKey, payload, params.cacheTtlMs);
       await writeToToolArtifactCache({
         toolName: "web_fetch",
-        provider: "http",
+        provider: params.policyProvider ?? "http",
+        model: params.policyModel,
         artifactClass: "web_document",
         cacheParams: { legacyKey: cacheKey },
         value: payload,
         ttlMs: params.cacheTtlMs,
         summary: wrapped.text.slice(0, 500),
         frozenCandidate: true,
+        providerHints: {
+          toolProvider: "http",
+        },
       });
       return withCacheMeta(payload, "miss", "none");
     }
@@ -526,13 +532,17 @@ async function runWebFetch(params: {
         writeCache(FETCH_CACHE, cacheKey, payload, params.cacheTtlMs);
         await writeToToolArtifactCache({
           toolName: "web_fetch",
-          provider: "http",
+          provider: params.policyProvider ?? "http",
+          model: params.policyModel,
           artifactClass: "web_document",
           cacheParams: { legacyKey: cacheKey },
           value: payload,
           ttlMs: params.cacheTtlMs,
           summary: wrapped.text.slice(0, 500),
           frozenCandidate: true,
+          providerHints: {
+            toolProvider: "http",
+          },
         });
         return withCacheMeta(payload, "miss", "none");
       }
@@ -612,13 +622,17 @@ async function runWebFetch(params: {
     writeCache(FETCH_CACHE, cacheKey, payload, params.cacheTtlMs);
     await writeToToolArtifactCache({
       toolName: "web_fetch",
-      provider: "http",
+      provider: params.policyProvider ?? "http",
+      model: params.policyModel,
       artifactClass: "web_document",
       cacheParams: { legacyKey: cacheKey },
       value: payload,
       ttlMs: params.cacheTtlMs,
       summary: wrapped.text.slice(0, 500),
       frozenCandidate: true,
+      providerHints: {
+        toolProvider: "http",
+      },
     });
     return withCacheMeta(payload, "miss", "none");
   } finally {
@@ -681,6 +695,8 @@ function resolveFirecrawlEndpoint(baseUrl: string): string {
 export function createWebFetchTool(options?: {
   config?: OpenClawConfig;
   sandboxed?: boolean;
+  llmProvider?: string;
+  llmModelId?: string;
 }): AnyAgentTool | null {
   const fetch = resolveFetchConfig(options?.config);
   if (!resolveFetchEnabled({ fetch, sandboxed: options?.sandboxed })) {
@@ -733,6 +749,8 @@ export function createWebFetchTool(options?: {
         firecrawlProxy: "auto",
         firecrawlStoreInCache: true,
         firecrawlTimeoutSeconds,
+        policyProvider: options?.llmProvider,
+        policyModel: options?.llmModelId,
       });
       return jsonResult(result);
     },

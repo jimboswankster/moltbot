@@ -361,6 +361,8 @@ export function createOpenClawCodingTools(options?: {
       replyToMode: options?.replyToMode,
       hasRepliedRef: options?.hasRepliedRef,
       modelHasVision: options?.modelHasVision,
+      modelProvider: options?.modelProvider,
+      modelId: options?.modelId,
       requesterAgentIdOverride: agentId,
     }),
   ];

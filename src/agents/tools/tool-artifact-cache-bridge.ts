@@ -131,6 +131,7 @@ export async function writeToToolArtifactCache(input: {
   toolName: string;
   provider?: string;
   model?: string;
+  providerHints?: Record<string, unknown>;
   artifactClass: string;
   cacheParams: Record<string, unknown>;
   value: Record<string, unknown>;
@@ -162,6 +163,7 @@ export async function writeToToolArtifactCache(input: {
     frozenCandidate: input.frozenCandidate === true,
     summary: input.summary ?? "",
     payloadRef: input.value,
+    providerHints: input.providerHints,
     estimatedChars: JSON.stringify(input.value).length,
     expiresAt,
   });

@@ -51,6 +51,10 @@ export function createOpenClawTools(options?: {
   hasRepliedRef?: { value: boolean };
   /** If true, the model has native vision capability */
   modelHasVision?: boolean;
+  /** Active LLM provider for this agent session (used for cache policy hints). */
+  modelProvider?: string;
+  /** Active LLM model id for this agent session (used for cache policy hints). */
+  modelId?: string;
   /** Explicit agent ID override for cron/hook sessions. */
   requesterAgentIdOverride?: string;
 }): AnyAgentTool[] {
@@ -65,10 +69,14 @@ export function createOpenClawTools(options?: {
   const webSearchTool = createWebSearchTool({
     config: options?.config,
     sandboxed: options?.sandboxed,
+    llmProvider: options?.modelProvider,
+    llmModelId: options?.modelId,
   });
   const webFetchTool = createWebFetchTool({
     config: options?.config,
     sandboxed: options?.sandboxed,
+    llmProvider: options?.modelProvider,
+    llmModelId: options?.modelId,
   });
   const tools: AnyAgentTool[] = [
     createBrowserTool({
