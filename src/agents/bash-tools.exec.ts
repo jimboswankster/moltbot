@@ -234,6 +234,14 @@ type ExecPolicyDiagnostics = {
   };
 };
 
+type PathRepairDecision = "rewrite" | "block" | "no-op";
+
+type PathRepairParityDecision = {
+  decision: PathRepairDecision;
+  blocked: boolean;
+  reason?: string;
+};
+
 type ExecProcessHandle = {
   session: ProcessSession;
   startedAt: number;
@@ -626,6 +634,168 @@ function collectQuotedAbsolutePathMatches(command: string): QuotedAbsolutePathMa
   return matches;
 }
 
+function collectQuotedAbsolutePathMatchesStrict(command: string): {
+  matches: QuotedAbsolutePathMatch[];
+  parseError: boolean;
+} {
+  const matches: QuotedAbsolutePathMatch[] = [];
+  let i = 0;
+  while (i < command.length) {
+    const ch = command[i];
+    if ((ch === '"' || ch === "'") && command[i - 1] !== "\\") {
+      const quote = ch as '"' | "'";
+      const start = i;
+      i += 1;
+      const pathStart = i;
+      let closed = false;
+      while (i < command.length) {
+        const cur = command[i];
+        if (cur === quote && command[i - 1] !== "\\") {
+          closed = true;
+          break;
+        }
+        i += 1;
+      }
+      if (!closed) {
+        return { matches, parseError: true };
+      }
+      const capturedPath = command.slice(pathStart, i);
+      if (capturedPath.startsWith("/")) {
+        matches.push({
+          quote,
+          path: capturedPath,
+          start,
+          end: i + 1,
+        });
+      }
+    }
+    i += 1;
+  }
+  return { matches, parseError: false };
+}
+
+function evaluatePathRepairDecisionSync(
+  command: string,
+  matches: QuotedAbsolutePathMatch[],
+): PathRepairParityDecision {
+  if (matches.length === 0) {
+    return { decision: "no-op", blocked: false, reason: "no_quoted_absolute_paths" };
+  }
+  const isComplex = isComplexShellCommand(command);
+  const verb = parseLeadingToken(command);
+  const repairAllowed = Boolean(verb && REPAIRABLE_SIMPLE_EXEC_COMMANDS.has(verb));
+  const hasMissingPath = matches.some((entry) => !fs.existsSync(entry.path));
+  if (hasMissingPath && isComplex) {
+    return { decision: "block", blocked: true, reason: "missing_path_in_complex_command" };
+  }
+  if (!repairAllowed) {
+    return { decision: "no-op", blocked: false, reason: "repair_not_allowed_for_command" };
+  }
+  let rewroteAny = false;
+  for (const match of matches) {
+    const resolved = resolveUnicodeSpaceVariantAbsolutePath(match.path);
+    if (!resolved) {
+      if (!fs.existsSync(match.path)) {
+        return { decision: "block", blocked: true, reason: "missing_path_no_unicode_variant" };
+      }
+      continue;
+    }
+    if (resolved !== match.path) {
+      rewroteAny = true;
+    }
+  }
+  return {
+    decision: rewroteAny ? "rewrite" : "no-op",
+    blocked: false,
+    reason: rewroteAny ? "unicode_path_rewrite" : "no_change",
+  };
+}
+
+async function pathExistsAsync(pathname: string): Promise<boolean> {
+  try {
+    await fsPromises.access(pathname, fs.constants.F_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function resolveUnicodeSpaceVariantAbsolutePathAsync(
+  rawPath: string,
+): Promise<string | null> {
+  if (await pathExistsAsync(rawPath)) {
+    return rawPath;
+  }
+  const dir = path.dirname(rawPath);
+  if (!(await pathExistsAsync(dir))) {
+    return null;
+  }
+  let entries: string[];
+  try {
+    entries = await fsPromises.readdir(dir);
+  } catch {
+    return null;
+  }
+  const targetBase = normalizeFilenameSpaces(path.basename(rawPath));
+  const matches = entries.filter((entry) => normalizeFilenameSpaces(entry) === targetBase);
+  if (matches.length !== 1) {
+    return null;
+  }
+  const candidate = path.join(dir, matches[0]);
+  return (await pathExistsAsync(candidate)) ? candidate : null;
+}
+
+async function evaluatePathRepairDecisionAsyncFs(
+  command: string,
+): Promise<PathRepairParityDecision> {
+  const matches = collectQuotedAbsolutePathMatches(command);
+  if (matches.length === 0) {
+    return { decision: "no-op", blocked: false, reason: "no_quoted_absolute_paths" };
+  }
+  const isComplex = isComplexShellCommand(command);
+  const verb = parseLeadingToken(command);
+  const repairAllowed = Boolean(verb && REPAIRABLE_SIMPLE_EXEC_COMMANDS.has(verb));
+  let hasMissingPath = false;
+  for (const entry of matches) {
+    if (!(await pathExistsAsync(entry.path))) {
+      hasMissingPath = true;
+      break;
+    }
+  }
+  if (hasMissingPath && isComplex) {
+    return { decision: "block", blocked: true, reason: "missing_path_in_complex_command" };
+  }
+  if (!repairAllowed) {
+    return { decision: "no-op", blocked: false, reason: "repair_not_allowed_for_command" };
+  }
+  let rewroteAny = false;
+  for (const match of matches) {
+    const resolved = await resolveUnicodeSpaceVariantAbsolutePathAsync(match.path);
+    if (!resolved) {
+      if (!(await pathExistsAsync(match.path))) {
+        return { decision: "block", blocked: true, reason: "missing_path_no_unicode_variant" };
+      }
+      continue;
+    }
+    if (resolved !== match.path) {
+      rewroteAny = true;
+    }
+  }
+  return {
+    decision: rewroteAny ? "rewrite" : "no-op",
+    blocked: false,
+    reason: rewroteAny ? "unicode_path_rewrite" : "no_change",
+  };
+}
+
+function evaluatePathRepairDecisionShadowParser(command: string): PathRepairParityDecision {
+  const strict = collectQuotedAbsolutePathMatchesStrict(command);
+  if (strict.parseError) {
+    return { decision: "block", blocked: true, reason: "strict_parser_unbalanced_quote" };
+  }
+  return evaluatePathRepairDecisionSync(command, strict.matches);
+}
+
 function resolveUnicodeSpaceVariantAbsolutePath(rawPath: string): string | null {
   if (fs.existsSync(rawPath)) {
     return rawPath;
@@ -777,6 +947,25 @@ type DeferredExecTelemetryInput = {
   exitCode?: number | null;
 };
 
+type PathRepairParityTelemetryInput = {
+  command: string;
+  rolloutPlane?: string;
+  sessionKey?: string;
+  agentId?: string;
+  parserPrimaryDecision: PathRepairDecision;
+  parserShadowDecision: PathRepairDecision;
+  parserPrimaryBlocked: boolean;
+  parserShadowBlocked: boolean;
+  parserPrimaryReason?: string;
+  parserShadowReason?: string;
+  asyncFsPrimaryDecision: PathRepairDecision;
+  asyncFsShadowDecision: PathRepairDecision;
+  asyncFsPrimaryBlocked: boolean;
+  asyncFsShadowBlocked: boolean;
+  asyncFsPrimaryReason?: string;
+  asyncFsShadowReason?: string;
+};
+
 function resolveExecRolloutPlane(): string {
   const raw = process.env.OPENCLAW_EXEC_ROLLOUT_PLANE?.trim().toLowerCase();
   if (raw === "primary" || raw === "shadow") {
@@ -845,6 +1034,41 @@ function emitDeferredExecTelemetry(input: DeferredExecTelemetryInput): void {
     .then(() => fsPromises.appendFile(outPath, `${JSON.stringify(record)}\n`, "utf8"))
     .catch((err) => {
       logWarn(`exec: deferred telemetry write failed (${String(err)})`);
+    });
+}
+
+function emitExecPathRepairParityTelemetry(input: PathRepairParityTelemetryInput): void {
+  const outPath = resolveDeferredTelemetryPath();
+  if (!outPath) {
+    return;
+  }
+  const record = {
+    ts: new Date().toISOString(),
+    hook: "exec_path_repair_parity",
+    toolName: "exec",
+    rolloutPlane: input.rolloutPlane ?? resolveExecRolloutPlane(),
+    sessionKey: input.sessionKey,
+    agentId: input.agentId,
+    commandChars: input.command.length,
+    commandPreview: truncateMiddle(input.command, 240),
+    parserPrimaryDecision: input.parserPrimaryDecision,
+    parserShadowDecision: input.parserShadowDecision,
+    parserPrimaryBlocked: input.parserPrimaryBlocked,
+    parserShadowBlocked: input.parserShadowBlocked,
+    parserPrimaryReason: input.parserPrimaryReason,
+    parserShadowReason: input.parserShadowReason,
+    asyncFsPrimaryDecision: input.asyncFsPrimaryDecision,
+    asyncFsShadowDecision: input.asyncFsShadowDecision,
+    asyncFsPrimaryBlocked: input.asyncFsPrimaryBlocked,
+    asyncFsShadowBlocked: input.asyncFsShadowBlocked,
+    asyncFsPrimaryReason: input.asyncFsPrimaryReason,
+    asyncFsShadowReason: input.asyncFsShadowReason,
+  };
+  void fsPromises
+    .mkdir(path.dirname(outPath), { recursive: true })
+    .then(() => fsPromises.appendFile(outPath, `${JSON.stringify(record)}\n`, "utf8"))
+    .catch((err) => {
+      logWarn(`exec: path-repair parity telemetry write failed (${String(err)})`);
     });
 }
 
@@ -1353,9 +1577,68 @@ export function createExecTool(
       if (!params.command) {
         throw new Error("Provide a command to start.");
       }
-      const repairedCommand = repairExecCommandUnicodeSpacePaths(params.command);
-      const command = repairedCommand.command;
-      const warnings: string[] = [...repairedCommand.warnings];
+      const parserShadowDecision = evaluatePathRepairDecisionShadowParser(params.command);
+      const asyncFsShadowDecision = await evaluatePathRepairDecisionAsyncFs(params.command);
+      let parserPrimaryDecision: PathRepairParityDecision = {
+        decision: "no-op",
+        blocked: false,
+        reason: "not_evaluated",
+      };
+      let command = params.command;
+      let warnings: string[] = [];
+      try {
+        const repairedCommand = repairExecCommandUnicodeSpacePaths(params.command);
+        command = repairedCommand.command;
+        warnings = [...repairedCommand.warnings];
+        parserPrimaryDecision = {
+          decision: repairedCommand.command !== params.command ? "rewrite" : "no-op",
+          blocked: false,
+          reason: repairedCommand.command !== params.command ? "unicode_path_rewrite" : "no_change",
+        };
+      } catch (err) {
+        parserPrimaryDecision = {
+          decision: "block",
+          blocked: true,
+          reason: err instanceof Error ? err.message : String(err),
+        };
+        emitExecPathRepairParityTelemetry({
+          command: params.command,
+          rolloutPlane: resolveExecRolloutPlane(),
+          sessionKey: defaults?.sessionKey,
+          agentId,
+          parserPrimaryDecision: parserPrimaryDecision.decision,
+          parserShadowDecision: parserShadowDecision.decision,
+          parserPrimaryBlocked: parserPrimaryDecision.blocked,
+          parserShadowBlocked: parserShadowDecision.blocked,
+          parserPrimaryReason: parserPrimaryDecision.reason,
+          parserShadowReason: parserShadowDecision.reason,
+          asyncFsPrimaryDecision: parserPrimaryDecision.decision,
+          asyncFsShadowDecision: asyncFsShadowDecision.decision,
+          asyncFsPrimaryBlocked: parserPrimaryDecision.blocked,
+          asyncFsShadowBlocked: asyncFsShadowDecision.blocked,
+          asyncFsPrimaryReason: parserPrimaryDecision.reason,
+          asyncFsShadowReason: asyncFsShadowDecision.reason,
+        });
+        throw err;
+      }
+      emitExecPathRepairParityTelemetry({
+        command,
+        rolloutPlane: resolveExecRolloutPlane(),
+        sessionKey: defaults?.sessionKey,
+        agentId,
+        parserPrimaryDecision: parserPrimaryDecision.decision,
+        parserShadowDecision: parserShadowDecision.decision,
+        parserPrimaryBlocked: parserPrimaryDecision.blocked,
+        parserShadowBlocked: parserShadowDecision.blocked,
+        parserPrimaryReason: parserPrimaryDecision.reason,
+        parserShadowReason: parserShadowDecision.reason,
+        asyncFsPrimaryDecision: parserPrimaryDecision.decision,
+        asyncFsShadowDecision: asyncFsShadowDecision.decision,
+        asyncFsPrimaryBlocked: parserPrimaryDecision.blocked,
+        asyncFsShadowBlocked: asyncFsShadowDecision.blocked,
+        asyncFsPrimaryReason: parserPrimaryDecision.reason,
+        asyncFsShadowReason: asyncFsShadowDecision.reason,
+      });
       const retryBrake = checkExecRetryBrake(command);
       const retryBrakeBlocked = retryBrake.blocked;
       const retryBrakeEnforced = retryBrakeMode === "enforce" && retryBrakeBlocked;
