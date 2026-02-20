@@ -70,6 +70,9 @@ import { renderSkills } from "./views/skills";
 
 const AVATAR_DATA_RE = /^data:/i;
 const AVATAR_HTTP_RE = /^https?:\/\//i;
+const CONTROL_UI_BASE = (import.meta as { env?: { BASE_URL?: string } }).env?.BASE_URL ?? "/";
+const PRISMSCAPE_GLOBE_SRC = `${CONTROL_UI_BASE}branding/ps-globe.png`;
+const PRISMSCAPE_WORDMARK_SRC = `${CONTROL_UI_BASE}branding/ps-logo-wht-sm.png`;
 
 function resolveAssistantAvatarUrl(state: AppViewState): string | undefined {
   const list = state.agentsList?.agents ?? [];
@@ -198,11 +201,11 @@ export function renderApp(state: AppViewState) {
           </button>
           <div class="brand">
             <div class="brand-logo">
-              <img src="/branding/ps-globe.png" alt="PrismScape globe logo" />
+              <img src="${PRISMSCAPE_GLOBE_SRC}" alt="PrismScape globe logo" />
             </div>
             <div class="brand-text">
-              <img class="brand-wordmark" src="/branding/ps-logo-wht-sm.png" alt="PrismScape" />
-              <div class="brand-sub">SECOND BRAIN</div>
+              <img class="brand-wordmark" src="${PRISMSCAPE_WORDMARK_SRC}" alt="PrismScape" />
+              <div class="brand-sub">A2A Controller</div>
             </div>
           </div>
         </div>

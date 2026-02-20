@@ -66,8 +66,13 @@
     min-width: 0;
   }
 
+  .brand-logo {
+    width: 22px;
+    height: 22px;
+  }
+
   .brand-wordmark {
-    width: 120px;
+    width: 156px;
   }
 
   .brand-sub {
@@ -312,7 +317,7 @@
   }
 
   .brand-wordmark {
-    width: 108px;
+    width: 140px;
   }
 
   .nav {
