@@ -338,7 +338,7 @@
 
 .nav-label__text--strong {
   font-weight: 600;
-  color: var(--text);
+  color: #cbd5e1;
 }
 
 .nav-label__text--strong .statusDot {
