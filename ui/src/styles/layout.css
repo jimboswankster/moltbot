@@ -336,6 +336,24 @@
   flex: 1;
 }
 
+.nav-label__text--strong {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.nav-label__text--strong .statusDot {
+  margin-right: 0;
+  flex-shrink: 0;
+}
+
+.nav-group--status-parent > .nav-group__items {
+  margin-left: 11px;
+}
+
+.nav-group--status-parent > .nav-group__items > .nav-group > .nav-group__items > .nav-item {
+  padding-left: 8px;
+}
+
 .nav-label__chevron {
   font-size: 10px;
   opacity: 0.5;

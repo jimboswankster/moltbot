@@ -95,6 +95,8 @@ function resolveAssistantAvatarUrl(state: AppViewState): string | undefined {
 /** Map of icon names used by the intelligence-bridge plugin to SVG templates. */
 const INTELLIGENCE_ICONS: Record<string, ReturnType<typeof html>> = {
   home: html`<svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>`,
+  messageSquare: icons.messageSquare,
+  radio: icons.radio,
   heartPulse: html`<svg viewBox="0 0 24 24"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/><path d="M3.22 12H9.5l.5-1 2 4.5 2-7 1.5 3.5h5.27"/></svg>`,
   target: html`<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>`,
   brain: html`<svg viewBox="0 0 24 24"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/><path d="M17.599 6.5a3 3 0 0 0 .399-1.375"/><path d="M6.003 5.125A3 3 0 0 0 6.401 6.5"/><path d="M3.477 10.896a4 4 0 0 1 .585-.396"/><path d="M19.938 10.5a4 4 0 0 1 .585.396"/><path d="M6 18a4 4 0 0 1-1.967-.516"/><path d="M19.967 17.484A4 4 0 0 1 18 18"/></svg>`,
@@ -103,6 +105,7 @@ const INTELLIGENCE_ICONS: Record<string, ReturnType<typeof html>> = {
   folder: icons.folder,
   checkSquare: html`<svg viewBox="0 0 24 24"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>`,
   database: html`<svg viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5V19A9 3 0 0 0 21 19V5"/><path d="M3 12A9 3 0 0 0 21 12"/></svg>`,
+  wallet: html`<svg viewBox="0 0 24 24"><path d="M21 12V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-5z"/><path d="M16 12h5"/><circle cx="16" cy="12" r="1"/></svg>`,
   trendingUp: html`<svg viewBox="0 0 24 24"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>`,
 };
 
@@ -110,14 +113,24 @@ function resolveIntelligenceIcon(iconName: string) {
   return INTELLIGENCE_ICONS[iconName] ?? icons.folder;
 }
 
+function resolveIntelligenceTab(item: IntelligenceMenuItem): "activity-hud" | null {
+  if (item.tab === "activity-hud") {
+    return item.tab;
+  }
+  return null;
+}
+
 function renderIntelligenceMenu(state: AppViewState) {
   const menu = state.intelligenceMenu;
   const isOnline = menu.status === "online";
   const isLoading = menu.status === "loading";
   const isCollapsed = state.settings.navGroupsCollapsed["Intelligence"] ?? !isOnline;
+  const grouped = (menu.sections && menu.sections.length > 0)
+    ? menu.sections.filter((section) => section.header !== "Chat")
+    : [{ header: "", links: menu.items }];
 
   return html`
-    <div class="nav-group ${isCollapsed ? "nav-group--collapsed" : ""}">
+    <div class="nav-group nav-group--status-parent ${isCollapsed ? "nav-group--collapsed" : ""}">
       <button
         class="nav-label"
         @click=${() => {
@@ -130,30 +143,36 @@ function renderIntelligenceMenu(state: AppViewState) {
         }}
         aria-expanded=${!isCollapsed}
       >
-        <span class="nav-label__text" style="display:flex;align-items:center;gap:6px;">
-          Intelligence Bridge
+        <span class="nav-label__text nav-label__text--strong" style="display:flex;align-items:center;gap:4px;">
           <span class="statusDot ${isOnline ? "ok" : ""}" style="width:6px;height:6px;${isLoading ? "opacity:0.4;" : ""}"></span>
+          Intelligence Bridge
         </span>
         <span class="nav-label__chevron">${isCollapsed ? "+" : "−"}</span>
       </button>
       <div class="nav-group__items">
-        ${renderTab(state, "activity-hud")}
         ${isOnline
-          ? menu.items.map((item: IntelligenceMenuItem) => {
-              const href = `${menu.baseUrl}${item.path === "/" ? "" : item.path}`;
-              return html`
-                <a
-                  class="nav-item nav-item--external"
-                  href=${href}
-                  target="_blank"
-                  rel="noreferrer"
-                  title="${item.description ?? item.label} (opens Second Brain)"
-                >
-                  <span class="nav-item__icon" aria-hidden="true">${resolveIntelligenceIcon(item.icon)}</span>
-                  <span class="nav-item__text">${item.label}</span>
-                </a>
-              `;
-            })
+          ? grouped.map((section) => html`
+              ${section.header
+                ? html`<div class="nav-label nav-label--static"><span class="nav-label__text">${section.header}</span></div>`
+                : nothing}
+              ${section.links.map((item: IntelligenceMenuItem) => {
+                const internalTab = resolveIntelligenceTab(item);
+                if (internalTab) {
+                  return renderTab(state, internalTab);
+                }
+                const href = `${menu.baseUrl}${item.path === "/" ? "" : item.path}`;
+                return html`
+                  <a
+                    class="nav-item nav-item--external"
+                    href=${href}
+                    title="${item.description ?? item.label}"
+                  >
+                    <span class="nav-item__icon" aria-hidden="true">${resolveIntelligenceIcon(item.icon)}</span>
+                    <span class="nav-item__text">${item.label}</span>
+                  </a>
+                `;
+              })}
+            `)
           : html`
               <div class="nav-item" style="opacity:0.5;cursor:default;font-size:0.8em;">
                 <span class="nav-item__text">${isLoading ? "Connecting..." : "Bridge Offline"}</span>
@@ -182,6 +201,10 @@ export function renderApp(state: AppViewState) {
     state.agentsList?.defaultId ??
     state.agentsList?.agents?.[0]?.id ??
     null;
+  const chatGroup = TAB_GROUPS.find((group) => group.label === "Chat") ?? TAB_GROUPS[0];
+  const systemControlGroups = TAB_GROUPS.filter((group) => group.label !== "Chat");
+  const systemControlsCollapsed = state.settings.navGroupsCollapsed["System Controls"] ?? false;
+  const isSystemControlsCollapsed = systemControlsCollapsed;
 
   return html`
     <div class="shell ${isChat ? "shell--chat" : ""} ${chatFocus ? "shell--chat-focus" : ""} ${state.settings.navCollapsed ? "shell--nav-collapsed" : ""} ${state.onboarding ? "shell--onboarding" : ""}">
@@ -219,48 +242,96 @@ export function renderApp(state: AppViewState) {
         </div>
       </header>
       <aside class="nav ${state.settings.navCollapsed ? "nav--collapsed" : ""}">
-        ${TAB_GROUPS.map((group, index) => {
-          const isGroupCollapsed = state.settings.navGroupsCollapsed[group.label] ?? false;
-          const hasActiveTab = group.tabs.some((tab) => tab === state.tab);
-          return html`
-            <div class="nav-group ${isGroupCollapsed && !hasActiveTab ? "nav-group--collapsed" : ""}">
-              <button
-                class="nav-label"
-                @click=${() => {
-                  const next = { ...state.settings.navGroupsCollapsed };
-                  next[group.label] = !isGroupCollapsed;
-                  state.applySettings({
-                    ...state.settings,
-                    navGroupsCollapsed: next,
-                  });
-                }}
-                aria-expanded=${!isGroupCollapsed}
-              >
-                <span class="nav-label__text">${group.label}</span>
-                <span class="nav-label__chevron">${isGroupCollapsed ? "+" : "−"}</span>
-              </button>
+        <div class="nav-group nav-group--status-parent ${(state.settings.navGroupsCollapsed[chatGroup.label] ?? false) ? "nav-group--collapsed" : ""}">
+          <button
+            class="nav-label"
+            @click=${() => {
+              const isGroupCollapsed = state.settings.navGroupsCollapsed[chatGroup.label] ?? false;
+              const next = { ...state.settings.navGroupsCollapsed };
+              next[chatGroup.label] = !isGroupCollapsed;
+              state.applySettings({
+                ...state.settings,
+                navGroupsCollapsed: next,
+              });
+            }}
+            aria-expanded=${!(state.settings.navGroupsCollapsed[chatGroup.label] ?? false)}
+          >
+            <span class="nav-label__text nav-label__text--strong" style="display:flex;align-items:center;gap:4px;">
+              <span class="statusDot ${state.connected ? "ok" : ""}" style="width:6px;height:6px;"></span>
+              <span>A2A Gateway</span>
+            </span>
+            <span class="nav-label__chevron">${(state.settings.navGroupsCollapsed[chatGroup.label] ?? false) ? "+" : "−"}</span>
+          </button>
+          <div class="nav-group__items">
+            ${chatGroup.tabs.map((tab) => renderTab(state, tab))}
+          </div>
+        </div>
+
+        ${renderIntelligenceMenu(state)}
+
+        <div class="nav-group nav-group--status-parent ${isSystemControlsCollapsed ? "nav-group--collapsed" : ""}">
+          <button
+            class="nav-label"
+            @click=${() => {
+              const next = { ...state.settings.navGroupsCollapsed };
+              next["System Controls"] = !systemControlsCollapsed;
+              state.applySettings({
+                ...state.settings,
+                navGroupsCollapsed: next,
+              });
+            }}
+            aria-expanded=${!systemControlsCollapsed}
+          >
+            <span class="nav-label__text nav-label__text--strong" style="display:flex;align-items:center;gap:4px;">
+              <span class="statusDot ${state.connected ? "ok" : ""}" style="width:6px;height:6px;"></span>
+              <span>System Controls</span>
+            </span>
+            <span class="nav-label__chevron">${systemControlsCollapsed ? "+" : "−"}</span>
+          </button>
+          <div class="nav-group__items">
+            ${systemControlGroups.map((group) => {
+              const isGroupCollapsed = state.settings.navGroupsCollapsed[group.label] ?? false;
+              const hasActiveTab = group.tabs.some((tab) => tab === state.tab);
+              return html`
+                <div class="nav-group ${isGroupCollapsed && !hasActiveTab ? "nav-group--collapsed" : ""}">
+                  <button
+                    class="nav-label"
+                    @click=${() => {
+                      const next = { ...state.settings.navGroupsCollapsed };
+                      next[group.label] = !isGroupCollapsed;
+                      state.applySettings({
+                        ...state.settings,
+                        navGroupsCollapsed: next,
+                      });
+                    }}
+                    aria-expanded=${!isGroupCollapsed}
+                  >
+                    <span class="nav-label__text">${group.label}</span>
+                    <span class="nav-label__chevron">${isGroupCollapsed ? "+" : "−"}</span>
+                  </button>
+                  <div class="nav-group__items">
+                    ${group.tabs.map((tab) => renderTab(state, tab))}
+                  </div>
+                </div>
+              `;
+            })}
+            <div class="nav-group nav-group--links">
+              <div class="nav-label nav-label--static">
+                <span class="nav-label__text">Resources</span>
+              </div>
               <div class="nav-group__items">
-                ${group.tabs.map((tab) => renderTab(state, tab))}
+                <a
+                  class="nav-item nav-item--external"
+                  href="https://docs.openclaw.ai"
+                  target="_blank"
+                  rel="noreferrer"
+                  title="Docs (opens in new tab)"
+                >
+                  <span class="nav-item__icon" aria-hidden="true">${icons.book}</span>
+                  <span class="nav-item__text">Docs</span>
+                </a>
               </div>
             </div>
-            ${index === 0 ? renderIntelligenceMenu(state) : nothing}
-          `;
-        })}
-        <div class="nav-group nav-group--links">
-          <div class="nav-label nav-label--static">
-            <span class="nav-label__text">Resources</span>
-          </div>
-          <div class="nav-group__items">
-            <a
-              class="nav-item nav-item--external"
-              href="https://docs.openclaw.ai"
-              target="_blank"
-              rel="noreferrer"
-              title="Docs (opens in new tab)"
-            >
-              <span class="nav-item__icon" aria-hidden="true">${icons.book}</span>
-              <span class="nav-item__text">Docs</span>
-            </a>
           </div>
         </div>
       </aside>

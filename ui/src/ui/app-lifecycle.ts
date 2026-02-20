@@ -94,7 +94,12 @@ async function fetchIntelligenceMenu(host: LifecycleHost) {
     }
     const data = await res.json();
     if (data && typeof data.baseUrl === "string" && Array.isArray(data.items)) {
-      host.intelligenceMenu = { status: "online", baseUrl: data.baseUrl, items: data.items };
+      host.intelligenceMenu = {
+        status: "online",
+        baseUrl: data.baseUrl,
+        sections: Array.isArray(data.sections) ? data.sections : undefined,
+        items: data.items,
+      };
     } else {
       host.intelligenceMenu = { status: "offline", baseUrl: "", items: [] };
     }

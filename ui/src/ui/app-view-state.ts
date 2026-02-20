@@ -36,12 +36,19 @@ export type IntelligenceMenuItem = {
   label: string;
   path: string;
   icon: string;
+  tab?: "chat" | "activity-hud";
   description?: string;
+};
+
+export type IntelligenceMenuSection = {
+  header: string;
+  links: IntelligenceMenuItem[];
 };
 
 export type IntelligenceMenu = {
   status: "loading" | "online" | "offline";
   baseUrl: string;
+  sections?: IntelligenceMenuSection[];
   items: IntelligenceMenuItem[];
 };
 
