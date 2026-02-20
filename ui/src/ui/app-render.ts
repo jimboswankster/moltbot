@@ -197,12 +197,9 @@ export function renderApp(state: AppViewState) {
             <span class="nav-collapse-toggle__icon">${icons.menu}</span>
           </button>
           <div class="brand">
-            <div class="brand-logo">
-              <img src="/favicon.svg" alt="OpenClaw" />
-            </div>
             <div class="brand-text">
               <div class="brand-title">PRISMSCAPE</div>
-              <div class="brand-sub">Gateway Dashboard</div>
+              <div class="brand-sub">A2A Control</div>
             </div>
           </div>
         </div>
