@@ -197,9 +197,12 @@ export function renderApp(state: AppViewState) {
             <span class="nav-collapse-toggle__icon">${icons.menu}</span>
           </button>
           <div class="brand">
+            <div class="brand-logo">
+              <img src="/branding/ps-globe.png" alt="PrismScape globe logo" />
+            </div>
             <div class="brand-text">
-              <div class="brand-title">PRISMSCAPE</div>
-              <div class="brand-sub">A2A Control</div>
+              <img class="brand-wordmark" src="/branding/ps-logo-wht-sm.png" alt="PrismScape" />
+              <div class="brand-sub">SECOND BRAIN</div>
             </div>
           </div>
         </div>

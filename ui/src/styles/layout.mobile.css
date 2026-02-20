@@ -66,8 +66,8 @@
     min-width: 0;
   }
 
-  .brand-title {
-    font-size: 14px;
+  .brand-wordmark {
+    width: 120px;
   }
 
   .brand-sub {
@@ -311,8 +311,8 @@
     padding: 8px 10px;
   }
 
-  .brand-title {
-    font-size: 13px;
+  .brand-wordmark {
+    width: 108px;
   }
 
   .nav {
