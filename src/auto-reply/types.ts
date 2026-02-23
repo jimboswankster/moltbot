@@ -39,6 +39,11 @@ export type GetReplyOptions = {
   skillFilter?: string[];
   /** Mutable ref to track if a reply was sent (for Slack "first" threading mode). */
   hasRepliedRef?: { value: boolean };
+  /**
+   * Per-call heartbeat model override (provider/model).
+   * Used for heartbeat escalation passes.
+   */
+  heartbeatModelOverride?: string;
 };
 
 export type ReplyPayload = {

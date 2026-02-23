@@ -22,6 +22,15 @@ export const HeartbeatSchema = z
     model: z.string().optional(),
     session: z.string().optional(),
     includeReasoning: z.boolean().optional(),
+    escalation: z
+      .object({
+        enabled: z.boolean().optional(),
+        triggerToken: z.string().optional(),
+        model: z.string().optional(),
+        prompt: z.string().optional(),
+      })
+      .strict()
+      .optional(),
     target: z.string().optional(),
     to: z.string().optional(),
     prompt: z.string().optional(),

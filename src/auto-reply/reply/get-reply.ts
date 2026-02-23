@@ -79,7 +79,8 @@ export async function getReplyFromConfig(
   let provider = defaultProvider;
   let model = defaultModel;
   if (opts?.isHeartbeat) {
-    const heartbeatRaw = agentCfg?.heartbeat?.model?.trim() ?? "";
+    const heartbeatRaw =
+      opts.heartbeatModelOverride?.trim() || agentCfg?.heartbeat?.model?.trim() || "";
     const heartbeatRef = heartbeatRaw
       ? resolveModelRefFromString({
           raw: heartbeatRaw,

@@ -40,6 +40,7 @@ import { getQueueSize } from "../process/command-queue.js";
 import { CommandLane } from "../process/lanes.js";
 import { normalizeAgentId, toAgentStoreSessionKey } from "../routing/session-key.js";
 import { defaultRuntime, type RuntimeEnv } from "../runtime.js";
+import { emitSystemEvent } from "../telemetry/supabase.js";
 import { formatErrorMessage } from "./errors.js";
 import { emitHeartbeatEvent, resolveIndicatorType } from "./heartbeat-events.js";
 import { resolveHeartbeatVisibility } from "./heartbeat-visibility.js";
@@ -103,6 +104,41 @@ const EXEC_EVENT_PROMPT =
 const CRON_EVENT_PROMPT =
   "A scheduled cron event has been triggered. The event text is included below. " +
   "Please relay it to the user in a helpful and friendly way.";
+const DEFAULT_HEARTBEAT_ESCALATION_TRIGGER = "[[NEEDS_REASONING]]";
+const DEFAULT_HEARTBEAT_ESCALATION_PROMPT =
+  "The fast heartbeat triage asked for deeper reasoning. Produce the final user-facing response now.";
+
+function resolveHeartbeatEscalationConfig(heartbeat?: HeartbeatConfig): {
+  enabled: boolean;
+  triggerToken: string;
+  model?: string;
+  prompt: string;
+} {
+  const enabled = heartbeat?.escalation?.enabled === true;
+  const triggerToken =
+    String(heartbeat?.escalation?.triggerToken ?? "").trim() ||
+    DEFAULT_HEARTBEAT_ESCALATION_TRIGGER;
+  const model = String(heartbeat?.escalation?.model ?? "").trim() || undefined;
+  const prompt =
+    String(heartbeat?.escalation?.prompt ?? "").trim() || DEFAULT_HEARTBEAT_ESCALATION_PROMPT;
+  return { enabled, triggerToken, model, prompt };
+}
+
+function heartbeatContainsEscalationTrigger(
+  text: string | undefined,
+  triggerToken: string,
+): boolean {
+  const marker = String(triggerToken ?? "").trim();
+  if (!marker) return false;
+  return String(text ?? "").includes(marker);
+}
+
+function stripHeartbeatEscalationTrigger(text: string | undefined, triggerToken: string): string {
+  const marker = String(triggerToken ?? "").trim();
+  const input = String(text ?? "");
+  if (!marker) return input.trim();
+  return input.split(marker).join("").trim();
+}
 
 function resolveActiveHoursTimezone(cfg: OpenClawConfig, raw?: string): string {
   const trimmed = raw?.trim();
@@ -685,8 +721,102 @@ export async function runHeartbeatOnce(opts: {
   };
 
   try {
-    const replyResult = await getReplyFromConfig(ctx, { isHeartbeat: true }, cfg);
-    const replyPayload = resolveHeartbeatReplyPayload(replyResult);
+    const escalation = resolveHeartbeatEscalationConfig(heartbeat);
+    let replyResult = await getReplyFromConfig(ctx, { isHeartbeat: true }, cfg);
+    let replyPayload = resolveHeartbeatReplyPayload(replyResult);
+    const firstPassText = replyPayload?.text;
+    if (replyPayload?.text) {
+      replyPayload.text = stripHeartbeatEscalationTrigger(
+        replyPayload.text,
+        escalation.triggerToken,
+      );
+    }
+
+    if (
+      escalation.enabled &&
+      escalation.model &&
+      heartbeatContainsEscalationTrigger(firstPassText, escalation.triggerToken)
+    ) {
+      emitSystemEvent({
+        subsystem: "heartbeat",
+        event_type: "heartbeat_escalation_triggered",
+        status: "ok",
+        source: "heartbeat",
+        process_id: "heartbeat",
+        process_name: "runHeartbeatOnce",
+        agent_id: agentId ?? null,
+        message: escalation.model,
+        details: {
+          reason: opts.reason ?? null,
+          triggerToken: escalation.triggerToken,
+          escalationModel: escalation.model,
+          sessionKey,
+        },
+      });
+      const triageText = stripHeartbeatEscalationTrigger(firstPassText, escalation.triggerToken);
+      const escalationBody = [
+        ctx.Body,
+        "",
+        "--- HEARTBEAT ESCALATION ---",
+        escalation.prompt,
+        triageText ? `Triage output:\n${triageText}` : "",
+        "--- END HEARTBEAT ESCALATION ---",
+      ]
+        .filter(Boolean)
+        .join("\n");
+      const escalatedResult = await getReplyFromConfig(
+        { ...ctx, Body: escalationBody },
+        { isHeartbeat: true, heartbeatModelOverride: escalation.model },
+        cfg,
+      );
+      const escalatedPayload = resolveHeartbeatReplyPayload(escalatedResult);
+      if (
+        escalatedPayload &&
+        (Boolean(escalatedPayload.text?.trim()) ||
+          Boolean(escalatedPayload.mediaUrl) ||
+          Boolean(escalatedPayload.mediaUrls?.length))
+      ) {
+        replyResult = escalatedResult;
+        replyPayload = escalatedPayload;
+        if (replyPayload.text) {
+          replyPayload.text = stripHeartbeatEscalationTrigger(
+            replyPayload.text,
+            escalation.triggerToken,
+          );
+        }
+        emitSystemEvent({
+          subsystem: "heartbeat",
+          event_type: "heartbeat_escalation_completed",
+          status: "ok",
+          source: "heartbeat",
+          process_id: "heartbeat",
+          process_name: "runHeartbeatOnce",
+          agent_id: agentId ?? null,
+          message: escalation.model,
+          details: {
+            reason: opts.reason ?? null,
+            escalationModel: escalation.model,
+            sessionKey,
+          },
+        });
+      } else {
+        emitSystemEvent({
+          subsystem: "heartbeat",
+          event_type: "heartbeat_escalation_empty",
+          status: "degraded",
+          source: "heartbeat",
+          process_id: "heartbeat",
+          process_name: "runHeartbeatOnce",
+          agent_id: agentId ?? null,
+          message: escalation.model,
+          details: {
+            reason: opts.reason ?? null,
+            escalationModel: escalation.model,
+            sessionKey,
+          },
+        });
+      }
+    }
     const includeReasoning = heartbeat?.includeReasoning === true;
     const reasoningPayloads = includeReasoning
       ? resolveHeartbeatReasoningPayloads(replyResult).filter((payload) => payload !== replyPayload)

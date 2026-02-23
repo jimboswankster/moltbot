@@ -232,6 +232,26 @@ export type AgentDefaultsConfig = {
      * Default: false (only the final heartbeat payload is delivered).
      */
     includeReasoning?: boolean;
+    /**
+     * Optional second-pass escalation when fast heartbeat triage decides
+     * deeper reasoning is required.
+     */
+    escalation?: {
+      /** Enable escalation flow. */
+      enabled?: boolean;
+      /**
+       * Trigger marker emitted by triage model, e.g. [[NEEDS_REASONING]].
+       * Default: [[NEEDS_REASONING]]
+       */
+      triggerToken?: string;
+      /** Provider/model for escalation pass (e.g. openrouter/z-ai/glm-5). */
+      model?: string;
+      /**
+       * Optional custom escalation instruction appended to heartbeat body.
+       * Keep concise; this is for second-pass guidance only.
+       */
+      prompt?: string;
+    };
   };
   /** Max concurrent agent runs across all conversations. Default: 1 (sequential). */
   maxConcurrent?: number;
