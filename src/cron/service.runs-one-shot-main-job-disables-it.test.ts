@@ -189,8 +189,8 @@ describe("CronService", () => {
     expect(runResultWithinBackoff).toEqual({ ok: true, ran: false, reason: "not-due" });
     expect(runIsolatedAgentJob).toHaveBeenCalledTimes(1);
 
-    // Advance beyond backoff window (60s) - force run to verify job can run again
-    await vi.advanceTimersByTimeAsync(61_000);
+    // Move wall clock beyond backoff window without running scheduler timers.
+    vi.setSystemTime(new Date(Date.now() + 61_000));
     await cron.run(job.id, "force");
     expect(runIsolatedAgentJob).toHaveBeenCalledTimes(2);
 
@@ -252,14 +252,20 @@ describe("CronService", () => {
     expect(enqueueSystemEvent).toHaveBeenCalledWith("hello", {
       agentId: undefined,
     });
-    expect(job.state.runningAtMs).toBeTypeOf("number");
+    const running = await waitForJob(
+      cron,
+      job.id,
+      (entry) => typeof entry?.state.runningAtMs === "number",
+    );
+    expect(running?.state.runningAtMs).toBeTypeOf("number");
 
     const resolver = resolveHeartbeat as ((r: HeartbeatRunResult) => void) | null;
     if (resolver) resolver({ status: "ran", durationMs: 123 });
     await runPromise;
 
-    expect(job.state.lastStatus).toBe("ok");
-    expect(job.state.lastDurationMs).toBeGreaterThan(0);
+    const finished = await waitForJob(cron, job.id, (entry) => entry?.state.lastStatus === "ok");
+    expect(finished?.state.lastStatus).toBe("ok");
+    expect((finished?.state.lastDurationMs ?? 0) > 0).toBe(true);
 
     cron.stop();
     await store.cleanup();
@@ -303,6 +309,68 @@ describe("CronService", () => {
       agentId: undefined,
     });
     expect(requestHeartbeatNow).toHaveBeenCalled();
+    cron.stop();
+    await store.cleanup();
+  });
+
+  it("runs an isolated command job without invoking the LLM runner", async () => {
+    const store = await makeStorePath();
+    const enqueueSystemEvent = vi.fn();
+    const requestHeartbeatNow = vi.fn();
+    const runIsolatedAgentJob = vi.fn(async () => ({
+      status: "ok" as const,
+      summary: "should not run",
+    }));
+    const runCommandJob = vi.fn(async () => ({
+      status: "ok" as const,
+      summary: "ROUTED_OK",
+      outputText: "ROUTED_OK",
+    }));
+
+    const cron = new CronService({
+      storePath: store.storePath,
+      cronEnabled: true,
+      log: noopLogger,
+      enqueueSystemEvent,
+      requestHeartbeatNow,
+      runIsolatedAgentJob,
+      runCommandJob,
+    });
+
+    await cron.start();
+    const atMs = Date.parse("2025-12-13T00:00:01.000Z");
+    const job = await cron.add({
+      enabled: true,
+      name: "deterministic command",
+      schedule: { kind: "at", atMs },
+      sessionTarget: "isolated",
+      wakeMode: "now",
+      payload: {
+        kind: "command",
+        command: "echo ROUTED_OK",
+        cwd: "/tmp",
+        timeoutSeconds: 30,
+      },
+    });
+
+    vi.setSystemTime(new Date("2025-12-13T00:00:01.000Z"));
+    await vi.runOnlyPendingTimersAsync();
+
+    await waitForJob(cron, job.id, (entry) => entry?.state.lastStatus === "ok");
+    expect(runCommandJob).toHaveBeenCalledTimes(1);
+    expect(runCommandJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        command: "echo ROUTED_OK",
+        cwd: "/tmp",
+        timeoutSeconds: 30,
+      }),
+    );
+    expect(runIsolatedAgentJob).not.toHaveBeenCalled();
+    expect(enqueueSystemEvent).toHaveBeenCalledWith("Cron: ROUTED_OK", {
+      agentId: undefined,
+    });
+    expect(requestHeartbeatNow).toHaveBeenCalled();
+
     cron.stop();
     await store.cleanup();
   });

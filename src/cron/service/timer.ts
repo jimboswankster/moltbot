@@ -4,12 +4,7 @@ import type { HeartbeatRunResult } from "../../infra/heartbeat-wake.js";
 import type { CronJob } from "../types.js";
 import type { CronEvent, CronServiceState } from "./state.js";
 import { emitSystemEvent } from "../../telemetry/supabase.js";
-import {
-  computeJobNextRunAtMs,
-  nextWakeAtMs,
-  recomputeNextRuns,
-  resolveJobPayloadTextForMain,
-} from "./jobs.js";
+import { computeJobNextRunAtMs, nextWakeAtMs, resolveJobPayloadTextForMain } from "./jobs.js";
 import { locked } from "./locked.js";
 import { ensureLoaded, persist, reloadFromDisk } from "./store.js";
 
@@ -56,8 +51,6 @@ export async function runDueJobs(state: CronServiceState) {
     if (!state.store) {
       return [];
     }
-    recomputeNextRuns(state);
-    await persist(state);
     const now = state.deps.nowMs();
     let mutated = false;
     const ids = state.store.jobs
@@ -69,14 +62,21 @@ export async function runDueJobs(state: CronServiceState) {
           return false;
         }
         const nextAllowed = j.state.nextAllowedAtMs;
+        let next = j.state.nextRunAtMs;
+        if (typeof next !== "number") {
+          next = computeJobNextRunAtMs(j, now);
+          if (typeof next === "number") {
+            j.state.nextRunAtMs = next;
+            mutated = true;
+          }
+        }
         if (typeof nextAllowed === "number" && now < nextAllowed) {
-          if (!j.state.nextRunAtMs || j.state.nextRunAtMs < nextAllowed) {
+          if (!next || next < nextAllowed) {
             j.state.nextRunAtMs = nextAllowed;
             mutated = true;
           }
           return false;
         }
-        const next = j.state.nextRunAtMs;
         return typeof next === "number" && now >= next;
       })
       .map((j) => j.id);
@@ -107,10 +107,26 @@ export async function executeJob(
   const startedAt = state.deps.nowMs();
   const runId = crypto.randomUUID();
   const snapshot = await locked(state, async () => {
-    await ensureLoaded(state);
+    await reloadFromDisk(state);
     const job = state.store?.jobs.find((entry) => entry.id === jobId);
     if (!job) {
       return null;
+    }
+    if (!opts.forced) {
+      if (!job.enabled) {
+        return null;
+      }
+      if (typeof job.state.runningAtMs === "number") {
+        return null;
+      }
+      const nextAllowed = job.state.nextAllowedAtMs;
+      if (typeof nextAllowed === "number" && startedAt < nextAllowed) {
+        return null;
+      }
+      const nextRunAtMs = job.state.nextRunAtMs;
+      if (typeof nextRunAtMs !== "number" || startedAt < nextRunAtMs) {
+        return null;
+      }
     }
     const plannedRunAtMs =
       !opts.forced &&
@@ -165,7 +181,7 @@ export async function executeJob(
   }
 
   await locked(state, async () => {
-    await ensureLoaded(state);
+    await reloadFromDisk(state);
     const job = state.store?.jobs.find((entry) => entry.id === jobId);
     if (!job || !outcome) {
       return;
@@ -370,10 +386,10 @@ async function runJobCore(
     };
   }
 
-  if (job.payload.kind !== "agentTurn") {
+  if (job.payload.kind !== "agentTurn" && job.payload.kind !== "command") {
     return {
       status: "skipped",
-      err: "isolated job requires payload.kind=agentTurn",
+      err: "isolated job requires payload.kind=agentTurn or payload.kind=command",
       runId: runContext.runId,
       telemetryId: runContext.telemetryId,
     };
@@ -396,41 +412,108 @@ async function runJobCore(
     }
   }
 
-  const res = await state.deps.runIsolatedAgentJob({
-    job,
-    message: job.payload.message,
-    runId: runContext.runId,
-    telemetryId: runContext.telemetryId,
-  });
   const outcome =
-    res.status === "ok"
-      ? {
-          status: "ok" as const,
-          summary: res.summary,
-          outputText: res.outputText,
-          runId: res.runId ?? runContext.runId,
-          sessionId: res.sessionId,
-          telemetryId: res.telemetryId ?? runContext.telemetryId,
-        }
-      : res.status === "skipped"
-        ? {
-            status: "skipped" as const,
-            summary: res.summary,
-            outputText: res.outputText,
-            runId: res.runId ?? runContext.runId,
-            sessionId: res.sessionId,
-            telemetryId: res.telemetryId ?? runContext.telemetryId,
+    job.payload.kind === "command"
+      ? await (async () => {
+          if (!state.deps.runCommandJob) {
+            return {
+              status: "error" as const,
+              err: "command runner unavailable",
+              runId: runContext.runId,
+              telemetryId: runContext.telemetryId,
+            };
           }
-        : {
-            status: "error" as const,
-            err: res.error ?? "cron job failed",
-            errKind: res.errorKind,
-            summary: res.summary,
-            outputText: res.outputText,
-            runId: res.runId ?? runContext.runId,
-            sessionId: res.sessionId,
-            telemetryId: res.telemetryId ?? runContext.telemetryId,
-          };
+          const commandResult = await state.deps.runCommandJob({
+            job,
+            command: job.payload.command,
+            cwd: job.payload.cwd,
+            timeoutSeconds: job.payload.timeoutSeconds,
+            runId: runContext.runId,
+            telemetryId: runContext.telemetryId,
+          });
+          emitSystemEvent({
+            subsystem: "cron",
+            event_type: "cron_command_job_executed",
+            status: commandResult.status,
+            source: "cron-command",
+            process_id: job.id,
+            process_name: job.name ?? null,
+            agent_id: job.agentId ?? null,
+            message: (commandResult.summary ?? commandResult.error ?? "").slice(0, 240),
+            details: {
+              cronJobId: job.id,
+              cronRunId: commandResult.runId ?? runContext.runId,
+              telemetryId: commandResult.telemetryId ?? runContext.telemetryId,
+              cronJobName: job.name,
+              sessionTarget: job.sessionTarget,
+              wakeMode: job.wakeMode,
+              command: job.payload.command.slice(0, 512),
+              cwd: job.payload.cwd ?? null,
+              timeoutSeconds: job.payload.timeoutSeconds ?? null,
+            },
+          });
+          return commandResult.status === "ok"
+            ? {
+                status: "ok" as const,
+                summary: commandResult.summary,
+                outputText: commandResult.outputText,
+                runId: commandResult.runId ?? runContext.runId,
+                telemetryId: commandResult.telemetryId ?? runContext.telemetryId,
+              }
+            : commandResult.status === "skipped"
+              ? {
+                  status: "skipped" as const,
+                  err: commandResult.error,
+                  summary: commandResult.summary,
+                  outputText: commandResult.outputText,
+                  runId: commandResult.runId ?? runContext.runId,
+                  telemetryId: commandResult.telemetryId ?? runContext.telemetryId,
+                }
+              : {
+                  status: "error" as const,
+                  err: commandResult.error ?? "cron command failed",
+                  summary: commandResult.summary,
+                  outputText: commandResult.outputText,
+                  runId: commandResult.runId ?? runContext.runId,
+                  telemetryId: commandResult.telemetryId ?? runContext.telemetryId,
+                };
+        })()
+      : await (async () => {
+          const res = await state.deps.runIsolatedAgentJob({
+            job,
+            message: job.payload.message,
+            runId: runContext.runId,
+            telemetryId: runContext.telemetryId,
+          });
+          return res.status === "ok"
+            ? {
+                status: "ok" as const,
+                summary: res.summary,
+                outputText: res.outputText,
+                runId: res.runId ?? runContext.runId,
+                sessionId: res.sessionId,
+                telemetryId: res.telemetryId ?? runContext.telemetryId,
+              }
+            : res.status === "skipped"
+              ? {
+                  status: "skipped" as const,
+                  summary: res.summary,
+                  outputText: res.outputText,
+                  runId: res.runId ?? runContext.runId,
+                  sessionId: res.sessionId,
+                  telemetryId: res.telemetryId ?? runContext.telemetryId,
+                }
+              : {
+                  status: "error" as const,
+                  err: res.error ?? "cron job failed",
+                  errKind: res.errorKind,
+                  summary: res.summary,
+                  outputText: res.outputText,
+                  runId: res.runId ?? runContext.runId,
+                  sessionId: res.sessionId,
+                  telemetryId: res.telemetryId ?? runContext.telemetryId,
+                };
+        })();
 
   const prefix = job.isolation?.postToMainPrefix?.trim() || "Cron";
   const mode = job.isolation?.postToMainMode ?? "summary";
