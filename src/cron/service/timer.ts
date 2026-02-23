@@ -292,6 +292,52 @@ async function runJobCore(
   outputText?: string;
 }> {
   if (job.sessionTarget === "main") {
+    const configuredMainDeliveryStrategy = job.mainDeliveryStrategy ?? "desk";
+    let effectiveMainDeliveryStrategy = configuredMainDeliveryStrategy;
+    if (configuredMainDeliveryStrategy === "external-channel") {
+      // External channel routing for main systemEvent jobs is tracked as an explicit strategy,
+      // but not yet implemented in the CronService main lane path.
+      effectiveMainDeliveryStrategy = "desk";
+      emitSystemEvent({
+        subsystem: "delivery",
+        event_type: "cron_main_delivery_strategy_fallback",
+        status: "degraded",
+        source: "cron",
+        process_id: job.id,
+        process_name: job.name ?? null,
+        agent_id: job.agentId ?? null,
+        message: "main external-channel strategy not yet implemented; falling back to desk",
+        details: {
+          cronJobId: job.id,
+          cronRunId: runContext.runId,
+          telemetryId: runContext.telemetryId,
+          configuredMainDeliveryStrategy,
+          effectiveMainDeliveryStrategy,
+        },
+      });
+    }
+    const heartbeatReason =
+      effectiveMainDeliveryStrategy === "main-session"
+        ? `cron-main-session:${job.id}`
+        : `cron:${job.id}`;
+    emitSystemEvent({
+      subsystem: "delivery",
+      event_type: "cron_main_delivery_strategy_selected",
+      status: "ok",
+      source: "cron",
+      process_id: job.id,
+      process_name: job.name ?? null,
+      agent_id: job.agentId ?? null,
+      message: effectiveMainDeliveryStrategy,
+      details: {
+        cronJobId: job.id,
+        cronRunId: runContext.runId,
+        telemetryId: runContext.telemetryId,
+        configuredMainDeliveryStrategy,
+        effectiveMainDeliveryStrategy,
+        heartbeatReason,
+      },
+    });
     const text = resolveJobPayloadTextForMain(job);
     if (!text) {
       const kind = job.payload.kind;
@@ -323,11 +369,14 @@ async function runJobCore(
         cronJobName: job.name,
         sessionTarget: job.sessionTarget,
         wakeMode: job.wakeMode,
+        configuredMainDeliveryStrategy,
+        effectiveMainDeliveryStrategy,
+        heartbeatReason,
         textChars: text.length,
       },
     });
     if (job.wakeMode === "now" && state.deps.runHeartbeatOnce) {
-      const reason = `cron:${job.id}`;
+      const reason = heartbeatReason;
       const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
       const maxWaitMs = 2 * 60_000;
       const waitStartedAt = state.deps.nowMs();
@@ -377,7 +426,7 @@ async function runJobCore(
       };
     }
     // wakeMode is "next-heartbeat" or runHeartbeatOnce not available
-    state.deps.requestHeartbeatNow({ reason: `cron:${job.id}` });
+    state.deps.requestHeartbeatNow({ reason: heartbeatReason });
     return {
       status: "ok",
       summary: text,

@@ -106,6 +106,7 @@ export function createJob(state: CronServiceState, input: CronJobCreate): CronJo
     sessionTarget: input.sessionTarget,
     wakeMode: input.wakeMode,
     payload: input.payload,
+    mainDeliveryStrategy: input.mainDeliveryStrategy,
     isolation: input.isolation,
     preCheck: input.preCheck,
     state: {
@@ -141,6 +142,9 @@ export function applyJobPatch(job: CronJob, patch: CronJobPatch) {
   }
   if (patch.payload) {
     job.payload = mergeCronPayload(job.payload, patch.payload);
+  }
+  if ("mainDeliveryStrategy" in patch) {
+    job.mainDeliveryStrategy = patch.mainDeliveryStrategy;
   }
   if (patch.isolation) {
     job.isolation = patch.isolation;

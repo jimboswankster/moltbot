@@ -61,6 +61,33 @@ function coercePayload(payload: UnknownRecord) {
   return next;
 }
 
+function coerceMainDeliveryStrategyWithDefaults(
+  existing: unknown,
+  options: { sessionTarget: unknown; payload: unknown; applyDefaults: boolean },
+) {
+  if (typeof existing === "string") {
+    const normalized = existing.trim().toLowerCase();
+    if (
+      normalized === "desk" ||
+      normalized === "main-session" ||
+      normalized === "external-channel"
+    ) {
+      return normalized;
+    }
+  }
+  if (!options.applyDefaults) {
+    return undefined;
+  }
+  const isMainSystemEvent =
+    options.sessionTarget === "main" &&
+    isRecord(options.payload) &&
+    options.payload.kind === "systemEvent";
+  if (!isMainSystemEvent) {
+    return undefined;
+  }
+  return "desk";
+}
+
 function coerceIsolationWithDefaults(
   existing: unknown,
   options: { sessionTarget: unknown; payload: unknown; applyDefaults: boolean },
@@ -162,6 +189,15 @@ export function normalizeCronJobInput(
   });
   if (isolation) {
     next.isolation = isolation;
+  }
+
+  const mainDeliveryStrategy = coerceMainDeliveryStrategyWithDefaults(base.mainDeliveryStrategy, {
+    sessionTarget: next.sessionTarget,
+    payload: next.payload,
+    applyDefaults: options.applyDefaults ?? false,
+  });
+  if (mainDeliveryStrategy) {
+    next.mainDeliveryStrategy = mainDeliveryStrategy;
   }
 
   return next;

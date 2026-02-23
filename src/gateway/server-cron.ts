@@ -60,6 +60,7 @@ export function buildGatewayCronService(params: {
         sessionTarget: job.sessionTarget,
         wakeMode: job.wakeMode,
         payload: job.payload,
+        mainDeliveryStrategy: job.mainDeliveryStrategy,
         preCheck: job.preCheck,
         isolation: job.isolation,
       };

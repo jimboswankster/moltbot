@@ -146,4 +146,37 @@ describe("normalizeCronJobCreate", () => {
     const isolation = normalized.isolation as Record<string, unknown>;
     expect(isolation.postbackStrategy).toBe("direct");
   });
+
+  it("defaults main systemEvent jobs to desk mainDeliveryStrategy", () => {
+    const normalized = normalizeCronJobCreate({
+      name: "main-desk-default",
+      enabled: true,
+      schedule: { kind: "cron", expr: "* * * * *" },
+      sessionTarget: "main",
+      wakeMode: "now",
+      payload: {
+        kind: "systemEvent",
+        text: "hello",
+      },
+    }) as unknown as Record<string, unknown>;
+
+    expect(normalized.mainDeliveryStrategy).toBe("desk");
+  });
+
+  it("preserves explicit mainDeliveryStrategy for main jobs", () => {
+    const normalized = normalizeCronJobCreate({
+      name: "main-main-session",
+      enabled: true,
+      schedule: { kind: "cron", expr: "* * * * *" },
+      sessionTarget: "main",
+      wakeMode: "now",
+      mainDeliveryStrategy: "main-session",
+      payload: {
+        kind: "systemEvent",
+        text: "hello",
+      },
+    }) as unknown as Record<string, unknown>;
+
+    expect(normalized.mainDeliveryStrategy).toBe("main-session");
+  });
 });

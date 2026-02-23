@@ -31,6 +31,24 @@ function ensureDeskPostbackForIsolatedAgentTurn(raw: Record<string, unknown>) {
   return false;
 }
 
+function ensureMainDeliveryStrategyForMainSystemEvent(raw: Record<string, unknown>) {
+  if (raw.sessionTarget !== "main") {
+    return false;
+  }
+  const payload = raw.payload;
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return false;
+  }
+  if ((payload as { kind?: unknown }).kind !== "systemEvent") {
+    return false;
+  }
+  if (typeof raw.mainDeliveryStrategy === "string") {
+    return false;
+  }
+  raw.mainDeliveryStrategy = "desk";
+  return true;
+}
+
 /**
  * Reload jobs from disk, clearing any in-memory cache. Use after external edits to
  * jobs.json so new/updated/removed jobs are picked up without a gateway restart.
@@ -78,6 +96,9 @@ export async function ensureLoaded(state: CronServiceState) {
       }
     }
     if (ensureDeskPostbackForIsolatedAgentTurn(raw)) {
+      mutated = true;
+    }
+    if (ensureMainDeliveryStrategyForMainSystemEvent(raw)) {
       mutated = true;
     }
   }

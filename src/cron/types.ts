@@ -9,6 +9,7 @@ export type CronSessionTarget = "main" | "isolated";
 export type CronWakeMode = "next-heartbeat" | "now";
 export type CronLoadClass = "heavy" | "medium" | "light";
 export type CronPreferredWindow = "night" | "shoulder" | "day";
+export type CronMainDeliveryStrategy = "desk" | "main-session" | "external-channel";
 
 export type CronMessageChannel = ChannelId | "last";
 
@@ -94,6 +95,8 @@ export type CronJob = {
   sessionTarget: CronSessionTarget;
   wakeMode: CronWakeMode;
   payload: CronPayload;
+  /** Explicit routing policy for main-lane systemEvent jobs. */
+  mainDeliveryStrategy?: CronMainDeliveryStrategy;
   isolation?: CronIsolation;
   /** Optional pre-check: run before isolated agent; if script exits non-zero, skip job. */
   preCheck?: CronPreCheck;

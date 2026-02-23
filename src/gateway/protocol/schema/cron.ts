@@ -85,6 +85,12 @@ export const CronIsolationSchema = Type.Object(
   { additionalProperties: false },
 );
 
+export const CronMainDeliveryStrategySchema = Type.Union([
+  Type.Literal("desk"),
+  Type.Literal("main-session"),
+  Type.Literal("external-channel"),
+]);
+
 export const CronJobStateSchema = Type.Object(
   {
     nextRunAtMs: Type.Optional(Type.Integer({ minimum: 0 })),
@@ -120,6 +126,7 @@ export const CronJobSchema = Type.Object(
     sessionTarget: Type.Union([Type.Literal("main"), Type.Literal("isolated")]),
     wakeMode: Type.Union([Type.Literal("next-heartbeat"), Type.Literal("now")]),
     payload: CronPayloadSchema,
+    mainDeliveryStrategy: Type.Optional(CronMainDeliveryStrategySchema),
     isolation: Type.Optional(CronIsolationSchema),
     state: CronJobStateSchema,
   },
@@ -153,6 +160,7 @@ export const CronAddParamsSchema = Type.Object(
     sessionTarget: Type.Union([Type.Literal("main"), Type.Literal("isolated")]),
     wakeMode: Type.Union([Type.Literal("next-heartbeat"), Type.Literal("now")]),
     payload: CronPayloadSchema,
+    mainDeliveryStrategy: Type.Optional(CronMainDeliveryStrategySchema),
     isolation: Type.Optional(CronIsolationSchema),
   },
   { additionalProperties: false },
@@ -176,6 +184,7 @@ export const CronJobPatchSchema = Type.Object(
     sessionTarget: Type.Optional(Type.Union([Type.Literal("main"), Type.Literal("isolated")])),
     wakeMode: Type.Optional(Type.Union([Type.Literal("next-heartbeat"), Type.Literal("now")])),
     payload: Type.Optional(CronPayloadPatchSchema),
+    mainDeliveryStrategy: Type.Optional(CronMainDeliveryStrategySchema),
     isolation: Type.Optional(CronIsolationSchema),
     state: Type.Optional(Type.Partial(CronJobStateSchema)),
   },
