@@ -528,31 +528,108 @@ async function runJobCore(
     }
   }
   const statusPrefix = outcome.status === "ok" ? prefix : `${prefix} (${outcome.status})`;
+  const requesterAgentId =
+    typeof job.agentId === "string" && job.agentId.trim().length > 0 ? job.agentId.trim() : "main";
+  const requesterSessionKey = `agent:${requesterAgentId}:main`;
+  const triggerMessage = `${statusPrefix}: ${body}`;
+  const traceId = `${job.id}:${outcome.runId ?? runContext.runId}`;
+  const trace = {
+    traceId,
+    cronJobId: job.id,
+    cronRunId: outcome.runId ?? runContext.runId,
+    telemetryId: outcome.telemetryId ?? runContext.telemetryId,
+    source: "cron",
+  } as const;
 
   // Desk postback strategy: route result to State Desk instead of direct interrupt
   if (job.isolation?.postbackStrategy === "desk") {
+    emitSystemEvent({
+      subsystem: "delivery",
+      event_type: "cron_desk_handoff_attempt",
+      status: "ok",
+      source: "cron-desk",
+      process_id: job.id,
+      process_name: job.name ?? null,
+      agent_id: requesterAgentId,
+      message: triggerMessage.slice(0, 240),
+      details: {
+        ...trace,
+        cronJobName: job.name,
+        sessionTarget: job.sessionTarget,
+        wakeMode: job.wakeMode,
+        requesterSessionKey,
+      },
+    });
     try {
       const { fireDeskAnnounce } = await import("../../agents/subagent-announce.js");
-      const triggerMessage = `${statusPrefix}: ${body}`;
       const handled = await fireDeskAnnounce({
         childSessionKey: `cron:${job.id}`,
         childRunId: job.id,
-        requesterSessionKey: `agent:${job.agentId}:main`,
+        requesterSessionKey,
         task: job.name ?? job.id,
         label: job.name ?? job.id,
         triggerMessage,
         outcome: { status: outcome.status, error: outcome.err },
+        trace,
       });
       if (handled) {
+        emitSystemEvent({
+          subsystem: "delivery",
+          event_type: "cron_desk_handoff_enqueued",
+          status: "ok",
+          source: "cron-desk",
+          process_id: job.id,
+          process_name: job.name ?? null,
+          agent_id: requesterAgentId,
+          message: triggerMessage.slice(0, 240),
+          details: {
+            ...trace,
+            cronJobName: job.name,
+            requesterSessionKey,
+            postbackStrategy: "desk",
+          },
+        });
         return outcome;
       }
       // H2 Fail-to-Direct: desk handler failed, fall through to direct postback
+      emitSystemEvent({
+        subsystem: "delivery",
+        event_type: "cron_desk_handoff_fallback",
+        status: "degraded",
+        source: "cron-desk",
+        process_id: job.id,
+        process_name: job.name ?? null,
+        agent_id: requesterAgentId,
+        message: "desk handler returned false; using direct postback",
+        details: {
+          ...trace,
+          cronJobName: job.name,
+          requesterSessionKey,
+          reason: "desk_handler_returned_false",
+        },
+      });
     } catch {
       // fireDeskAnnounce not available or threw — fall through to direct
+      emitSystemEvent({
+        subsystem: "delivery",
+        event_type: "cron_desk_handoff_fallback",
+        status: "degraded",
+        source: "cron-desk",
+        process_id: job.id,
+        process_name: job.name ?? null,
+        agent_id: requesterAgentId,
+        message: "desk handler unavailable or threw; using direct postback",
+        details: {
+          ...trace,
+          cronJobName: job.name,
+          requesterSessionKey,
+          reason: "desk_handler_threw_or_unavailable",
+        },
+      });
     }
   }
 
-  const postbackText = `${statusPrefix}: ${body}`;
+  const postbackText = triggerMessage;
   state.deps.enqueueSystemEvent(postbackText, {
     agentId: job.agentId,
   });

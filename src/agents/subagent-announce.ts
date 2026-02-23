@@ -41,13 +41,36 @@ export type DeskAnnounceHandler = (params: {
   label?: string;
   triggerMessage: string;
   outcome?: { status: string; error?: string };
+  trace?: {
+    traceId?: string;
+    cronJobId?: string;
+    cronRunId?: string;
+    telemetryId?: string;
+    source?: string;
+  };
 }) => Promise<boolean>;
 
-let deskAnnounceHandler: DeskAnnounceHandler | null = null;
+const DESK_STATE_KEY = "__openclawDeskAnnounceState";
+type DeskAnnounceState = {
+  handler: DeskAnnounceHandler | null;
+  failureCount: number;
+  failureWindowStart: number;
+};
+function getDeskAnnounceState(): DeskAnnounceState {
+  const target = globalThis as typeof globalThis & {
+    [DESK_STATE_KEY]?: DeskAnnounceState;
+  };
+  if (!target[DESK_STATE_KEY]) {
+    target[DESK_STATE_KEY] = {
+      handler: null,
+      failureCount: 0,
+      failureWindowStart: 0,
+    };
+  }
+  return target[DESK_STATE_KEY];
+}
 
 // H6 Circuit Breaker — if too many desk failures in a window, stop trying
-let deskFailureCount = 0;
-let deskFailureWindowStart = 0;
 const DESK_FAILURE_THRESHOLD = 3;
 const DESK_FAILURE_WINDOW_MS = 60_000;
 
@@ -56,16 +79,18 @@ const DESK_FAILURE_WINDOW_MS = 60_000;
  * Called by the switchboard-daemon plugin during `activate()` (H3).
  */
 export function registerDeskAnnounceHandler(handler: DeskAnnounceHandler): void {
-  deskAnnounceHandler = handler;
+  const state = getDeskAnnounceState();
+  state.handler = handler;
 }
 
 /**
  * Reset desk announce state for tests. Not for production use.
  */
 export function resetDeskAnnounceStateForTests(): void {
-  deskAnnounceHandler = null;
-  deskFailureCount = 0;
-  deskFailureWindowStart = 0;
+  const state = getDeskAnnounceState();
+  state.handler = null;
+  state.failureCount = 0;
+  state.failureWindowStart = 0;
 }
 
 /**
@@ -82,8 +107,16 @@ export async function fireDeskAnnounce(params: {
   label?: string;
   triggerMessage: string;
   outcome?: { status: string; error?: string };
+  trace?: {
+    traceId?: string;
+    cronJobId?: string;
+    cronRunId?: string;
+    telemetryId?: string;
+    source?: string;
+  };
 }): Promise<boolean> {
-  if (!deskAnnounceHandler) {
+  const state = getDeskAnnounceState();
+  if (!state.handler) {
     recordRuntimeTelemetryEvent({
       event: "switchboard.desk_announce_handler_missing",
       subsystem: "switchboard",
@@ -100,19 +133,19 @@ export async function fireDeskAnnounce(params: {
 
   // H6 Circuit Breaker — check failure rate
   const now = Date.now();
-  if (now - deskFailureWindowStart > DESK_FAILURE_WINDOW_MS) {
+  if (now - state.failureWindowStart > DESK_FAILURE_WINDOW_MS) {
     // Reset window
-    deskFailureCount = 0;
-    deskFailureWindowStart = now;
+    state.failureCount = 0;
+    state.failureWindowStart = now;
   }
-  if (deskFailureCount >= DESK_FAILURE_THRESHOLD) {
+  if (state.failureCount >= DESK_FAILURE_THRESHOLD) {
     recordRuntimeTelemetryEvent({
       event: "switchboard.desk_announce_circuit_open",
       subsystem: "switchboard",
       severity: "warning",
       status: "degraded",
       details: {
-        deskFailureCount,
+        deskFailureCount: state.failureCount,
         threshold: DESK_FAILURE_THRESHOLD,
         windowMs: DESK_FAILURE_WINDOW_MS,
         requesterSessionKey: params.requesterSessionKey,
@@ -122,9 +155,9 @@ export async function fireDeskAnnounce(params: {
   }
 
   try {
-    const result = await deskAnnounceHandler(params);
+    const result = await state.handler(params);
     if (!result) {
-      deskFailureCount++;
+      state.failureCount++;
       recordRuntimeTelemetryEvent({
         event: "switchboard.desk_announce_failed",
         subsystem: "switchboard",
@@ -141,7 +174,7 @@ export async function fireDeskAnnounce(params: {
     }
     return true;
   } catch (err) {
-    deskFailureCount++;
+    state.failureCount++;
     recordRuntimeTelemetryEvent({
       event: "switchboard.desk_announce_failed",
       subsystem: "switchboard",
