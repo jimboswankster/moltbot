@@ -294,30 +294,9 @@ async function runJobCore(
   if (job.sessionTarget === "main") {
     const configuredMainDeliveryStrategy = job.mainDeliveryStrategy ?? "desk";
     let effectiveMainDeliveryStrategy = configuredMainDeliveryStrategy;
-    if (configuredMainDeliveryStrategy === "external-channel") {
-      // External channel routing for main systemEvent jobs is tracked as an explicit strategy,
-      // but not yet implemented in the CronService main lane path.
-      effectiveMainDeliveryStrategy = "desk";
-      emitSystemEvent({
-        subsystem: "delivery",
-        event_type: "cron_main_delivery_strategy_fallback",
-        status: "degraded",
-        source: "cron",
-        process_id: job.id,
-        process_name: job.name ?? null,
-        agent_id: job.agentId ?? null,
-        message: "main external-channel strategy not yet implemented; falling back to desk",
-        details: {
-          cronJobId: job.id,
-          cronRunId: runContext.runId,
-          telemetryId: runContext.telemetryId,
-          configuredMainDeliveryStrategy,
-          effectiveMainDeliveryStrategy,
-        },
-      });
-    }
     const heartbeatReason =
-      effectiveMainDeliveryStrategy === "main-session"
+      effectiveMainDeliveryStrategy === "main-session" ||
+      effectiveMainDeliveryStrategy === "external-channel"
         ? `cron-main-session:${job.id}`
         : `cron:${job.id}`;
     emitSystemEvent({
@@ -352,6 +331,22 @@ async function runJobCore(
       };
     }
     state.deps.enqueueSystemEvent(text, { agentId: job.agentId });
+    const externalHeartbeatOverride =
+      effectiveMainDeliveryStrategy === "external-channel" && job.payload.kind === "systemEvent"
+        ? {
+            target: job.payload.channel ?? "last",
+            to: job.payload.to,
+          }
+        : undefined;
+    if (effectiveMainDeliveryStrategy === "external-channel" && job.wakeMode !== "now") {
+      return {
+        status: "skipped",
+        err: "mainDeliveryStrategy=external-channel requires wakeMode=now",
+        summary: text,
+        runId: runContext.runId,
+        telemetryId: runContext.telemetryId,
+      };
+    }
     // Telemetry: record delivery intent for main-lane system events.
     emitSystemEvent({
       subsystem: "delivery",
@@ -375,7 +370,10 @@ async function runJobCore(
         textChars: text.length,
       },
     });
-    if (job.wakeMode === "now" && state.deps.runHeartbeatOnce) {
+    if (
+      (job.wakeMode === "now" || effectiveMainDeliveryStrategy === "external-channel") &&
+      state.deps.runHeartbeatOnce
+    ) {
       const reason = heartbeatReason;
       const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
       const maxWaitMs = 2 * 60_000;
@@ -383,7 +381,10 @@ async function runJobCore(
 
       let heartbeatResult: HeartbeatRunResult;
       for (;;) {
-        heartbeatResult = await state.deps.runHeartbeatOnce({ reason });
+        heartbeatResult = await state.deps.runHeartbeatOnce({
+          reason,
+          ...(externalHeartbeatOverride ? { heartbeat: externalHeartbeatOverride } : {}),
+        });
         if (
           heartbeatResult.status !== "skipped" ||
           heartbeatResult.reason !== "requests-in-flight"
@@ -420,6 +421,15 @@ async function runJobCore(
       return {
         status: "error",
         err: heartbeatResult.reason,
+        summary: text,
+        runId: runContext.runId,
+        telemetryId: runContext.telemetryId,
+      };
+    }
+    if (effectiveMainDeliveryStrategy === "external-channel") {
+      return {
+        status: "error",
+        err: "heartbeat runner unavailable for external-channel strategy",
         summary: text,
         runId: runContext.runId,
         telemetryId: runContext.telemetryId,

@@ -12,7 +12,11 @@ import { saveAuthProfileStore } from "./auth-profiles.js";
 import { AUTH_STORE_VERSION } from "./auth-profiles/constants.js";
 import { resetKloopPolicyCacheForTest } from "./auth-profiles/kloop-policy.js";
 import { resetQuotaPolicyCacheForTest } from "./auth-profiles/quota-policy.js";
-import { resetModelCandidateCooldownsForTest, runWithModelFallback } from "./model-fallback.js";
+import {
+  resetModelCandidateCooldownsForTest,
+  resolveFallbackCandidates,
+  runWithModelFallback,
+} from "./model-fallback.js";
 
 function makeCfg(overrides: Partial<OpenClawConfig> = {}): OpenClawConfig {
   return {
@@ -87,6 +91,33 @@ describe("runWithModelFallback", () => {
     expect(run).toHaveBeenCalledTimes(2);
     expect(run.mock.calls[1]?.[0]).toBe("anthropic");
     expect(run.mock.calls[1]?.[1]).toBe("claude-haiku-3-5");
+  });
+
+  it("adds non-ollama fallback candidate for ollama cloud models when available", () => {
+    const cfg = makeCfg({
+      agents: {
+        defaults: {
+          model: {
+            primary: "ollama/glm-5:cloud",
+            fallbacks: [],
+          },
+          models: {
+            "ollama/glm-5:cloud": { alias: "glm-5" },
+            "openrouter/z-ai/glm-5": { alias: "glm-5-openrouter" },
+          },
+        },
+      },
+    });
+
+    const candidates = resolveFallbackCandidates({
+      cfg,
+      provider: "ollama",
+      model: "glm-5:cloud",
+    });
+    expect(candidates.slice(0, 2)).toEqual([
+      { provider: "ollama", model: "glm-5:cloud" },
+      { provider: "openrouter", model: "z-ai/glm-5" },
+    ]);
   });
 
   it("falls back on 402 payment required", async () => {

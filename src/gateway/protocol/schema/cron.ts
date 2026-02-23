@@ -32,6 +32,9 @@ export const CronPayloadSchema = Type.Union([
     {
       kind: Type.Literal("systemEvent"),
       text: NonEmptyString,
+      channel: Type.Optional(Type.Union([Type.Literal("last"), NonEmptyString])),
+      to: Type.Optional(Type.String()),
+      bestEffortDeliver: Type.Optional(Type.Boolean()),
     },
     { additionalProperties: false },
   ),
@@ -65,6 +68,9 @@ export const CronPayloadPatchSchema = Type.Union([
     {
       kind: Type.Literal("systemEvent"),
       text: Type.Optional(NonEmptyString),
+      channel: Type.Optional(Type.Union([Type.Literal("last"), NonEmptyString])),
+      to: Type.Optional(Type.String()),
+      bestEffortDeliver: Type.Optional(Type.Boolean()),
     },
     { additionalProperties: false },
   ),

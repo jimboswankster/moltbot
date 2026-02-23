@@ -82,21 +82,61 @@ describe("CronService mainDeliveryStrategy", () => {
     await store.cleanup();
   });
 
-  it("falls back external-channel strategy to desk route for now", async () => {
+  it("routes external-channel strategy through immediate heartbeat with explicit delivery target", async () => {
     const store = await makeStorePath();
-    const requestHeartbeatNow = vi.fn();
+    const runHeartbeatOnce = vi.fn(async () => ({ status: "ran" as const, durationMs: 1 }));
 
     const cron = new CronService({
       storePath: store.storePath,
       cronEnabled: true,
       log: noopLogger,
       enqueueSystemEvent: vi.fn(),
-      requestHeartbeatNow,
+      requestHeartbeatNow: vi.fn(),
+      runHeartbeatOnce,
       runIsolatedAgentJob: vi.fn(async () => ({ status: "ok" as const })),
     });
     await cron.start();
     const job = await cron.add({
-      name: "main external fallback",
+      name: "main external direct",
+      enabled: true,
+      schedule: { kind: "every", everyMs: 60_000 },
+      sessionTarget: "main",
+      wakeMode: "now",
+      mainDeliveryStrategy: "external-channel",
+      payload: {
+        kind: "systemEvent",
+        text: "hello",
+        channel: "telegram",
+        to: "-1001234567890",
+      },
+    });
+
+    await cron.run(job.id, "force");
+    expect(runHeartbeatOnce).toHaveBeenCalledWith({
+      reason: `cron-main-session:${job.id}`,
+      heartbeat: { target: "telegram", to: "-1001234567890" },
+    });
+
+    cron.stop();
+    await store.cleanup();
+  });
+
+  it("skips external-channel main jobs when wakeMode is not now", async () => {
+    const store = await makeStorePath();
+    const runHeartbeatOnce = vi.fn(async () => ({ status: "ran" as const, durationMs: 1 }));
+
+    const cron = new CronService({
+      storePath: store.storePath,
+      cronEnabled: true,
+      log: noopLogger,
+      enqueueSystemEvent: vi.fn(),
+      requestHeartbeatNow: vi.fn(),
+      runHeartbeatOnce,
+      runIsolatedAgentJob: vi.fn(async () => ({ status: "ok" as const })),
+    });
+    await cron.start();
+    const job = await cron.add({
+      name: "main external invalid wake",
       enabled: true,
       schedule: { kind: "every", everyMs: 60_000 },
       sessionTarget: "main",
@@ -106,7 +146,11 @@ describe("CronService mainDeliveryStrategy", () => {
     });
 
     await cron.run(job.id, "force");
-    expect(requestHeartbeatNow).toHaveBeenCalledWith({ reason: `cron:${job.id}` });
+    expect(runHeartbeatOnce).not.toHaveBeenCalled();
+    const jobs = await cron.list();
+    const saved = jobs.find((entry) => entry.id === job.id);
+    expect(saved?.state.lastStatus).toBe("skipped");
+    expect(saved?.state.lastError).toContain("requires wakeMode=now");
 
     cron.stop();
     await store.cleanup();

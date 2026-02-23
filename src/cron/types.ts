@@ -14,7 +14,19 @@ export type CronMainDeliveryStrategy = "desk" | "main-session" | "external-chann
 export type CronMessageChannel = ChannelId | "last";
 
 export type CronPayload =
-  | { kind: "systemEvent"; text: string }
+  | {
+      kind: "systemEvent";
+      text: string;
+      /**
+       * Optional explicit channel target for mainDeliveryStrategy=external-channel.
+       * Defaults to "last" when omitted.
+       */
+      channel?: CronMessageChannel;
+      /** Optional explicit recipient/chat id for external-channel delivery. */
+      to?: string;
+      /** Optional best-effort delivery for external-channel mode. */
+      bestEffortDeliver?: boolean;
+    }
   | {
       kind: "agentTurn";
       message: string;
@@ -36,7 +48,13 @@ export type CronPayload =
     };
 
 export type CronPayloadPatch =
-  | { kind: "systemEvent"; text?: string }
+  | {
+      kind: "systemEvent";
+      text?: string;
+      channel?: CronMessageChannel;
+      to?: string;
+      bestEffortDeliver?: boolean;
+    }
   | {
       kind: "agentTurn";
       message?: string;

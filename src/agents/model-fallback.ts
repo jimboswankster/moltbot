@@ -158,6 +158,46 @@ function buildAllowedModelKeys(
   return keys.size > 0 ? keys : null;
 }
 
+function resolveOllamaCloudFallbackCandidate(params: {
+  cfg: OpenClawConfig | undefined;
+  defaultProvider: string;
+  model: string;
+}): ModelCandidate | null {
+  const cloudModel = String(params.model ?? "").trim();
+  const cloudSuffix = ":cloud";
+  if (!cloudModel.toLowerCase().endsWith(cloudSuffix)) {
+    return null;
+  }
+  const baseModel = cloudModel.slice(0, -cloudSuffix.length).trim().toLowerCase();
+  if (!baseModel) {
+    return null;
+  }
+  const modelMap = params.cfg?.agents?.defaults?.models ?? {};
+  const candidates: Array<ModelCandidate & { rank: number }> = [];
+  for (const raw of Object.keys(modelMap)) {
+    const parsed = parseModelRef(raw, params.defaultProvider);
+    if (!parsed || parsed.provider.toLowerCase() === "ollama") {
+      continue;
+    }
+    const modelLower = parsed.model.toLowerCase();
+    if (!modelLower.includes(baseModel)) {
+      continue;
+    }
+    let rank = 100;
+    const providerLower = parsed.provider.toLowerCase();
+    if (providerLower === "openrouter") rank = 0;
+    else if (providerLower === "minimax") rank = 1;
+    else if (providerLower === "openai") rank = 2;
+    candidates.push({ ...parsed, rank });
+  }
+  if (candidates.length === 0) {
+    return null;
+  }
+  candidates.sort((a, b) => a.rank - b.rank);
+  const best = candidates[0];
+  return { provider: best.provider, model: best.model };
+}
+
 function resolveImageFallbackCandidates(params: {
   cfg: OpenClawConfig | undefined;
   defaultProvider: string;
@@ -271,6 +311,17 @@ export function resolveFallbackCandidates(params: {
   };
 
   addCandidate({ provider, model }, false);
+
+  if (provider.toLowerCase() === "ollama" && model.toLowerCase().endsWith(":cloud")) {
+    const cloudFallback = resolveOllamaCloudFallbackCandidate({
+      cfg: params.cfg,
+      defaultProvider,
+      model,
+    });
+    if (cloudFallback) {
+      addCandidate(cloudFallback, true);
+    }
+  }
 
   const modelFallbacks = (() => {
     if (params.fallbacksOverride !== undefined) {

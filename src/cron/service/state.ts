@@ -31,7 +31,10 @@ export type CronServiceDeps = {
   workspaceDir?: string;
   enqueueSystemEvent: (text: string, opts?: { agentId?: string }) => void;
   requestHeartbeatNow: (opts?: { reason?: string }) => void;
-  runHeartbeatOnce?: (opts?: { reason?: string }) => Promise<HeartbeatRunResult>;
+  runHeartbeatOnce?: (opts?: {
+    reason?: string;
+    heartbeat?: { target?: string; to?: string; model?: string };
+  }) => Promise<HeartbeatRunResult>;
   runIsolatedAgentJob: (params: {
     job: CronJob;
     message: string;
