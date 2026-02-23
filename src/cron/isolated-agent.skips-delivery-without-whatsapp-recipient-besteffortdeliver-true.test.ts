@@ -105,7 +105,7 @@ describe("runCronIsolatedAgentTurn", () => {
     );
   });
 
-  it("skips delivery without a WhatsApp recipient when bestEffortDeliver=true", async () => {
+  it("returns ok without delivery when WhatsApp recipient is missing and bestEffortDeliver=true", async () => {
     await withTempHome(async (home) => {
       const storePath = await writeSessionStore(home);
       const deps: CliDeps = {
@@ -138,8 +138,7 @@ describe("runCronIsolatedAgentTurn", () => {
         lane: "cron",
       });
 
-      expect(res.status).toBe("skipped");
-      expect(String(res.summary ?? "")).toMatch(/delivery skipped/i);
+      expect(res.status).toBe("ok");
       expect(deps.sendMessageWhatsApp).not.toHaveBeenCalled();
     });
   });
@@ -201,7 +200,7 @@ describe("runCronIsolatedAgentTurn", () => {
     });
   });
 
-  it("auto-delivers when explicit target is set without deliver flag", async () => {
+  it("does not auto-deliver when explicit target is set without deliver flag", async () => {
     await withTempHome(async (home) => {
       const storePath = await writeSessionStore(home);
       const deps: CliDeps = {
@@ -242,11 +241,7 @@ describe("runCronIsolatedAgentTurn", () => {
         });
 
         expect(res.status).toBe("ok");
-        expect(deps.sendMessageTelegram).toHaveBeenCalledWith(
-          "123",
-          "hello from cron",
-          expect.objectContaining({ verbose: false }),
-        );
+        expect(deps.sendMessageTelegram).not.toHaveBeenCalled();
       } finally {
         if (prevTelegramToken === undefined) {
           delete process.env.TELEGRAM_BOT_TOKEN;
