@@ -148,6 +148,11 @@ function stampConfigVersion(cfg: OpenClawConfig): OpenClawConfig {
 }
 
 function warnIfConfigFromFuture(cfg: OpenClawConfig, logger: Pick<typeof console, "warn">): void {
+  // Unknown/local dev builds may resolve VERSION to a sentinel.
+  // Avoid noisy false-positive warnings in that case.
+  if (VERSION === "0.0.0") {
+    return;
+  }
   const touched = cfg.meta?.lastTouchedVersion;
   if (!touched) {
     return;
