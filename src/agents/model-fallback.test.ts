@@ -120,6 +120,43 @@ describe("runWithModelFallback", () => {
     ]);
   });
 
+  it("falls back from ollama cloud auth failure to openrouter glm-5", async () => {
+    const cfg = makeCfg({
+      agents: {
+        defaults: {
+          model: {
+            primary: "ollama/glm-5:cloud",
+            fallbacks: [],
+          },
+          models: {
+            "ollama/glm-5:cloud": { alias: "glm-5" },
+            "openrouter/z-ai/glm-5": { alias: "glm-5-openrouter" },
+          },
+        },
+      },
+    });
+    const run = vi
+      .fn<typeof runWithModelFallback extends (args: infer T) => any ? (args: T) => any : never>()
+      .mockRejectedValueOnce(new Error("Returned unauthorized in this environment"))
+      .mockResolvedValueOnce("ok");
+
+    const value = await runWithModelFallback({
+      cfg,
+      provider: "ollama",
+      model: "glm-5:cloud",
+      run,
+    });
+    expect(value).toMatchObject({
+      result: "ok",
+      provider: "openrouter",
+      model: "z-ai/glm-5",
+    });
+    expect(run.mock.calls[0]?.[0]).toBe("ollama");
+    expect(run.mock.calls[0]?.[1]).toBe("glm-5:cloud");
+    expect(run.mock.calls[1]?.[0]).toBe("openrouter");
+    expect(run.mock.calls[1]?.[1]).toBe("z-ai/glm-5");
+  });
+
   it("falls back on 402 payment required", async () => {
     const cfg = makeCfg();
     const run = vi
