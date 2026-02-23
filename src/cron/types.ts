@@ -27,6 +27,12 @@ export type CronPayload =
       channel?: CronMessageChannel;
       to?: string;
       bestEffortDeliver?: boolean;
+    }
+  | {
+      kind: "command";
+      command: string;
+      cwd?: string;
+      timeoutSeconds?: number;
     };
 
 export type CronPayloadPatch =
@@ -42,6 +48,12 @@ export type CronPayloadPatch =
       channel?: CronMessageChannel;
       to?: string;
       bestEffortDeliver?: boolean;
+    }
+  | {
+      kind: "command";
+      command?: string;
+      cwd?: string;
+      timeoutSeconds?: number;
     };
 
 export type CronIsolation = {

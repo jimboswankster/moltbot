@@ -49,6 +49,24 @@ export type CronServiceDeps = {
     errorKind?: "invalid-model";
   }>;
   /**
+   * Optional deterministic command runner for isolated cron jobs with payload.kind="command".
+   */
+  runCommandJob?: (params: {
+    job: CronJob;
+    command: string;
+    cwd?: string;
+    timeoutSeconds?: number;
+    runId?: string;
+    telemetryId?: string;
+  }) => Promise<{
+    status: "ok" | "error" | "skipped";
+    summary?: string;
+    runId?: string;
+    telemetryId?: string;
+    outputText?: string;
+    error?: string;
+  }>;
+  /**
    * Optional pre-check for isolated jobs. If job.preCheck is set, run this before invoking the agent.
    * Return { pass: true } to proceed, { pass: false, err? } to skip.
    */

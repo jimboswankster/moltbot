@@ -13,6 +13,7 @@ import { runHeartbeatOnce } from "../infra/heartbeat-runner.js";
 import { requestHeartbeatNow } from "../infra/heartbeat-wake.js";
 import { enqueueSystemEvent } from "../infra/system-events.js";
 import { getChildLogger } from "../logging.js";
+import { runCommandWithTimeout } from "../process/exec.js";
 import { normalizeAgentId } from "../routing/session-key.js";
 import { defaultRuntime } from "../runtime.js";
 import { emitSystemEvent } from "../telemetry/supabase.js";
@@ -132,6 +133,76 @@ export function buildGatewayCronService(params: {
         sessionKey: `cron:${job.id}`,
         lane: "cron",
       });
+    },
+    runCommandJob: async ({ job, command, cwd, timeoutSeconds, runId, telemetryId }) => {
+      const timeoutMs = Math.min(
+        Math.max(1_000, Math.floor((timeoutSeconds ?? 300) * 1_000)),
+        30 * 60_000,
+      );
+      const runtimeCwd =
+        typeof cwd === "string" && cwd.trim() ? cwd : workspaceDir || process.cwd();
+      const startedAt = Date.now();
+      const result = await runCommandWithTimeout(["bash", "-lc", command], {
+        cwd: runtimeCwd,
+        timeoutMs,
+      });
+      const outputText = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
+      const summary = outputText
+        ? outputText
+            .split("\n")
+            .map((line) => line.trim())
+            .filter(Boolean)
+            .slice(-1)[0]
+        : result.code === 0
+          ? "command completed"
+          : "command failed";
+      const status = result.code === 0 && !result.killed ? ("ok" as const) : ("error" as const);
+
+      emitSystemEvent({
+        subsystem: "cron",
+        event_type: "cron_command_exec",
+        status,
+        source: "gateway-cron",
+        process_id: job.id,
+        process_name: job.name ?? null,
+        agent_id: job.agentId ?? null,
+        duration_ms: Date.now() - startedAt,
+        message: summary?.slice(0, 240) ?? null,
+        details: {
+          cronJobId: job.id,
+          cronJobName: job.name,
+          cronRunId: runId,
+          telemetryId: telemetryId ?? job.telemetryId ?? `cron:${job.id}`,
+          command: command.slice(0, 512),
+          cwd: runtimeCwd,
+          timeoutMs,
+          exitCode: result.code,
+          signal: result.signal,
+          killed: result.killed,
+          stderrChars: result.stderr.length,
+          stdoutChars: result.stdout.length,
+        },
+      });
+
+      return status === "ok"
+        ? {
+            status,
+            summary,
+            outputText,
+            runId,
+            telemetryId,
+          }
+        : {
+            status,
+            error:
+              result.signal != null
+                ? `command terminated by signal ${result.signal}`
+                : `command exited with code ${result.code ?? -1}`,
+            summary,
+            outputText,
+            runId,
+            telemetryId,
+          };
     },
     log: getChildLogger({ module: "cron", storePath }),
     onEvent: (evt) => {

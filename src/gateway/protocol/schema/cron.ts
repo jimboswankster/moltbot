@@ -49,6 +49,15 @@ export const CronPayloadSchema = Type.Union([
     },
     { additionalProperties: false },
   ),
+  Type.Object(
+    {
+      kind: Type.Literal("command"),
+      command: NonEmptyString,
+      cwd: Type.Optional(Type.String()),
+      timeoutSeconds: Type.Optional(Type.Integer({ minimum: 1 })),
+    },
+    { additionalProperties: false },
+  ),
 ]);
 
 export const CronPayloadPatchSchema = Type.Union([
@@ -70,6 +79,15 @@ export const CronPayloadPatchSchema = Type.Union([
       channel: Type.Optional(Type.Union([Type.Literal("last"), NonEmptyString])),
       to: Type.Optional(Type.String()),
       bestEffortDeliver: Type.Optional(Type.Boolean()),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("command"),
+      command: Type.Optional(NonEmptyString),
+      cwd: Type.Optional(Type.String()),
+      timeoutSeconds: Type.Optional(Type.Integer({ minimum: 1 })),
     },
     { additionalProperties: false },
   ),

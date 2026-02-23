@@ -66,5 +66,8 @@ export function formatCronPayload(job: CronJob) {
   if (p.kind === "systemEvent") {
     return `System: ${p.text}`;
   }
-  return `Agent: ${p.message}`;
+  if (p.kind === "agentTurn") {
+    return `Agent: ${p.message}`;
+  }
+  return `Command: ${p.command}`;
 }

@@ -10,8 +10,12 @@ const resolveChain = (promise: Promise<unknown>) =>
 
 export async function locked<T>(state: CronServiceState, fn: () => Promise<T>): Promise<T> {
   const storePath = state.deps.storePath;
-  const storeOp = storeLocks.get(storePath) ?? Promise.resolve();
-  const next = Promise.all([resolveChain(state.op), resolveChain(storeOp)]).then(fn);
+  const priorStoreOp = storeLocks.get(storePath) ?? Promise.resolve();
+  const priorStateOp = state.op;
+  const next = priorStoreOp.then(async () => {
+    await resolveChain(priorStateOp);
+    return await fn();
+  });
 
   // Keep the chain alive even when the operation fails.
   const keepAlive = resolveChain(next);

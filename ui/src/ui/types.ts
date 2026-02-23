@@ -449,6 +449,12 @@ export type CronPayload =
         | "msteams";
       to?: string;
       bestEffortDeliver?: boolean;
+    }
+  | {
+      kind: "command";
+      command: string;
+      cwd?: string;
+      timeoutSeconds?: number;
     };
 
 export type CronIsolation = {
