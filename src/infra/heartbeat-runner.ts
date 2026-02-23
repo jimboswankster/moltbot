@@ -523,7 +523,9 @@ export async function runHeartbeatOnce(opts: {
   // EXCEPTION: Don't skip for exec events or cron events - they have pending system events
   // to process regardless of HEARTBEAT.md content.
   const isExecEventReason = opts.reason === "exec-event";
-  const isCronEventReason = Boolean(opts.reason?.startsWith("cron:"));
+  const isCronDeskRouteReason = Boolean(opts.reason?.startsWith("cron:"));
+  const isCronMainSessionReason = Boolean(opts.reason?.startsWith("cron-main-session:"));
+  const isCronEventReason = isCronDeskRouteReason || isCronMainSessionReason;
   const workspaceDir = resolveAgentWorkspaceDir(cfg, agentId);
   const heartbeatFilePath = path.join(workspaceDir, DEFAULT_HEARTBEAT_FILENAME);
   try {
@@ -579,10 +581,10 @@ export async function runHeartbeatOnce(opts: {
   // If so, use a specialized prompt that instructs the model to relay the result
   // instead of the standard heartbeat prompt with "reply HEARTBEAT_OK".
   const isExecEvent = opts.reason === "exec-event";
-  const isCronEvent = Boolean(opts.reason?.startsWith("cron:"));
+  const isCronEvent = isCronEventReason;
   const pendingEvents = isExecEvent || isCronEvent ? peekSystemEvents(sessionKey) : [];
   const hasExecCompletion = pendingEvents.some((evt) => evt.includes("Exec finished"));
-  const hasCronEvents = isCronEvent && pendingEvents.length > 0;
+  const hasCronEvents = isCronDeskRouteReason && pendingEvents.length > 0;
 
   // Option A routing enforcement:
   // Cron-triggered system events must be desk-routed by default, not delivered
@@ -591,6 +593,7 @@ export async function runHeartbeatOnce(opts: {
   // Switchboard (state_signals) with escalation policy.
   if (hasCronEvents) {
     try {
+      const workspaceRoot = process.env.OPENCLAW_WORKSPACE_ROOT?.trim() || process.cwd();
       const queuePath = path.join(
         workspaceRoot,
         "os",
@@ -598,7 +601,7 @@ export async function runHeartbeatOnce(opts: {
         "events",
         "cron-events.jsonl",
       );
-      fs.mkdirSync(path.dirname(queuePath), { recursive: true });
+      await fs.mkdir(path.dirname(queuePath), { recursive: true });
       const event = {
         ts: new Date().toISOString(),
         event_id: "cron_" + Date.now() + "_" + Math.random().toString(16).slice(2),
@@ -607,11 +610,11 @@ export async function runHeartbeatOnce(opts: {
         events: pendingEvents,
         text: pendingEvents.join("\n\n---\n\n"),
       };
-      fs.appendFileSync(queuePath, JSON.stringify(event) + "\n", "utf-8");
+      await fs.appendFile(queuePath, JSON.stringify(event) + "\n", "utf-8");
     } catch (err) {
       // Best-effort: never crash heartbeat runner.
       log.warn("cron-event: failed to append event queue", {
-        error: err.message,
+        error: err instanceof Error ? err.message : String(err),
       });
     }
 

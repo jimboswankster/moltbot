@@ -12,15 +12,16 @@ import { resolveMainSessionKey } from "../config/sessions.js";
 import { setActivePluginRegistry } from "../plugins/runtime.js";
 import { createPluginRuntime } from "../plugins/runtime/index.js";
 import { createTestRegistry } from "../test-utils/channel-plugins.js";
-import { resetCronHeartbeatCooldownForTest, runHeartbeatOnce } from "./heartbeat-runner.js";
+import { runHeartbeatOnce } from "./heartbeat-runner.js";
 import { enqueueSystemEvent, resetSystemEventsForTest } from "./system-events.js";
 
 // Avoid pulling optional runtime deps during isolated runs.
 vi.mock("jiti", () => ({ createJiti: () => () => ({}) }));
 
+let originalWorkspaceRoot: string | undefined;
+
 beforeEach(() => {
   resetSystemEventsForTest();
-  resetCronHeartbeatCooldownForTest();
   const runtime = createPluginRuntime();
   setTelegramRuntime(runtime);
   setWhatsAppRuntime(runtime);
@@ -30,17 +31,18 @@ beforeEach(() => {
       { pluginId: "telegram", plugin: telegramPlugin, source: "test" },
     ]),
   );
+  originalWorkspaceRoot = process.env.OPENCLAW_WORKSPACE_ROOT;
 });
 
 afterEach(() => {
   resetSystemEventsForTest();
-  resetCronHeartbeatCooldownForTest();
+  if (originalWorkspaceRoot === undefined) {
+    delete process.env.OPENCLAW_WORKSPACE_ROOT;
+  } else {
+    process.env.OPENCLAW_WORKSPACE_ROOT = originalWorkspaceRoot;
+  }
 });
 
-/**
- * Helper: create a temp dir with an empty HEARTBEAT.md and a session store,
- * returning the cfg and cleanup function.
- */
 async function setupEmptyHeartbeat() {
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-cron-hb-"));
   const storePath = path.join(tmpDir, "sessions.json");
@@ -82,8 +84,9 @@ async function setupEmptyHeartbeat() {
     ),
   );
 
+  const queuePath = path.join(tmpDir, "os", "coordination", "events", "cron-events.jsonl");
   const cleanup = () => fs.rm(tmpDir, { recursive: true, force: true });
-  return { cfg, sessionKey, cleanup };
+  return { cfg, sessionKey, queuePath, tmpDir, cleanup };
 }
 
 const baseDeps = {
@@ -92,168 +95,83 @@ const baseDeps = {
   hasActiveWebListener: () => true,
 };
 
-describe("runHeartbeatOnce — cron delivery", () => {
-  it("bypasses empty-heartbeat-file gate when cron reason + pending system events + cooldown elapsed", async () => {
-    const { cfg, sessionKey, cleanup } = await setupEmptyHeartbeat();
+describe("runHeartbeatOnce - cron delivery routing", () => {
+  it("routes cron reasons with pending events into queue file without LLM call", async () => {
+    const { cfg, sessionKey, queuePath, tmpDir, cleanup } = await setupEmptyHeartbeat();
+    process.env.OPENCLAW_WORKSPACE_ROOT = tmpDir;
     const replySpy = vi.spyOn(replyModule, "getReplyFromConfig");
     try {
-      // Enqueue a system event for this session (simulates cron timer enqueue)
-      enqueueSystemEvent("[LEDGER POLL] Check the ledger.", { sessionKey });
-
-      replySpy.mockResolvedValue([{ text: "Ledger checked, nothing to do." }]);
+      enqueueSystemEvent("[CRON] Route me to desk queue.", { sessionKey });
       const sendWhatsApp = vi.fn().mockResolvedValue({ messageId: "m1", toJid: "jid" });
 
       const res = await runHeartbeatOnce({
         cfg,
-        reason: "cron:ledger-poll",
+        reason: "cron:cron-event-router",
         deps: { ...baseDeps, sendWhatsApp, nowMs: () => Date.now() },
       });
 
-      // Should run (bypass file gate) because system events are pending
       expect(res.status).toBe("ran");
-      expect(replySpy).toHaveBeenCalled();
+      expect(replySpy).not.toHaveBeenCalled();
+
+      const raw = await fs.readFile(queuePath, "utf-8");
+      const lines = raw.trim().split(/\r?\n/);
+      expect(lines.length).toBe(1);
+      const payload = JSON.parse(lines[0] ?? "{}") as {
+        reason?: string;
+        events?: string[];
+        text?: string;
+      };
+      expect(payload.reason).toBe("cron:cron-event-router");
+      expect(Array.isArray(payload.events)).toBe(true);
+      expect(payload.text).toContain("[CRON] Route me to desk queue.");
     } finally {
       replySpy.mockRestore();
       await cleanup();
     }
   });
 
-  it("skips with cron-cooldown when cron reason + pending events + cooldown NOT elapsed", async () => {
-    const { cfg, sessionKey, cleanup } = await setupEmptyHeartbeat();
+  it("does not route to queue when cron reason has no pending events and falls back to normal reply flow", async () => {
+    const { cfg, queuePath, tmpDir, cleanup } = await setupEmptyHeartbeat();
+    process.env.OPENCLAW_WORKSPACE_ROOT = tmpDir;
     const replySpy = vi.spyOn(replyModule, "getReplyFromConfig");
     try {
-      // First run: primes the cooldown timestamp
-      enqueueSystemEvent("[LEDGER POLL] First poll.", { sessionKey });
-      replySpy.mockResolvedValue([{ text: "Done." }]);
       const sendWhatsApp = vi.fn().mockResolvedValue({ messageId: "m1", toJid: "jid" });
+      replySpy.mockResolvedValue([{ text: "No pending cron event payloads." }]);
 
-      const baseTime = Date.now();
-      const res1 = await runHeartbeatOnce({
+      const res = await runHeartbeatOnce({
         cfg,
-        reason: "cron:ledger-poll",
-        deps: { ...baseDeps, sendWhatsApp, nowMs: () => baseTime },
-      });
-      expect(res1.status).toBe("ran");
-
-      // Second run: 60s later (within 5min cooldown)
-      enqueueSystemEvent("[LEDGER POLL] Second poll.", { sessionKey });
-      const res2 = await runHeartbeatOnce({
-        cfg,
-        reason: "cron:ledger-poll",
-        deps: { ...baseDeps, sendWhatsApp, nowMs: () => baseTime + 60_000 },
+        reason: "cron:cron-event-router",
+        deps: { ...baseDeps, sendWhatsApp, nowMs: () => Date.now() },
       });
 
-      expect(res2.status).toBe("skipped");
-      if (res2.status === "skipped") {
-        expect(res2.reason).toBe("cron-cooldown");
-      }
-      // LLM should only have been called once (the first run)
+      expect(res.status).toBe("ran");
       expect(replySpy).toHaveBeenCalledTimes(1);
+      await expect(fs.access(queuePath)).rejects.toBeTruthy();
     } finally {
       replySpy.mockRestore();
       await cleanup();
     }
   });
 
-  it("delivers again after cooldown elapses", async () => {
-    const { cfg, sessionKey, cleanup } = await setupEmptyHeartbeat();
+  it("treats cron-main-session as non-queue path and executes reply flow", async () => {
+    const { cfg, sessionKey, queuePath, tmpDir, cleanup } = await setupEmptyHeartbeat();
+    process.env.OPENCLAW_WORKSPACE_ROOT = tmpDir;
     const replySpy = vi.spyOn(replyModule, "getReplyFromConfig");
     try {
+      enqueueSystemEvent("[BRIEF] Deliver to user-facing lane.", { sessionKey });
+      replySpy.mockResolvedValue([{ text: "Morning brief delivered." }]);
       const sendWhatsApp = vi.fn().mockResolvedValue({ messageId: "m1", toJid: "jid" });
-      const baseTime = Date.now();
 
-      // First run
-      enqueueSystemEvent("[LEDGER POLL] First.", { sessionKey });
-      replySpy.mockResolvedValue([{ text: "Done." }]);
-      await runHeartbeatOnce({
-        cfg,
-        reason: "cron:ledger-poll",
-        deps: { ...baseDeps, sendWhatsApp, nowMs: () => baseTime },
-      });
-
-      // Second run: 6 minutes later (cooldown elapsed)
-      enqueueSystemEvent("[LEDGER POLL] After cooldown.", { sessionKey });
-      replySpy.mockResolvedValue([{ text: "Checked again." }]);
       const res = await runHeartbeatOnce({
         cfg,
-        reason: "cron:ledger-poll",
-        deps: { ...baseDeps, sendWhatsApp, nowMs: () => baseTime + 6 * 60_000 },
+        reason: "cron-main-session:morning-brief",
+        deps: { ...baseDeps, sendWhatsApp, nowMs: () => Date.now() },
       });
 
       expect(res.status).toBe("ran");
-      expect(replySpy).toHaveBeenCalledTimes(2);
-    } finally {
-      replySpy.mockRestore();
-      await cleanup();
-    }
-  });
-
-  it("follows normal file gate when cron reason + NO pending system events", async () => {
-    const { cfg, cleanup } = await setupEmptyHeartbeat();
-    const replySpy = vi.spyOn(replyModule, "getReplyFromConfig");
-    try {
-      // No system events enqueued
-      const sendWhatsApp = vi.fn().mockResolvedValue({ messageId: "m1", toJid: "jid" });
-
-      const res = await runHeartbeatOnce({
-        cfg,
-        reason: "cron:ledger-poll",
-        deps: { ...baseDeps, sendWhatsApp, nowMs: () => Date.now() },
-      });
-
-      // Should skip with empty-heartbeat-file (normal gate, no bypass)
-      expect(res.status).toBe("skipped");
-      if (res.status === "skipped") {
-        expect(res.reason).toBe("empty-heartbeat-file");
-      }
-      expect(replySpy).not.toHaveBeenCalled();
-    } finally {
-      replySpy.mockRestore();
-      await cleanup();
-    }
-  });
-
-  it("does not affect non-cron reasons — empty file still skips", async () => {
-    const { cfg, sessionKey, cleanup } = await setupEmptyHeartbeat();
-    const replySpy = vi.spyOn(replyModule, "getReplyFromConfig");
-    try {
-      // Even with pending system events, non-cron reasons don't bypass the gate
-      enqueueSystemEvent("Some event", { sessionKey });
-      const sendWhatsApp = vi.fn().mockResolvedValue({ messageId: "m1", toJid: "jid" });
-
-      const res = await runHeartbeatOnce({
-        cfg,
-        reason: "interval",
-        deps: { ...baseDeps, sendWhatsApp, nowMs: () => Date.now() },
-      });
-
-      expect(res.status).toBe("skipped");
-      if (res.status === "skipped") {
-        expect(res.reason).toBe("empty-heartbeat-file");
-      }
-      expect(replySpy).not.toHaveBeenCalled();
-    } finally {
-      replySpy.mockRestore();
-      await cleanup();
-    }
-  });
-
-  it("exec-event still bypasses file gate unconditionally", async () => {
-    const { cfg, cleanup } = await setupEmptyHeartbeat();
-    const replySpy = vi.spyOn(replyModule, "getReplyFromConfig");
-    try {
-      replySpy.mockResolvedValue([{ text: "Exec result" }]);
-      const sendWhatsApp = vi.fn().mockResolvedValue({ messageId: "m1", toJid: "jid" });
-
-      const res = await runHeartbeatOnce({
-        cfg,
-        reason: "exec-event",
-        deps: { ...baseDeps, sendWhatsApp, nowMs: () => Date.now() },
-      });
-
-      // exec-event always bypasses, regardless of system events or file content
-      expect(res.status).toBe("ran");
-      expect(replySpy).toHaveBeenCalled();
+      expect(replySpy).toHaveBeenCalledTimes(1);
+      expect(sendWhatsApp).toHaveBeenCalledTimes(1);
+      await expect(fs.access(queuePath)).rejects.toBeTruthy();
     } finally {
       replySpy.mockRestore();
       await cleanup();
