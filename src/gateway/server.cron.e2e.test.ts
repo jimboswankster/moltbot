@@ -303,12 +303,17 @@ describe("gateway server cron", () => {
         .at(-1);
       const last = JSON.parse(line ?? "{}") as {
         jobId?: unknown;
+        runId?: unknown;
+        telemetryId?: unknown;
         action?: unknown;
         status?: unknown;
         summary?: unknown;
       };
       expect(last.action).toBe("finished");
       expect(last.jobId).toBe(jobId);
+      expect(typeof last.runId).toBe("string");
+      expect(last.runId).not.toBe("");
+      expect(last.telemetryId).toBe(`cron:${jobId}`);
       expect(last.status).toBe("ok");
       expect(last.summary).toBe("hello");
 

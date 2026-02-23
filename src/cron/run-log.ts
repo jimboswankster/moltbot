@@ -4,6 +4,9 @@ import path from "node:path";
 export type CronRunLogEntry = {
   ts: number;
   jobId: string;
+  runId?: string;
+  sessionId?: string;
+  telemetryId?: string;
   action: "finished";
   status?: "ok" | "error" | "skipped";
   error?: string;

@@ -4,6 +4,9 @@ import type { CronJob, CronJobCreate, CronJobPatch, CronStoreFile } from "../typ
 export type CronEvent = {
   jobId: string;
   action: "added" | "updated" | "removed" | "started" | "finished";
+  runId?: string;
+  sessionId?: string;
+  telemetryId?: string;
   runAtMs?: number;
   durationMs?: number;
   status?: "ok" | "error" | "skipped";
@@ -29,9 +32,17 @@ export type CronServiceDeps = {
   enqueueSystemEvent: (text: string, opts?: { agentId?: string }) => void;
   requestHeartbeatNow: (opts?: { reason?: string }) => void;
   runHeartbeatOnce?: (opts?: { reason?: string }) => Promise<HeartbeatRunResult>;
-  runIsolatedAgentJob: (params: { job: CronJob; message: string }) => Promise<{
+  runIsolatedAgentJob: (params: {
+    job: CronJob;
+    message: string;
+    runId?: string;
+    telemetryId?: string;
+  }) => Promise<{
     status: "ok" | "error" | "skipped";
     summary?: string;
+    runId?: string;
+    sessionId?: string;
+    telemetryId?: string;
     /** Last non-empty agent text output (not truncated). */
     outputText?: string;
     error?: string;

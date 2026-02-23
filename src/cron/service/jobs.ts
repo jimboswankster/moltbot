@@ -93,6 +93,10 @@ export function createJob(state: CronServiceState, input: CronJobCreate): CronJo
     id,
     agentId: normalizeOptionalAgentId(input.agentId),
     name: normalizeRequiredName(input.name),
+    telemetryId:
+      typeof input.telemetryId === "string" ? input.telemetryId.trim() || undefined : undefined,
+    loadClass: input.loadClass,
+    preferredWindow: input.preferredWindow,
     description: normalizeOptionalText(input.description),
     enabled: input.enabled,
     deleteAfterRun: input.deleteAfterRun,
@@ -149,6 +153,16 @@ export function applyJobPatch(job: CronJob, patch: CronJobPatch) {
   }
   if ("agentId" in patch) {
     job.agentId = normalizeOptionalAgentId((patch as { agentId?: unknown }).agentId);
+  }
+  if ("telemetryId" in patch) {
+    const telemetryId = (patch as { telemetryId?: unknown }).telemetryId;
+    job.telemetryId = typeof telemetryId === "string" ? telemetryId.trim() || undefined : undefined;
+  }
+  if ("loadClass" in patch) {
+    job.loadClass = patch.loadClass;
+  }
+  if ("preferredWindow" in patch) {
+    job.preferredWindow = patch.preferredWindow;
   }
   assertSupportedJobSpec(job);
 }

@@ -95,9 +95,13 @@ function resolveCronDeliveryBestEffort(job: CronJob): boolean {
 export type RunCronAgentTurnResult = {
   status: "ok" | "error" | "skipped";
   summary?: string;
+  runId?: string;
+  sessionId?: string;
+  telemetryId?: string;
   /** Last non-empty agent text output (not truncated). */
   outputText?: string;
   error?: string;
+  errorKind?: "invalid-model";
 };
 
 export async function runCronIsolatedAgentTurn(params: {
@@ -105,6 +109,8 @@ export async function runCronIsolatedAgentTurn(params: {
   deps: CliDeps;
   job: CronJob;
   message: string;
+  runId?: string;
+  telemetryId?: string;
   sessionKey: string;
   agentId?: string;
   lane?: string;
@@ -206,6 +212,10 @@ export async function runCronIsolatedAgentTurn(params: {
     model = resolvedOverride.ref.model;
   }
   const now = Date.now();
+  const cronRunId =
+    params.runId?.trim() || `${baseSessionKey}:${params.job.state.plannedRunAtMs ?? now}`;
+  const telemetryId =
+    params.telemetryId?.trim() || params.job.telemetryId || `cron:${params.job.id}`;
   const cronSession = resolveCronSession({
     cfg: params.cfg,
     sessionKey: agentSessionKey,
@@ -240,6 +250,23 @@ export async function runCronIsolatedAgentTurn(params: {
     overrideSeconds:
       params.job.payload.kind === "agentTurn" ? params.job.payload.timeoutSeconds : undefined,
   });
+
+  const existingContextTokens =
+    cronSession.sessionEntry.contextTokens ??
+    agentCfg?.contextTokens ??
+    lookupContextTokens(model) ??
+    DEFAULT_CONTEXT_TOKENS;
+  const existingTotalTokens = cronSession.sessionEntry.totalTokens ?? 0;
+  const tokenBudgetThreshold = Math.floor(existingContextTokens * 0.9);
+  if (tokenBudgetThreshold > 0 && existingTotalTokens >= tokenBudgetThreshold) {
+    return {
+      status: "skipped",
+      summary: `Skipped isolated cron run due to token budget guard (${existingTotalTokens}/${existingContextTokens}).`,
+      runId: cronRunId,
+      sessionId: cronSession.sessionEntry.sessionId,
+      telemetryId,
+    };
+  }
 
   const agentPayload = params.job.payload.kind === "agentTurn" ? params.job.payload : null;
   const deliveryPlan = resolveCronDeliveryPlan(params.job);
@@ -362,7 +389,7 @@ export async function runCronIsolatedAgentTurn(params: {
             model: modelOverride,
             thinkLevel,
             timeoutMs,
-            runId: cronSession.sessionEntry.sessionId,
+            runId: cronRunId,
             cliSessionId,
           });
         }
@@ -382,7 +409,7 @@ export async function runCronIsolatedAgentTurn(params: {
           thinkLevel,
           verboseLevel: resolvedVerboseLevel,
           timeoutMs,
-          runId: cronSession.sessionEntry.sessionId,
+          runId: cronRunId,
           requireExplicitMessageTarget: true,
           disableMessageTool: deliveryRequested,
         });
@@ -392,7 +419,13 @@ export async function runCronIsolatedAgentTurn(params: {
     fallbackProvider = fallbackResult.provider;
     fallbackModel = fallbackResult.model;
   } catch (err) {
-    return { status: "error", error: String(err) };
+    return {
+      status: "error",
+      error: String(err),
+      runId: cronRunId,
+      sessionId: cronSession.sessionEntry.sessionId,
+      telemetryId,
+    };
   }
 
   const payloads = runResult.payloads ?? [];
@@ -455,10 +488,20 @@ export async function runCronIsolatedAgentTurn(params: {
           error: resolvedDelivery.error.message,
           summary,
           outputText,
+          runId: cronRunId,
+          sessionId: cronSession.sessionEntry.sessionId,
+          telemetryId,
         };
       }
       logWarn(`[cron:${params.job.id}] ${resolvedDelivery.error.message}`);
-      return { status: "ok", summary, outputText };
+      return {
+        status: "ok",
+        summary,
+        outputText,
+        runId: cronRunId,
+        sessionId: cronSession.sessionEntry.sessionId,
+        telemetryId,
+      };
     }
     if (!resolvedDelivery.to) {
       const message = "cron delivery target is missing";
@@ -468,10 +511,20 @@ export async function runCronIsolatedAgentTurn(params: {
           error: message,
           summary,
           outputText,
+          runId: cronRunId,
+          sessionId: cronSession.sessionEntry.sessionId,
+          telemetryId,
         };
       }
       logWarn(`[cron:${params.job.id}] ${message}`);
-      return { status: "ok", summary, outputText };
+      return {
+        status: "ok",
+        summary,
+        outputText,
+        runId: cronRunId,
+        sessionId: cronSession.sessionEntry.sessionId,
+        telemetryId,
+      };
     }
     try {
       await deliverOutboundPayloads({
@@ -486,10 +539,25 @@ export async function runCronIsolatedAgentTurn(params: {
       });
     } catch (err) {
       if (!deliveryBestEffort) {
-        return { status: "error", summary, outputText, error: String(err) };
+        return {
+          status: "error",
+          summary,
+          outputText,
+          error: String(err),
+          runId: cronRunId,
+          sessionId: cronSession.sessionEntry.sessionId,
+          telemetryId,
+        };
       }
     }
   }
 
-  return { status: "ok", summary, outputText };
+  return {
+    status: "ok",
+    summary,
+    outputText,
+    runId: cronRunId,
+    sessionId: cronSession.sessionEntry.sessionId,
+    telemetryId,
+  };
 }

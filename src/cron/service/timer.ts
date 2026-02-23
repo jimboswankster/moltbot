@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import path from "node:path";
 import type { HeartbeatRunResult } from "../../infra/heartbeat-wake.js";
 import type { CronJob } from "../types.js";
@@ -104,6 +105,7 @@ export async function executeJob(
   snapshotOverride?: CronJob,
 ) {
   const startedAt = state.deps.nowMs();
+  const runId = crypto.randomUUID();
   const snapshot = await locked(state, async () => {
     await ensureLoaded(state);
     const job = state.store?.jobs.find((entry) => entry.id === jobId);
@@ -120,7 +122,13 @@ export async function executeJob(
     job.state.lastError = undefined;
     job.state.plannedRunAtMs = plannedRunAtMs;
     job.state.nextRunAtMs = undefined;
-    emit(state, { jobId: job.id, action: "started", runAtMs: startedAt });
+    emit(state, {
+      jobId: job.id,
+      action: "started",
+      runId,
+      telemetryId: job.telemetryId ?? `cron:${job.id}`,
+      runAtMs: startedAt,
+    });
     await persist(state);
     armTimer(state);
     return typeof structuredClone === "function"
@@ -137,12 +145,23 @@ export async function executeJob(
     err?: string;
     errKind?: "invalid-model";
     summary?: string;
+    runId?: string;
+    sessionId?: string;
+    telemetryId?: string;
     outputText?: string;
   } | null = null;
   try {
-    outcome = await runJobCore(state, runSnapshot);
+    outcome = await runJobCore(state, runSnapshot, {
+      runId,
+      telemetryId: runSnapshot.telemetryId ?? `cron:${runSnapshot.id}`,
+    });
   } catch (err) {
-    outcome = { status: "error", err: String(err) };
+    outcome = {
+      status: "error",
+      err: String(err),
+      runId,
+      telemetryId: runSnapshot.telemetryId ?? `cron:${runSnapshot.id}`,
+    };
   }
 
   await locked(state, async () => {
@@ -208,6 +227,9 @@ export async function executeJob(
     emit(state, {
       jobId: job.id,
       action: "finished",
+      runId: outcome.runId ?? runId,
+      sessionId: outcome.sessionId,
+      telemetryId: outcome.telemetryId ?? job.telemetryId ?? `cron:${job.id}`,
       status: outcome.status,
       error: outcome.err,
       summary: outcome.summary,
@@ -242,11 +264,15 @@ export async function executeJob(
 async function runJobCore(
   state: CronServiceState,
   job: CronJob,
+  runContext: { runId: string; telemetryId: string },
 ): Promise<{
   status: "ok" | "error" | "skipped";
   err?: string;
   errKind?: "invalid-model";
   summary?: string;
+  runId?: string;
+  sessionId?: string;
+  telemetryId?: string;
   outputText?: string;
 }> {
   if (job.sessionTarget === "main") {
@@ -255,6 +281,8 @@ async function runJobCore(
       const kind = job.payload.kind;
       return {
         status: "skipped",
+        runId: runContext.runId,
+        telemetryId: runContext.telemetryId,
         err:
           kind === "systemEvent"
             ? "main job requires non-empty systemEvent text"
@@ -274,6 +302,8 @@ async function runJobCore(
       message: text.slice(0, 240),
       details: {
         cronJobId: job.id,
+        cronRunId: runContext.runId,
+        telemetryId: runContext.telemetryId,
         cronJobName: job.name,
         sessionTarget: job.sessionTarget,
         wakeMode: job.wakeMode,
@@ -306,20 +336,47 @@ async function runJobCore(
       }
 
       if (heartbeatResult.status === "ran") {
-        return { status: "ok", summary: text };
+        return {
+          status: "ok",
+          summary: text,
+          runId: runContext.runId,
+          telemetryId: runContext.telemetryId,
+        };
       }
       if (heartbeatResult.status === "skipped") {
-        return { status: "skipped", err: heartbeatResult.reason, summary: text };
+        return {
+          status: "skipped",
+          err: heartbeatResult.reason,
+          summary: text,
+          runId: runContext.runId,
+          telemetryId: runContext.telemetryId,
+        };
       }
-      return { status: "error", err: heartbeatResult.reason, summary: text };
+      return {
+        status: "error",
+        err: heartbeatResult.reason,
+        summary: text,
+        runId: runContext.runId,
+        telemetryId: runContext.telemetryId,
+      };
     }
     // wakeMode is "next-heartbeat" or runHeartbeatOnce not available
     state.deps.requestHeartbeatNow({ reason: `cron:${job.id}` });
-    return { status: "ok", summary: text };
+    return {
+      status: "ok",
+      summary: text,
+      runId: runContext.runId,
+      telemetryId: runContext.telemetryId,
+    };
   }
 
   if (job.payload.kind !== "agentTurn") {
-    return { status: "skipped", err: "isolated job requires payload.kind=agentTurn" };
+    return {
+      status: "skipped",
+      err: "isolated job requires payload.kind=agentTurn",
+      runId: runContext.runId,
+      telemetryId: runContext.telemetryId,
+    };
   }
 
   if (job.preCheck && state.deps.runPreCheck && state.deps.workspaceDir) {
@@ -333,6 +390,8 @@ async function runJobCore(
       return {
         status: "skipped",
         err: result.err ?? "preCheck gate skipped",
+        runId: runContext.runId,
+        telemetryId: runContext.telemetryId,
       };
     }
   }
@@ -340,18 +399,37 @@ async function runJobCore(
   const res = await state.deps.runIsolatedAgentJob({
     job,
     message: job.payload.message,
+    runId: runContext.runId,
+    telemetryId: runContext.telemetryId,
   });
   const outcome =
     res.status === "ok"
-      ? { status: "ok" as const, summary: res.summary, outputText: res.outputText }
+      ? {
+          status: "ok" as const,
+          summary: res.summary,
+          outputText: res.outputText,
+          runId: res.runId ?? runContext.runId,
+          sessionId: res.sessionId,
+          telemetryId: res.telemetryId ?? runContext.telemetryId,
+        }
       : res.status === "skipped"
-        ? { status: "skipped" as const, summary: res.summary, outputText: res.outputText }
+        ? {
+            status: "skipped" as const,
+            summary: res.summary,
+            outputText: res.outputText,
+            runId: res.runId ?? runContext.runId,
+            sessionId: res.sessionId,
+            telemetryId: res.telemetryId ?? runContext.telemetryId,
+          }
         : {
             status: "error" as const,
             err: res.error ?? "cron job failed",
             errKind: res.errorKind,
             summary: res.summary,
             outputText: res.outputText,
+            runId: res.runId ?? runContext.runId,
+            sessionId: res.sessionId,
+            telemetryId: res.telemetryId ?? runContext.telemetryId,
           };
 
   const prefix = job.isolation?.postToMainPrefix?.trim() || "Cron";
@@ -407,6 +485,8 @@ async function runJobCore(
     message: postbackText.slice(0, 240),
     details: {
       cronJobId: job.id,
+      cronRunId: outcome.runId ?? runContext.runId,
+      telemetryId: outcome.telemetryId ?? runContext.telemetryId,
       cronJobName: job.name,
       sessionTarget: job.sessionTarget,
       wakeMode: job.wakeMode,

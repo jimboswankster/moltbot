@@ -104,6 +104,13 @@ export const CronJobSchema = Type.Object(
     id: NonEmptyString,
     agentId: Type.Optional(NonEmptyString),
     name: NonEmptyString,
+    telemetryId: Type.Optional(NonEmptyString),
+    loadClass: Type.Optional(
+      Type.Union([Type.Literal("heavy"), Type.Literal("medium"), Type.Literal("light")]),
+    ),
+    preferredWindow: Type.Optional(
+      Type.Union([Type.Literal("night"), Type.Literal("shoulder"), Type.Literal("day")]),
+    ),
     description: Type.Optional(Type.String()),
     enabled: Type.Boolean(),
     deleteAfterRun: Type.Optional(Type.Boolean()),
@@ -132,6 +139,13 @@ export const CronAddParamsSchema = Type.Object(
   {
     name: NonEmptyString,
     agentId: Type.Optional(Type.Union([NonEmptyString, Type.Null()])),
+    telemetryId: Type.Optional(NonEmptyString),
+    loadClass: Type.Optional(
+      Type.Union([Type.Literal("heavy"), Type.Literal("medium"), Type.Literal("light")]),
+    ),
+    preferredWindow: Type.Optional(
+      Type.Union([Type.Literal("night"), Type.Literal("shoulder"), Type.Literal("day")]),
+    ),
     description: Type.Optional(Type.String()),
     enabled: Type.Optional(Type.Boolean()),
     deleteAfterRun: Type.Optional(Type.Boolean()),
@@ -148,6 +162,13 @@ export const CronJobPatchSchema = Type.Object(
   {
     name: Type.Optional(NonEmptyString),
     agentId: Type.Optional(Type.Union([NonEmptyString, Type.Null()])),
+    telemetryId: Type.Optional(NonEmptyString),
+    loadClass: Type.Optional(
+      Type.Union([Type.Literal("heavy"), Type.Literal("medium"), Type.Literal("light")]),
+    ),
+    preferredWindow: Type.Optional(
+      Type.Union([Type.Literal("night"), Type.Literal("shoulder"), Type.Literal("day")]),
+    ),
     description: Type.Optional(Type.String()),
     enabled: Type.Optional(Type.Boolean()),
     deleteAfterRun: Type.Optional(Type.Boolean()),

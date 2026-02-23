@@ -7,6 +7,8 @@ export type CronSchedule =
 
 export type CronSessionTarget = "main" | "isolated";
 export type CronWakeMode = "next-heartbeat" | "now";
+export type CronLoadClass = "heavy" | "medium" | "light";
+export type CronPreferredWindow = "night" | "shoulder" | "day";
 
 export type CronMessageChannel = ChannelId | "last";
 
@@ -80,6 +82,9 @@ export type CronJob = {
   id: string;
   agentId?: string;
   name: string;
+  telemetryId?: string;
+  loadClass?: CronLoadClass;
+  preferredWindow?: CronPreferredWindow;
   description?: string;
   enabled: boolean;
   deleteAfterRun?: boolean;

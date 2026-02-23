@@ -50,6 +50,9 @@ export function buildGatewayCronService(params: {
       return {
         id: job.id,
         name: job.name,
+        telemetryId: typeof job.telemetryId === "string" ? job.telemetryId : `cron:${job.id}`,
+        loadClass: job.loadClass,
+        preferredWindow: job.preferredWindow,
         description: job.description,
         enabled: job.enabled,
         deleteAfterRun: job.deleteAfterRun,
@@ -115,13 +118,15 @@ export function buildGatewayCronService(params: {
         deps: { ...params.deps, runtime: defaultRuntime },
       });
     },
-    runIsolatedAgentJob: async ({ job, message }) => {
+    runIsolatedAgentJob: async ({ job, message, runId, telemetryId }) => {
       const { agentId, cfg: runtimeConfig } = resolveCronAgent(job.agentId);
       return await runCronIsolatedAgentTurn({
         cfg: runtimeConfig,
         deps: params.deps,
         job,
         message,
+        runId,
+        telemetryId,
         agentId,
         sessionKey: `cron:${job.id}`,
         lane: "cron",
@@ -142,6 +147,9 @@ export function buildGatewayCronService(params: {
             process_id: evt.jobId,
             details: {
               jobId: evt.jobId,
+              runId: evt.runId,
+              sessionId: evt.sessionId,
+              telemetryId: evt.telemetryId,
               runAtMs: evt.runAtMs,
               job: getCronJobMeta(evt.jobId),
             },
@@ -158,6 +166,9 @@ export function buildGatewayCronService(params: {
             message: evt.summary ?? null,
             details: {
               jobId: evt.jobId,
+              runId: evt.runId,
+              sessionId: evt.sessionId,
+              telemetryId: evt.telemetryId,
               status: evt.status,
               error: evt.error,
               runAtMs: evt.runAtMs,
@@ -177,6 +188,9 @@ export function buildGatewayCronService(params: {
         void appendCronRunLog(logPath, {
           ts: Date.now(),
           jobId: evt.jobId,
+          runId: evt.runId,
+          sessionId: evt.sessionId,
+          telemetryId: evt.telemetryId,
           action: "finished",
           status: evt.status,
           error: evt.error,
