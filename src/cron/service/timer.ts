@@ -132,14 +132,13 @@ export async function runDueJobs(state: CronServiceState) {
   }
   const now = state.deps.nowMs();
   for (const jobId of dueIds) {
-    await executeJob(state, jobId, now, { forced: false });
+    await executeJob(state, jobId, { forced: false });
   }
 }
 
 export async function executeJob(
   state: CronServiceState,
   jobId: string,
-  nowMs: number,
   opts: { forced: boolean },
   snapshotOverride?: CronJob,
 ) {
@@ -300,7 +299,6 @@ export async function executeJob(
       emit(state, { jobId: job.id, action: "removed" });
     }
 
-    job.updatedAtMs = nowMs;
     if (!opts.forced && job.enabled && !deleted) {
       // Keep nextRunAtMs in sync in case the schedule advanced during a long run.
       const nextRun = computeJobNextRunAtMs(job, state.deps.nowMs());

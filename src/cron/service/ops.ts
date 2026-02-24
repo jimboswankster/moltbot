@@ -155,7 +155,7 @@ export async function run(state: CronServiceState, id: string, mode?: "due" | "f
   if (!shouldRun.ran) {
     return shouldRun;
   }
-  await executeJob(state, id, now, { forced: mode === "force" }, shouldRun.snapshot);
+  await executeJob(state, id, { forced: mode === "force" }, shouldRun.snapshot);
   return { ok: true, ran: true } as const;
 }
 
