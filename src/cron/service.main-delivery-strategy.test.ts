@@ -45,7 +45,8 @@ describe("CronService mainDeliveryStrategy", () => {
     });
 
     await cron.run(job.id, "force");
-    expect(requestHeartbeatNow).toHaveBeenCalledWith({ reason: `cron:${job.id}` });
+    const requestArg = requestHeartbeatNow.mock.calls[0]?.[0] as { reason?: string } | undefined;
+    expect(requestArg?.reason).toMatch(new RegExp(`^cron:${job.id}:[0-9a-f-]+$`));
 
     cron.stop();
     await store.cleanup();
@@ -76,7 +77,8 @@ describe("CronService mainDeliveryStrategy", () => {
     });
 
     await cron.run(job.id, "force");
-    expect(runHeartbeatOnce).toHaveBeenCalledWith({ reason: `cron-main-session:${job.id}` });
+    const callArg = runHeartbeatOnce.mock.calls[0]?.[0] as { reason?: string } | undefined;
+    expect(callArg?.reason).toMatch(new RegExp(`^cron-main-session:${job.id}:[0-9a-f-]+$`));
 
     cron.stop();
     await store.cleanup();
@@ -112,10 +114,11 @@ describe("CronService mainDeliveryStrategy", () => {
     });
 
     await cron.run(job.id, "force");
-    expect(runHeartbeatOnce).toHaveBeenCalledWith({
-      reason: `cron-main-session:${job.id}`,
-      heartbeat: { target: "telegram", to: "-1001234567890" },
-    });
+    const extArg = runHeartbeatOnce.mock.calls[0]?.[0] as
+      | { reason?: string; heartbeat?: { target?: string; to?: string } }
+      | undefined;
+    expect(extArg?.reason).toMatch(new RegExp(`^cron-main-session:${job.id}:[0-9a-f-]+$`));
+    expect(extArg?.heartbeat).toEqual({ target: "telegram", to: "-1001234567890" });
 
     cron.stop();
     await store.cleanup();

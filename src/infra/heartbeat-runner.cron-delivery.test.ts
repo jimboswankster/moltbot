@@ -85,8 +85,15 @@ async function setupEmptyHeartbeat() {
   );
 
   const queuePath = path.join(tmpDir, "os", "coordination", "events", "cron-events.jsonl");
+  const queuePathFromWorkspace = path.join(
+    workspaceDir,
+    "os",
+    "coordination",
+    "events",
+    "cron-events.jsonl",
+  );
   const cleanup = () => fs.rm(tmpDir, { recursive: true, force: true });
-  return { cfg, sessionKey, queuePath, tmpDir, cleanup };
+  return { cfg, sessionKey, queuePath, queuePathFromWorkspace, tmpDir, cleanup };
 }
 
 const baseDeps = {
@@ -120,10 +127,12 @@ describe("runHeartbeatOnce - cron delivery routing", () => {
         reason?: string;
         events?: string[];
         text?: string;
+        source?: string;
       };
       expect(payload.reason).toBe("cron:cron-event-router");
       expect(Array.isArray(payload.events)).toBe(true);
       expect(payload.text).toContain("[CRON] Route me to desk queue.");
+      expect(payload.source).toBe("cron");
     } finally {
       replySpy.mockRestore();
       await cleanup();
@@ -174,6 +183,73 @@ describe("runHeartbeatOnce - cron delivery routing", () => {
       await expect(fs.access(queuePath)).rejects.toBeTruthy();
     } finally {
       replySpy.mockRestore();
+      await cleanup();
+    }
+  });
+
+  it("routes cron reasons to the agent workspace root when OPENCLAW_WORKSPACE_ROOT is unset", async () => {
+    const { cfg, sessionKey, queuePathFromWorkspace, cleanup } = await setupEmptyHeartbeat();
+    delete process.env.OPENCLAW_WORKSPACE_ROOT;
+    const replySpy = vi.spyOn(replyModule, "getReplyFromConfig");
+    try {
+      enqueueSystemEvent("[CRON] Workspace-root fallback queue path.", { sessionKey });
+      const sendWhatsApp = vi.fn().mockResolvedValue({ messageId: "m1", toJid: "jid" });
+
+      const res = await runHeartbeatOnce({
+        cfg,
+        reason: "cron:cron-event-router",
+        deps: { ...baseDeps, sendWhatsApp, nowMs: () => Date.now() },
+      });
+
+      expect(res.status).toBe("ran");
+      expect(replySpy).not.toHaveBeenCalled();
+      const raw = await fs.readFile(queuePathFromWorkspace, "utf-8");
+      const lines = raw.trim().split(/\r?\n/);
+      expect(lines.length).toBe(1);
+      const payload = JSON.parse(lines[0] ?? "{}") as {
+        reason?: string;
+        text?: string;
+        source?: string;
+      };
+      expect(payload.reason).toBe("cron:cron-event-router");
+      expect(payload.text).toContain("Workspace-root fallback queue path.");
+      expect(payload.source).toBe("cron");
+    } finally {
+      replySpy.mockRestore();
+      await cleanup();
+    }
+  });
+
+  it("records heartbeat delivery telemetry with cron correlation on successful send", async () => {
+    const { cfg, sessionKey, tmpDir, cleanup } = await setupEmptyHeartbeat();
+    const telemetryPath = path.join(tmpDir, "runtime-telemetry.jsonl");
+    process.env.OPENCLAW_RUNTIME_TELEMETRY_FILE = telemetryPath;
+    const replySpy = vi.spyOn(replyModule, "getReplyFromConfig");
+    try {
+      enqueueSystemEvent("[BRIEF] Deliver with trace telemetry.", { sessionKey });
+      replySpy.mockResolvedValue([{ text: "Morning brief delivered." }]);
+      const sendWhatsApp = vi.fn().mockResolvedValue({ messageId: "m1", toJid: "jid" });
+
+      const res = await runHeartbeatOnce({
+        cfg,
+        reason: "cron-main-session:morning-brief:run-123",
+        deps: { ...baseDeps, sendWhatsApp, nowMs: () => Date.now() },
+      });
+
+      expect(res.status).toBe("ran");
+      const telemetryRaw = await fs.readFile(telemetryPath, "utf-8");
+      const rows = telemetryRaw
+        .trim()
+        .split(/\r?\n/)
+        .map((line) => JSON.parse(line) as { event?: string; details?: Record<string, unknown> });
+      const sentRow = rows.find((row) => row.event === "heartbeat.delivery_sent");
+      expect(sentRow).toBeDefined();
+      expect(sentRow?.details?.cronJobId).toBe("morning-brief");
+      expect(sentRow?.details?.cronRunId).toBe("run-123");
+      expect(sentRow?.details?.reason).toBe("cron-main-session:morning-brief:run-123");
+    } finally {
+      replySpy.mockRestore();
+      delete process.env.OPENCLAW_RUNTIME_TELEMETRY_FILE;
       await cleanup();
     }
   });

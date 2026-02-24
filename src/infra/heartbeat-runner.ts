@@ -55,6 +55,7 @@ import {
   resolveHeartbeatDeliveryTarget,
   resolveHeartbeatSenderContext,
 } from "./outbound/targets.js";
+import { recordRuntimeTelemetryEvent } from "./runtime-telemetry.js";
 import { peekSystemEvents } from "./system-events.js";
 
 type HeartbeatDeps = OutboundSendDeps &
@@ -107,6 +108,36 @@ const CRON_EVENT_PROMPT =
 const DEFAULT_HEARTBEAT_ESCALATION_TRIGGER = "[[NEEDS_REASONING]]";
 const DEFAULT_HEARTBEAT_ESCALATION_PROMPT =
   "The fast heartbeat triage asked for deeper reasoning. Produce the final user-facing response now.";
+
+function parseCronReason(reason?: string): {
+  kind: "cron" | "cron-main-session" | null;
+  cronJobId: string | null;
+  cronRunId: string | null;
+} {
+  const raw = String(reason ?? "").trim();
+  if (!raw) {
+    return { kind: null, cronJobId: null, cronRunId: null };
+  }
+  if (raw.startsWith("cron-main-session:")) {
+    const rest = raw.slice("cron-main-session:".length);
+    const [cronJobId, cronRunId] = rest.split(":", 2);
+    return {
+      kind: "cron-main-session",
+      cronJobId: cronJobId?.trim() || null,
+      cronRunId: cronRunId?.trim() || null,
+    };
+  }
+  if (raw.startsWith("cron:")) {
+    const rest = raw.slice("cron:".length);
+    const [cronJobId, cronRunId] = rest.split(":", 2);
+    return {
+      kind: "cron",
+      cronJobId: cronJobId?.trim() || null,
+      cronRunId: cronRunId?.trim() || null,
+    };
+  }
+  return { kind: null, cronJobId: null, cronRunId: null };
+}
 
 function resolveHeartbeatEscalationConfig(heartbeat?: HeartbeatConfig): {
   enabled: boolean;
@@ -545,6 +576,7 @@ export async function runHeartbeatOnce(opts: {
   }
 
   const startedAt = opts.deps?.nowMs?.() ?? Date.now();
+  const cronReason = parseCronReason(opts.reason);
   if (!isWithinActiveHours(cfg, heartbeat, startedAt)) {
     return { status: "skipped", reason: "quiet-hours" };
   }
@@ -629,7 +661,8 @@ export async function runHeartbeatOnce(opts: {
   // Switchboard (state_signals) with escalation policy.
   if (hasCronEvents) {
     try {
-      const workspaceRoot = process.env.OPENCLAW_WORKSPACE_ROOT?.trim() || process.cwd();
+      const workspaceRoot =
+        process.env.OPENCLAW_WORKSPACE_ROOT?.trim() || workspaceDir || process.cwd();
       const queuePath = path.join(
         workspaceRoot,
         "os",
@@ -642,15 +675,56 @@ export async function runHeartbeatOnce(opts: {
         ts: new Date().toISOString(),
         event_id: "cron_" + Date.now() + "_" + Math.random().toString(16).slice(2),
         reason: opts.reason,
+        source: "cron",
+        cronJobId: cronReason.cronJobId,
+        cronRunId: cronReason.cronRunId,
+        telemetryId: cronReason.cronJobId ? `cron:${cronReason.cronJobId}` : null,
+        trace:
+          cronReason.cronJobId && cronReason.cronRunId
+            ? {
+                traceId: `${cronReason.cronJobId}:${cronReason.cronRunId}`,
+                cronJobId: cronReason.cronJobId,
+                cronRunId: cronReason.cronRunId,
+                telemetryId: `cron:${cronReason.cronJobId}`,
+                source: "cron",
+              }
+            : undefined,
         sessionKey,
         events: pendingEvents,
         text: pendingEvents.join("\n\n---\n\n"),
       };
       await fs.appendFile(queuePath, JSON.stringify(event) + "\n", "utf-8");
+      recordRuntimeTelemetryEvent({
+        event: "heartbeat.cron_queue_appended",
+        subsystem: "heartbeat",
+        status: "ok",
+        details: {
+          reason: opts.reason ?? null,
+          queuePath,
+          eventId: event.event_id,
+          pendingEvents: pendingEvents.length,
+          cronKind: cronReason.kind,
+          cronJobId: cronReason.cronJobId,
+          cronRunId: cronReason.cronRunId,
+        },
+      });
     } catch (err) {
       // Best-effort: never crash heartbeat runner.
       log.warn("cron-event: failed to append event queue", {
         error: err instanceof Error ? err.message : String(err),
+      });
+      recordRuntimeTelemetryEvent({
+        event: "heartbeat.cron_queue_append_failed",
+        subsystem: "heartbeat",
+        severity: "warning",
+        status: "failed",
+        details: {
+          reason: opts.reason ?? null,
+          error: err instanceof Error ? err.message : String(err),
+          cronKind: cronReason.kind,
+          cronJobId: cronReason.cronJobId,
+          cronRunId: cronReason.cronRunId,
+        },
       });
     }
 
@@ -716,6 +790,21 @@ export async function runHeartbeatOnce(opts: {
       accountId: delivery.accountId,
       payloads: [{ text: heartbeatOkText }],
       deps: opts.deps,
+    });
+    recordRuntimeTelemetryEvent({
+      event: "heartbeat.delivery_sent",
+      subsystem: "heartbeat",
+      status: "ok",
+      details: {
+        reason: opts.reason ?? null,
+        channel: delivery.channel,
+        to: delivery.to,
+        accountId: delivery.accountId ?? null,
+        hasMedia: mediaUrls.length > 0,
+        cronKind: cronReason.kind,
+        cronJobId: cronReason.cronJobId,
+        cronRunId: cronReason.cronRunId,
+      },
     });
     return true;
   };
@@ -996,6 +1085,21 @@ export async function runHeartbeatOnce(opts: {
       ],
       deps: opts.deps,
     });
+    recordRuntimeTelemetryEvent({
+      event: "heartbeat.delivery_sent",
+      subsystem: "heartbeat",
+      status: "ok",
+      details: {
+        reason: opts.reason ?? null,
+        channel: delivery.channel,
+        to: delivery.to,
+        accountId: delivery.accountId ?? null,
+        hasMedia: mediaUrls.length > 0,
+        cronKind: cronReason.kind,
+        cronJobId: cronReason.cronJobId,
+        cronRunId: cronReason.cronRunId,
+      },
+    });
 
     // Record last delivered heartbeat payload for dedupe.
     if (!shouldSkipMain && normalized.text.trim()) {
@@ -1024,6 +1128,22 @@ export async function runHeartbeatOnce(opts: {
     return { status: "ran", durationMs: Date.now() - startedAt };
   } catch (err) {
     const reason = formatErrorMessage(err);
+    recordRuntimeTelemetryEvent({
+      event: "heartbeat.delivery_failed",
+      subsystem: "heartbeat",
+      severity: "error",
+      status: "failed",
+      details: {
+        reason,
+        triggerReason: opts.reason ?? null,
+        channel: delivery.channel !== "none" ? delivery.channel : null,
+        to: delivery.to ?? null,
+        accountId: delivery.accountId ?? null,
+        cronKind: cronReason.kind,
+        cronJobId: cronReason.cronJobId,
+        cronRunId: cronReason.cronRunId,
+      },
+    });
     emitHeartbeatEvent({
       status: "failed",
       reason,

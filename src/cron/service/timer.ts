@@ -3,12 +3,51 @@ import path from "node:path";
 import type { HeartbeatRunResult } from "../../infra/heartbeat-wake.js";
 import type { CronJob } from "../types.js";
 import type { CronEvent, CronServiceState } from "./state.js";
+import { recordRuntimeTelemetryEvent } from "../../infra/runtime-telemetry.js";
 import { emitSystemEvent } from "../../telemetry/supabase.js";
 import { computeJobNextRunAtMs, nextWakeAtMs, resolveJobPayloadTextForMain } from "./jobs.js";
 import { locked } from "./locked.js";
 import { ensureLoaded, persist, reloadFromDisk } from "./store.js";
 
 const MAX_TIMEOUT_MS = 2 ** 31 - 1;
+
+function emitSystemAndRuntimeTelemetry(row: {
+  subsystem: string;
+  event_type: string;
+  severity?: "info" | "warning" | "error";
+  status?: string;
+  source: string;
+  process_id?: string | null;
+  process_name?: string | null;
+  agent_id?: string | null;
+  message?: string | null;
+  details?: Record<string, unknown>;
+  duration_ms?: number | null;
+  token_usage?: Record<string, unknown> | null;
+}) {
+  emitSystemEvent(row);
+  const severity =
+    row.severity ??
+    (row.status === "failed" || row.status === "error"
+      ? "error"
+      : row.status === "degraded" || row.status === "skipped"
+        ? "warning"
+        : "info");
+  recordRuntimeTelemetryEvent({
+    event: row.event_type,
+    subsystem: row.subsystem,
+    severity,
+    status: row.status ?? "ok",
+    details: {
+      ...(row.details ?? {}),
+      source: row.source,
+      processId: row.process_id ?? null,
+      processName: row.process_name ?? null,
+      agentId: row.agent_id ?? null,
+      message: row.message ?? null,
+    },
+  });
+}
 
 export function armTimer(state: CronServiceState) {
   if (state.timer) {
@@ -297,9 +336,9 @@ async function runJobCore(
     const heartbeatReason =
       effectiveMainDeliveryStrategy === "main-session" ||
       effectiveMainDeliveryStrategy === "external-channel"
-        ? `cron-main-session:${job.id}`
-        : `cron:${job.id}`;
-    emitSystemEvent({
+        ? `cron-main-session:${job.id}:${runContext.runId}`
+        : `cron:${job.id}:${runContext.runId}`;
+    emitSystemAndRuntimeTelemetry({
       subsystem: "delivery",
       event_type: "cron_main_delivery_strategy_selected",
       status: "ok",
@@ -348,7 +387,7 @@ async function runJobCore(
       };
     }
     // Telemetry: record delivery intent for main-lane system events.
-    emitSystemEvent({
+    emitSystemAndRuntimeTelemetry({
       subsystem: "delivery",
       event_type: "system_event_enqueued",
       status: "ok",
@@ -490,7 +529,7 @@ async function runJobCore(
             runId: runContext.runId,
             telemetryId: runContext.telemetryId,
           });
-          emitSystemEvent({
+          emitSystemAndRuntimeTelemetry({
             subsystem: "cron",
             event_type: "cron_command_job_executed",
             status: commandResult.status,
@@ -602,7 +641,7 @@ async function runJobCore(
 
   // Desk postback strategy: route result to State Desk instead of direct interrupt
   if (job.isolation?.postbackStrategy === "desk") {
-    emitSystemEvent({
+    emitSystemAndRuntimeTelemetry({
       subsystem: "delivery",
       event_type: "cron_desk_handoff_attempt",
       status: "ok",
@@ -632,7 +671,7 @@ async function runJobCore(
         trace,
       });
       if (handled) {
-        emitSystemEvent({
+        emitSystemAndRuntimeTelemetry({
           subsystem: "delivery",
           event_type: "cron_desk_handoff_enqueued",
           status: "ok",
@@ -651,7 +690,7 @@ async function runJobCore(
         return outcome;
       }
       // H2 Fail-to-Direct: desk handler failed, fall through to direct postback
-      emitSystemEvent({
+      emitSystemAndRuntimeTelemetry({
         subsystem: "delivery",
         event_type: "cron_desk_handoff_fallback",
         status: "degraded",
@@ -669,7 +708,7 @@ async function runJobCore(
       });
     } catch {
       // fireDeskAnnounce not available or threw — fall through to direct
-      emitSystemEvent({
+      emitSystemAndRuntimeTelemetry({
         subsystem: "delivery",
         event_type: "cron_desk_handoff_fallback",
         status: "degraded",
@@ -693,7 +732,7 @@ async function runJobCore(
     agentId: job.agentId,
   });
   // Telemetry: isolated job postback (system event to main lane)
-  emitSystemEvent({
+  emitSystemAndRuntimeTelemetry({
     subsystem: "delivery",
     event_type: "system_event_enqueued",
     status: outcome.status === "ok" ? "ok" : outcome.status,
