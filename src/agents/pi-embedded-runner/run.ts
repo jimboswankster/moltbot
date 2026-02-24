@@ -20,6 +20,11 @@ import {
   resolveContextWindowInfo,
 } from "../context-window-guard.js";
 import { DEFAULT_CONTEXT_TOKENS, DEFAULT_MODEL, DEFAULT_PROVIDER } from "../defaults.js";
+import {
+  decideDeterministicRoute,
+  extractRoutingHints,
+  loadRoutingPolicy,
+} from "../deterministic-router.js";
 import { FailoverError, resolveFailoverStatus } from "../failover-error.js";
 import {
   ensureAuthProfileStore,
@@ -106,8 +111,49 @@ export async function runEmbeddedPiAgent(
       const resolvedWorkspace = resolveUserPath(params.workspaceDir);
       const prevCwd = process.cwd();
 
-      const provider = (params.provider ?? DEFAULT_PROVIDER).trim() || DEFAULT_PROVIDER;
-      const modelId = (params.model ?? DEFAULT_MODEL).trim() || DEFAULT_MODEL;
+      const requestedProvider = (params.provider ?? DEFAULT_PROVIDER).trim() || DEFAULT_PROVIDER;
+      const requestedModelId = (params.model ?? DEFAULT_MODEL).trim() || DEFAULT_MODEL;
+      const routingPolicy = await loadRoutingPolicy();
+      const routingHints = extractRoutingHints({
+        prompt: params.prompt,
+        extraSystemPrompt: params.extraSystemPrompt,
+        lane: params.lane,
+      });
+      const route = decideDeterministicRoute({
+        policy: routingPolicy.policy,
+        policyPath: routingPolicy.policyPath,
+        hints: routingHints,
+        provider: requestedProvider,
+        model: requestedModelId,
+      });
+      const provider = (route.provider ?? requestedProvider).trim() || requestedProvider;
+      const modelId = (route.model ?? requestedModelId).trim() || requestedModelId;
+      recordRuntimeTelemetryEvent({
+        event: "agent.model_route_selected",
+        subsystem: "agent-embedded",
+        severity: route.applied ? "info" : "debug",
+        status: "ok",
+        details: {
+          runId: params.runId,
+          sessionId: params.sessionId,
+          requestedProvider,
+          requestedModel: requestedModelId,
+          selectedProvider: provider,
+          selectedModel: modelId,
+          applied: route.applied,
+          ruleId: route.ruleId,
+          source: route.source,
+          lane: route.lane,
+          tier: route.tier,
+          reason: route.reason,
+          policyPath: route.policyPath,
+          hints: {
+            taskClass: routingHints.taskClass ?? null,
+            lane: routingHints.lane ?? null,
+            source: routingHints.source,
+          },
+        },
+      });
       const agentDir = params.agentDir ?? resolveOpenClawAgentDir();
       const fallbackConfigured =
         (params.config?.agents?.defaults?.model?.fallbacks?.length ?? 0) > 0;
