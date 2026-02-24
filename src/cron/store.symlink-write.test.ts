@@ -9,8 +9,8 @@ describe("cron store symlink-aware writes", () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-cron-store-link-"));
     const workspaceDir = path.join(dir, "workspace", "os", "cron");
     const liveDir = path.join(dir, "cron");
-    const canonicalPath = path.join(workspaceDir, "jobs.json");
-    const livePath = path.join(liveDir, "jobs.json");
+    const canonicalPath = path.join(workspaceDir, "jobs.config.json");
+    const livePath = path.join(liveDir, "jobs.config.json");
 
     await fs.mkdir(workspaceDir, { recursive: true });
     await fs.mkdir(liveDir, { recursive: true });

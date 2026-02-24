@@ -51,7 +51,7 @@ function ensureMainDeliveryStrategyForMainSystemEvent(raw: Record<string, unknow
 
 /**
  * Reload jobs from disk, clearing any in-memory cache. Use after external edits to
- * jobs.json so new/updated/removed jobs are picked up without a gateway restart.
+ * jobs.config.json so new/updated/removed jobs are picked up without a gateway restart.
  */
 export async function reloadFromDisk(state: CronServiceState) {
   storeCache.delete(state.deps.storePath);

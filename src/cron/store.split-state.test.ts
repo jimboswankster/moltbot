@@ -8,7 +8,7 @@ describe("cron store split config/state mode", () => {
   it("loads merged jobs from jobs.config.json + jobs.state.json", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-cron-store-split-load-"));
     const cronDir = path.join(dir, "cron");
-    const storePath = path.join(cronDir, "jobs.json");
+    const storePath = path.join(cronDir, "jobs.config.json");
     const configPath = path.join(cronDir, "jobs.config.json");
     const statePath = path.join(cronDir, "jobs.state.json");
 
@@ -61,7 +61,7 @@ describe("cron store split config/state mode", () => {
   it("writes config-only jobs to jobs.config.json and runtime state to jobs.state.json", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-cron-store-split-save-"));
     const cronDir = path.join(dir, "cron");
-    const storePath = path.join(cronDir, "jobs.json");
+    const storePath = path.join(cronDir, "jobs.config.json");
     const configPath = path.join(cronDir, "jobs.config.json");
     const statePath = path.join(cronDir, "jobs.state.json");
 

@@ -55,7 +55,7 @@ describe("gateway server cron", () => {
     const prevSkipCron = process.env.OPENCLAW_SKIP_CRON;
     process.env.OPENCLAW_SKIP_CRON = "0";
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-gw-cron-"));
-    testState.cronStorePath = path.join(dir, "cron", "jobs.json");
+    testState.cronStorePath = path.join(dir, "cron", "jobs.config.json");
     testState.sessionConfig = { mainKey: "primary" };
     testState.cronEnabled = false;
     await fs.mkdir(path.dirname(testState.cronStorePath), { recursive: true });
@@ -269,7 +269,7 @@ describe("gateway server cron", () => {
     const prevSkipCron = process.env.OPENCLAW_SKIP_CRON;
     process.env.OPENCLAW_SKIP_CRON = "0";
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-gw-cron-log-"));
-    testState.cronStorePath = path.join(dir, "cron", "jobs.json");
+    testState.cronStorePath = path.join(dir, "cron", "jobs.config.json");
     testState.cronEnabled = undefined;
     await fs.mkdir(path.dirname(testState.cronStorePath), { recursive: true });
     await fs.writeFile(testState.cronStorePath, JSON.stringify({ version: 1, jobs: [] }));
@@ -331,7 +331,7 @@ describe("gateway server cron", () => {
         | undefined;
       expect(statusPayload?.enabled).toBe(true);
       const storePath = typeof statusPayload?.storePath === "string" ? statusPayload.storePath : "";
-      expect(storePath).toContain("jobs.json");
+      expect(storePath).toContain("jobs.config.json");
 
       const autoRes = await rpcReq(ws, "cron.add", {
         name: "auto run test",

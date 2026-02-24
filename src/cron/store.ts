@@ -6,7 +6,7 @@ import type { CronJobState, CronStoreFile } from "./types.js";
 import { CONFIG_DIR } from "../utils.js";
 
 export const DEFAULT_CRON_DIR = path.join(CONFIG_DIR, "cron");
-export const DEFAULT_CRON_STORE_PATH = path.join(DEFAULT_CRON_DIR, "jobs.json");
+export const DEFAULT_CRON_STORE_PATH = path.join(DEFAULT_CRON_DIR, "jobs.config.json");
 
 export function resolveCronStorePath(storePath?: string) {
   if (storePath?.trim()) {
@@ -92,8 +92,10 @@ function mergeConfigAndRuntimeState(
 
 function splitPathsForStorePath(storePath: string) {
   const dir = path.dirname(storePath);
+  const base = path.basename(storePath);
+  const configPath = base === "jobs.config.json" ? storePath : path.join(dir, "jobs.config.json");
   return {
-    configPath: path.join(dir, "jobs.config.json"),
+    configPath,
     statePath: path.join(dir, "jobs.state.json"),
   };
 }
@@ -168,8 +170,6 @@ export async function saveCronStore(storePath: string, store: CronStoreFile) {
     const stateStore = projectRuntimeState(store);
     await writeJsonAtomic(configPath, configStore);
     await writeJsonAtomic(statePath, stateStore);
-    // Keep legacy readers working: mirror config-only view to the store path.
-    await writeJsonAtomic(writePath, configStore);
     return;
   } catch {
     // No split config file exists; persist legacy single-file store.

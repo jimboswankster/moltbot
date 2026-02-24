@@ -6,7 +6,7 @@ import { appendCronRunLog, readCronRunLogEntries, resolveCronRunLogPath } from "
 
 describe("cron run log", () => {
   it("resolves store path to per-job runs/<jobId>.jsonl", () => {
-    const storePath = path.join(os.tmpdir(), "cron", "jobs.json");
+    const storePath = path.join(os.tmpdir(), "cron", "jobs.config.json");
     const p = resolveCronRunLogPath({ storePath, jobId: "job-1" });
     expect(p.endsWith(path.join(os.tmpdir(), "cron", "runs", "job-1.jsonl"))).toBe(true);
   });
