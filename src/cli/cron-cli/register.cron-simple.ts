@@ -4,7 +4,22 @@ import { defaultRuntime } from "../../runtime.js";
 import { addGatewayClientOptions, callGatewayFromCli } from "../gateway-rpc.js";
 import { warnIfCronSchedulerDisabled } from "./shared.js";
 
+const DEFAULT_CRON_RUN_TIMEOUT_MS = 30_000;
+
+function resolveCronRunTimeoutMs(envValue: string | undefined): number {
+  if (!envValue) {
+    return DEFAULT_CRON_RUN_TIMEOUT_MS;
+  }
+  const parsed = Number.parseInt(envValue, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_CRON_RUN_TIMEOUT_MS;
+  }
+  return Math.max(1, Math.floor(parsed));
+}
+
 export function registerCronSimpleCommands(cron: Command) {
+  const cronRunTimeoutMs = resolveCronRunTimeoutMs(process.env.OPENCLAW_CRON_RUN_TIMEOUT_MS);
+
   addGatewayClientOptions(
     cron
       .command("rm")
@@ -105,5 +120,6 @@ export function registerCronSimpleCommands(cron: Command) {
           defaultRuntime.exit(1);
         }
       }),
+    { timeoutMs: cronRunTimeoutMs },
   );
 }

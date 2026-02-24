@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 const callGatewayFromCli = vi.fn(async (method: string, _opts: unknown, params?: unknown) => {
   if (method === "cron.status") {
@@ -28,6 +28,16 @@ vi.mock("../runtime.js", () => ({
 }));
 
 describe("cron cli", () => {
+  const originalCronRunTimeout = process.env.OPENCLAW_CRON_RUN_TIMEOUT_MS;
+
+  afterEach(() => {
+    if (originalCronRunTimeout === undefined) {
+      delete process.env.OPENCLAW_CRON_RUN_TIMEOUT_MS;
+    } else {
+      process.env.OPENCLAW_CRON_RUN_TIMEOUT_MS = originalCronRunTimeout;
+    }
+  });
+
   it("trims model and thinking on cron add", { timeout: 60_000 }, async () => {
     callGatewayFromCli.mockClear();
 
@@ -173,6 +183,38 @@ describe("cron cli", () => {
     const clearCall = callGatewayFromCli.mock.calls.find((call) => call[0] === "cron.update");
     const clearPatch = clearCall?.[2] as { patch?: { agentId?: unknown } };
     expect(clearPatch?.patch?.agentId).toBeNull();
+  });
+
+  it("uses higher default timeout for cron run", async () => {
+    delete process.env.OPENCLAW_CRON_RUN_TIMEOUT_MS;
+    callGatewayFromCli.mockClear();
+
+    const { registerCronCli } = await import("./cron-cli.js");
+    const program = new Command();
+    program.exitOverride();
+    registerCronCli(program);
+
+    await program.parseAsync(["cron", "run", "job-1", "--force"], { from: "user" });
+
+    const runCall = callGatewayFromCli.mock.calls.find((call) => call[0] === "cron.run");
+    const runOpts = runCall?.[1] as { timeout?: string } | undefined;
+    expect(runOpts?.timeout).toBe("30000");
+  });
+
+  it("uses env override timeout for cron run", async () => {
+    process.env.OPENCLAW_CRON_RUN_TIMEOUT_MS = "45000";
+    callGatewayFromCli.mockClear();
+
+    const { registerCronCli } = await import("./cron-cli.js");
+    const program = new Command();
+    program.exitOverride();
+    registerCronCli(program);
+
+    await program.parseAsync(["cron", "run", "job-1", "--force"], { from: "user" });
+
+    const runCall = callGatewayFromCli.mock.calls.find((call) => call[0] === "cron.run");
+    const runOpts = runCall?.[1] as { timeout?: string } | undefined;
+    expect(runOpts?.timeout).toBe("45000");
   });
 
   it("allows model/thinking updates without --message", async () => {
