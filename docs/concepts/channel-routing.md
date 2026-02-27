@@ -112,3 +112,41 @@ Inbound replies include:
 - Quoted context is appended to `Body` as a `[Replying to ...]` block.
 
 This is consistent across channels.
+
+## Delivery timing and queues
+
+Routing is deterministic, but **response timing** depends on channel runtime and queue policy.
+
+### Timing path
+
+1. Channel receives inbound message.
+2. Router picks one agent (bindings/default rules above).
+3. If that session/agent is already busy, follow-up handling uses `messages.queue` policy.
+4. Reply is sent back to the same channel target (`originatingChannel` + `originatingTo` + account/thread context).
+
+### Queue modes and latency tradeoffs
+
+- `collect` (default): batches follow-ups while busy; fewer turns, better compression, higher apparent wait.
+- `fifo`: processes follow-ups in order; lower latency, more turns.
+- `off`: drops queued follow-ups once busy; lowest queue wait, highest risk of missed user intent.
+- `steer`: optimized for streaming steering flows.
+
+Core knobs:
+
+- `messages.queue.mode` (global default)
+- `messages.queue.byChannel.<channel>` (recommended for targeted tuning)
+- `messages.queue.debounceMs` / `debounceMsByChannel` (batch wait)
+- `agents.defaults.maxConcurrent` (parallel run capacity)
+
+### Safe vs canary rollout guidance
+
+Safe first:
+
+1. Increase `agents.defaults.maxConcurrent` conservatively (for example `1 -> 2`).
+2. Keep queue mode unchanged, but reduce debounce slightly for the affected channel.
+
+Canary next:
+
+1. Switch only one channel/account from `collect` to `fifo`.
+2. Validate latency, reply quality, and tool-call volume before broader rollout.
+3. Keep rollback as a single config revert.

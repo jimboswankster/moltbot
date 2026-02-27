@@ -181,6 +181,84 @@ More details: [Pairing](/channels/pairing#pair-via-telegram-recommended-for-ios)
 - Group history context uses `channels.telegram.historyLimit` (or `channels.telegram.accounts.*.historyLimit`), falling back to `messages.groupChat.historyLimit`. Set `0` to disable (default 50).
 - DM history can be limited with `channels.telegram.dmHistoryLimit` (user turns). Per-user overrides: `channels.telegram.dms["<user_id>"].historyLimit`.
 
+## Latency and lag diagnosis
+
+If Telegram feels "laggy" between user prompts and agent replies, check these in order:
+
+1. **Polling restart/backoff**
+   - In long-polling mode, transient network/API failures restart polling with exponential backoff.
+   - Look for logs like: `Telegram network error ... retrying in ...`.
+   - Typical impact: multi-second pauses before new updates are consumed.
+2. **Per-agent sink concurrency**
+   - Telegram runner concurrency is controlled by `agents.defaults.maxConcurrent`.
+   - Low values (especially `1`) serialize update handling and can create visible wait under bursty traffic.
+3. **Follow-up queue behavior while a run is active**
+   - Default queue mode is `collect` with `messages.queue.debounceMs = 1000`.
+   - When the agent is already running, follow-up messages may be batched, which adds intentional delay before the next turn.
+4. **Inbound debounce / text fragment merge**
+   - Inbound debounce defaults to `150ms` (`messages.inbound.debounceMs` / `byChannel.telegram`).
+   - Telegram text fragment merge can wait up to `1500ms` to join split messages.
+
+### Safe changes (low risk)
+
+Apply these first; they generally improve responsiveness without changing behavior semantics.
+
+```json5
+{
+  agents: {
+    defaults: {
+      maxConcurrent: 2, // start with 2, increase carefully
+    },
+  },
+  messages: {
+    inbound: {
+      byChannel: {
+        telegram: 100, // explicit, slightly tighter than default 150ms
+      },
+    },
+  },
+}
+```
+
+### Canary changes (behavioral impact)
+
+Roll out to one bot/account or a subset of traffic first.
+
+```json5
+{
+  messages: {
+    queue: {
+      byChannel: {
+        telegram: "fifo", // lower wait, less batching than collect
+      },
+      debounceMsByChannel: {
+        telegram: 250,
+      },
+    },
+  },
+}
+```
+
+- `fifo`: improves prompt-to-reply latency, but increases turn count and may reduce "merged context" quality compared to `collect`.
+- Keep a quick rollback ready to previous `messages.queue` values.
+
+### Future option: webhook mode
+
+Switching from long-polling to webhook can reduce polling-related delays and jitter, especially on unstable networks.
+
+- Configure `channels.telegram.webhookUrl` and `channels.telegram.webhookSecret`.
+- Keep long-polling config available for fallback.
+- Canary recommendation: enable on one account first, validate delivery latency and error rate, then expand.
+
+### Quick operator playbook
+
+1. Measure baseline: count recent polling errors/backoff lines and estimate median/avg delay.
+2. Apply **safe changes** (`maxConcurrent`, explicit inbound debounce).
+3. Observe for at least one traffic cycle (or a full business day).
+4. If lag remains, canary queue-mode changes for Telegram.
+5. If polling instability dominates, canary webhook mode.
+6. Roll back the most recent change first if regressions appear.
+
 ## Group activation modes
 
 By default, the bot only responds to mentions in groups (`@botname` or patterns in `agents.list[].groupChat.mentionPatterns`). To change this behavior:
