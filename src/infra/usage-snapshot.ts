@@ -7,7 +7,13 @@ import { resolveSessionTranscriptCandidates } from "../gateway/session-utils.fs.
 import { listAgentsForGateway } from "../gateway/session-utils.js";
 import { parseAgentSessionKey } from "../routing/session-key.js";
 
-const SNAPSHOT_RELATIVE_PATH = path.join("os", "audits", "llm-usage-latest.json");
+const SNAPSHOT_RELATIVE_PATH = path.join(
+  "os",
+  "data-telemetry",
+  "audits",
+  "usage",
+  "llm-usage-latest.json",
+);
 const DEFAULT_MAX_ENTRIES = 50;
 const TOOL_SCAN_MAX_BYTES = 256 * 1024;
 const TOOL_NAMES_MAX = 20;
