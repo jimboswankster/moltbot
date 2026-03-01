@@ -27,6 +27,7 @@ import { createPluginRegistry, type PluginRecord, type PluginRegistry } from "./
 import { setActivePluginRegistry } from "./runtime.js";
 import { createPluginRuntime } from "./runtime/index.js";
 import { validateJsonSchemaValue } from "./schema-validator.js";
+import { buildSimonSwitchboardBridgeContext } from "./simon-switchboard-bridge.js";
 
 export type PluginLoadResult = PluginRegistry;
 
@@ -209,6 +210,12 @@ export function loadOpenClawPlugins(options: PluginLoadOptions = {}): PluginRegi
     return await runA2AInboxBeforeAgentStart({
       cfg: options.config ?? {},
       ctx,
+    });
+  });
+  registerTypedHook(coreInboxRecord, "before_agent_start", async (_event, ctx) => {
+    return buildSimonSwitchboardBridgeContext({
+      workspaceDir: ctx.workspaceDir,
+      modeRaw: process.env.OPENCLAW_SIMON_SWITCHBOARD_BRIDGE_MODE,
     });
   });
 
