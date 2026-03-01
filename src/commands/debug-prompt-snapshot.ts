@@ -1,7 +1,7 @@
 /**
  * CLI command: openclaw debug prompt-snapshot --mode startup|query [--message "..."]
  * Captures the prompt payload the model would see and writes snapshot files to
- * os/audits/prompt-snapshots/ (dry-run; does not call the provider).
+ * os/data/prompt-snapshots/ (dry-run; does not call the provider).
  */
 
 import type { RuntimeEnv } from "../runtime.js";

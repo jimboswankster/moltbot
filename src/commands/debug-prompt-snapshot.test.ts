@@ -60,7 +60,7 @@ describe("promptSnapshotCommand", () => {
     });
 
     afterEach(async () => {
-      const snapshotDir = path.join(workspaceDir, "os", "audits", "prompt-snapshots");
+      const snapshotDir = path.join(workspaceDir, "os", "data", "prompt-snapshots");
       try {
         const entries = await fs.readdir(snapshotDir);
         for (const name of entries) {

@@ -62,7 +62,7 @@ describe("runPromptSnapshot", () => {
     if (!workspaceDir || !workspaceDir.includes(os.tmpdir())) {
       return;
     }
-    const snapshotDir = path.join(workspaceDir, "os", "audits", "prompt-snapshots");
+    const snapshotDir = path.join(workspaceDir, "os", "data", "prompt-snapshots");
     try {
       const entries = await fs.readdir(snapshotDir);
       for (const name of entries) {
@@ -91,9 +91,9 @@ describe("runPromptSnapshot", () => {
     expect(result.ok).toBe(true);
     expect(result.workspaceDir).toBeTruthy();
     expect(result.baseName).toMatch(/^\d{8}T\d{6}Z-startup$/);
-    expect(result.jsonPath).toContain(path.join("os", "audits", "prompt-snapshots"));
+    expect(result.jsonPath).toContain(path.join("os", "data", "prompt-snapshots"));
     expect(result.jsonPath.endsWith(".json")).toBe(true);
-    expect(result.mdPath).toContain(path.join("os", "audits", "prompt-snapshots"));
+    expect(result.mdPath).toContain(path.join("os", "data", "prompt-snapshots"));
     expect(result.mdPath.endsWith(".md")).toBe(true);
 
     const json = JSON.parse(await fs.readFile(result.jsonPath, "utf-8"));

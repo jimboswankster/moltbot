@@ -18,7 +18,7 @@ import { buildSystemPromptParams } from "../agents/system-prompt-params.js";
 import { loadConfig } from "../config/config.js";
 import { getMachineDisplayName } from "../infra/machine-name.js";
 
-const SNAPSHOT_REL_DIR = path.join("os", "audits", "prompt-snapshots");
+const SNAPSHOT_REL_DIR = path.join("os", "data", "prompt-snapshots");
 
 export type PromptSnapshotMode = "startup" | "query";
 

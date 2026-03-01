@@ -10,7 +10,7 @@ export function registerDebugCli(program: Command) {
 
   debug
     .command("prompt-snapshot")
-    .description("Capture prompt payload snapshot (dry-run; writes to os/audits/prompt-snapshots)")
+    .description("Capture prompt payload snapshot (dry-run; writes to os/data/prompt-snapshots)")
     .option("--mode <mode>", "startup | query", "startup")
     .option("--message <text>", "User message for query mode (required when mode=query)")
     .action(async (opts: { mode?: string; message?: string }) => {
