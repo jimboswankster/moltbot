@@ -24,6 +24,18 @@ export type GatewayCronState = {
   cronEnabled: boolean;
 };
 
+const CWD_WORKSPACE_TOKEN = "__OPENCLAW_WORKSPACE__";
+const CWD_WORKSPACE_OS_TOKEN = "__OPENCLAW_WORKSPACE_OS__";
+
+export function resolveCronCommandCwd(params: { cwd?: string; workspaceDir?: string }): string {
+  const fallback = params.workspaceDir || process.cwd();
+  const raw = typeof params.cwd === "string" ? params.cwd.trim() : "";
+  if (!raw) return fallback;
+  if (raw === CWD_WORKSPACE_TOKEN) return fallback;
+  if (raw === CWD_WORKSPACE_OS_TOKEN) return `${fallback}/os`;
+  return raw;
+}
+
 export function buildGatewayCronService(params: {
   cfg: ReturnType<typeof loadConfig>;
   deps: CliDeps;
@@ -139,8 +151,7 @@ export function buildGatewayCronService(params: {
         Math.max(1_000, Math.floor((timeoutSeconds ?? 300) * 1_000)),
         30 * 60_000,
       );
-      const runtimeCwd =
-        typeof cwd === "string" && cwd.trim() ? cwd : workspaceDir || process.cwd();
+      const runtimeCwd = resolveCronCommandCwd({ cwd, workspaceDir });
       const startedAt = Date.now();
       const result = await runCommandWithTimeout(["bash", "-lc", command], {
         cwd: runtimeCwd,
