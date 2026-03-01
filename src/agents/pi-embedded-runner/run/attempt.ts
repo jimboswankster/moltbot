@@ -293,7 +293,14 @@ async function appendTokenBudgetTelemetryEvent(
   event: TokenBudgetTelemetryEvent,
 ): Promise<void> {
   const day = new Date().toISOString().slice(0, 10);
-  const eventsDir = path.join(workspaceDir, "os", "audits", "tool-telemetry", "events");
+  const eventsDir = path.join(
+    workspaceDir,
+    "os",
+    "data-telemetry",
+    "audits",
+    "tool-telemetry",
+    "events",
+  );
   const filePath = path.join(eventsDir, `token-budget-${day}.jsonl`);
   await fs.mkdir(eventsDir, { recursive: true });
   await fs.appendFile(filePath, `${JSON.stringify(event)}\n`, "utf8");

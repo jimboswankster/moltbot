@@ -75,6 +75,7 @@ function resolveTelemetryEventsPath(): string | null {
   return path.join(
     workspaceDir,
     "os",
+    "data-telemetry",
     "audits",
     "tool-telemetry",
     "events",
