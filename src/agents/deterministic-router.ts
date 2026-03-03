@@ -65,6 +65,12 @@ function normalize(value: string | undefined | null): string {
     .toLowerCase();
 }
 
+function shouldBypassDeterministicRouting(hints: RoutingHints): boolean {
+  const lane = normalize(hints.lane);
+  if (!lane) return false;
+  return lane.startsWith("fallback:") || lane.startsWith("auth-probe:");
+}
+
 function parseModelRef(modelRef: string): { provider: string; model: string } | null {
   const raw = String(modelRef).trim();
   if (!raw) return null;
@@ -182,6 +188,20 @@ export function decideDeterministicRoute(params: {
   provider: string;
   model: string;
 }): RoutingDecision {
+  if (shouldBypassDeterministicRouting(params.hints)) {
+    return {
+      applied: false,
+      policyPath: params.policyPath,
+      ruleId: null,
+      source: params.hints.source,
+      lane: params.hints.lane ?? null,
+      tier: null,
+      modelRef: null,
+      provider: params.provider,
+      model: params.model,
+      reason: "deterministic routing bypassed for explicit fallback/probe lane",
+    };
+  }
   if (!params.policy) {
     return {
       applied: false,

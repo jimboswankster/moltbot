@@ -446,7 +446,10 @@ export async function agentCommand(
             verboseLevel: resolvedVerboseLevel,
             timeoutMs,
             runId,
-            lane: opts.lane,
+            lane:
+              providerOverride === provider
+                ? opts.lane
+                : `fallback:${providerOverride}/${modelOverride}`,
             abortSignal: opts.abortSignal,
             extraSystemPrompt: opts.extraSystemPrompt,
             streamParams: opts.streamParams,

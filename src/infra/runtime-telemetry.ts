@@ -15,12 +15,19 @@ function resolveRuntimeTelemetryPath(): string {
   if (configured) {
     return configured;
   }
+  return resolveLegacyRuntimeTelemetryPath();
+}
+
+function resolveLegacyRuntimeTelemetryPath(): string {
   const home = process.env.HOME || "/Users/basecamp";
   return path.join(home, ".openclaw", "logs", "runtime-telemetry.jsonl");
 }
 
 export function recordRuntimeTelemetryEvent(event: RuntimeTelemetryEvent): void {
   const target = resolveRuntimeTelemetryPath();
+  const legacy = resolveLegacyRuntimeTelemetryPath();
+  const writeLegacyCompat =
+    String(process.env.OPENCLAW_RUNTIME_TELEMETRY_WRITE_LEGACY ?? "1").trim() !== "0";
   const row = {
     ts: event.ts || new Date().toISOString(),
     event: event.event,
@@ -32,6 +39,11 @@ export function recordRuntimeTelemetryEvent(event: RuntimeTelemetryEvent): void 
   try {
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.appendFileSync(target, `${JSON.stringify(row)}\n`, "utf8");
+    // Compatibility mirror for legacy readers until explicit cutover.
+    if (writeLegacyCompat && legacy !== target) {
+      fs.mkdirSync(path.dirname(legacy), { recursive: true });
+      fs.appendFileSync(legacy, `${JSON.stringify(row)}\n`, "utf8");
+    }
   } catch {
     // Best-effort only: runtime telemetry must never destabilize gateway paths.
   }

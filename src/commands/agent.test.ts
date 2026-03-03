@@ -16,10 +16,14 @@ import type { OpenClawConfig } from "../config/config.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { telegramPlugin } from "../../extensions/telegram/src/channel.js";
 import { setTelegramRuntime } from "../../extensions/telegram/src/runtime.js";
+import { decideDeterministicRoute, extractRoutingHints } from "../agents/deterministic-router.js";
+import { FailoverError } from "../agents/failover-error.js";
 import { loadModelCatalog } from "../agents/model-catalog.js";
+import { resetModelCandidateCooldownsForTest } from "../agents/model-fallback.js";
 import { runEmbeddedPiAgent } from "../agents/pi-embedded.js";
 import * as configModule from "../config/config.js";
 import { emitAgentEvent, onAgentEvent } from "../infra/agent-events.js";
+import { recordRuntimeTelemetryEvent } from "../infra/runtime-telemetry.js";
 import { setActivePluginRegistry } from "../plugins/runtime.js";
 import { createPluginRuntime } from "../plugins/runtime/index.js";
 import { createTestRegistry } from "../test-utils/channel-plugins.js";
@@ -63,6 +67,7 @@ function mockConfig(
 
 beforeEach(() => {
   vi.clearAllMocks();
+  resetModelCandidateCooldownsForTest();
   vi.mocked(runEmbeddedPiAgent).mockResolvedValue({
     payloads: [{ text: "ok" }],
     meta: {
@@ -414,6 +419,313 @@ describe("agentCommand", () => {
       await agentCommand({ message: "hi", agentId: "ops" }, runtime);
 
       expect(runtime.log).toHaveBeenCalledWith("ok");
+    });
+  });
+
+  it("keeps fallback chain provider parity under deterministic routing", async () => {
+    await withTempHome(async (home) => {
+      const store = path.join(home, "sessions.json");
+      mockConfig(home, store, {
+        model: {
+          primary: "openai-codex/gpt-5.1",
+          fallbacks: ["openrouter/z-ai/glm-5", "openai/gpt-5.1", "minimax/MiniMax-M2.5"],
+        },
+        models: {
+          "openai-codex/gpt-5.1": {},
+          "openrouter/z-ai/glm-5": {},
+          "openai/gpt-5.1": {},
+          "minimax/MiniMax-M2.5": {},
+          "ollama/glm-5:cloud": {},
+        },
+      });
+
+      const policy = {
+        enabled: true,
+        defaults: {
+          workerModel: "minimax/MiniMax-M2.5",
+        },
+        laneRules: [
+          {
+            id: "reasoning-policy-default",
+            enabled: true,
+            if: { taskClassesAny: ["policy-review"] },
+            then: { workerModel: "ollama/glm-5:cloud" },
+          },
+        ],
+      } as const;
+
+      const attempts: Array<{
+        requested: string;
+        selected: string;
+        lane: string | undefined;
+      }> = [];
+
+      vi.mocked(runEmbeddedPiAgent).mockImplementation(async (params) => {
+        const lane = (params as { lane?: string }).lane;
+        const requestedProvider = String((params as { provider?: string }).provider ?? "");
+        const requestedModel = String((params as { model?: string }).model ?? "");
+        const prompt = String((params as { prompt?: string }).prompt ?? "");
+        const extraSystemPrompt = String(
+          (params as { extraSystemPrompt?: string }).extraSystemPrompt ?? "",
+        );
+        const hints = extractRoutingHints({ prompt, extraSystemPrompt, lane });
+        const decision = decideDeterministicRoute({
+          policy,
+          policyPath: "/tmp/routing-policy.v1.json",
+          hints,
+          provider: requestedProvider,
+          model: requestedModel,
+        });
+        const selectedProvider = decision.provider ?? requestedProvider;
+        const selectedModel = decision.model ?? requestedModel;
+
+        attempts.push({
+          requested: `${requestedProvider}/${requestedModel}`,
+          selected: `${selectedProvider}/${selectedModel}`,
+          lane,
+        });
+
+        if (selectedProvider === "ollama") {
+          throw new FailoverError("No available auth profile for ollama (all in cooldown).", {
+            reason: "rate_limit",
+            provider: selectedProvider,
+            model: selectedModel,
+            status: 429,
+          });
+        }
+
+        return {
+          payloads: [{ text: "ok" }],
+          meta: {
+            durationMs: 5,
+            agentMeta: { sessionId: "s", provider: selectedProvider, model: selectedModel },
+          },
+        };
+      });
+
+      await agentCommand({ message: "Please review this policy and risks.", to: "+1555" }, runtime);
+
+      expect(attempts).toEqual([
+        {
+          requested: "openai-codex/gpt-5.1",
+          selected: "ollama/glm-5:cloud",
+          lane: undefined,
+        },
+        {
+          requested: "openrouter/z-ai/glm-5",
+          selected: "openrouter/z-ai/glm-5",
+          lane: "fallback:openrouter/z-ai/glm-5",
+        },
+      ]);
+    });
+  });
+
+  it("chaos: preserves full fallback-chain parity when all attempts fail", async () => {
+    await withTempHome(async (home) => {
+      const store = path.join(home, "sessions.json");
+      mockConfig(home, store, {
+        model: {
+          primary: "openai-codex/gpt-5.1",
+          fallbacks: ["openrouter/z-ai/glm-5", "openai/gpt-5.1", "minimax/MiniMax-M2.5"],
+        },
+        models: {
+          "openai-codex/gpt-5.1": {},
+          "openrouter/z-ai/glm-5": {},
+          "openai/gpt-5.1": {},
+          "minimax/MiniMax-M2.5": {},
+          "ollama/glm-5:cloud": {},
+        },
+      });
+
+      const policy = {
+        enabled: true,
+        defaults: {
+          workerModel: "minimax/MiniMax-M2.5",
+        },
+        laneRules: [
+          {
+            id: "reasoning-policy-default",
+            enabled: true,
+            if: { taskClassesAny: ["policy-review"] },
+            then: { workerModel: "ollama/glm-5:cloud" },
+          },
+        ],
+      } as const;
+
+      const attempts: Array<{
+        requested: string;
+        selected: string;
+        lane: string | undefined;
+      }> = [];
+
+      vi.mocked(runEmbeddedPiAgent).mockImplementation(async (params) => {
+        const lane = (params as { lane?: string }).lane;
+        const requestedProvider = String((params as { provider?: string }).provider ?? "");
+        const requestedModel = String((params as { model?: string }).model ?? "");
+        const prompt = String((params as { prompt?: string }).prompt ?? "");
+        const extraSystemPrompt = String(
+          (params as { extraSystemPrompt?: string }).extraSystemPrompt ?? "",
+        );
+        const hints = extractRoutingHints({ prompt, extraSystemPrompt, lane });
+        const decision = decideDeterministicRoute({
+          policy,
+          policyPath: "/tmp/routing-policy.v1.json",
+          hints,
+          provider: requestedProvider,
+          model: requestedModel,
+        });
+        const selectedProvider = decision.provider ?? requestedProvider;
+        const selectedModel = decision.model ?? requestedModel;
+
+        attempts.push({
+          requested: `${requestedProvider}/${requestedModel}`,
+          selected: `${selectedProvider}/${selectedModel}`,
+          lane,
+        });
+
+        throw new FailoverError(`forced failure from ${selectedProvider}/${selectedModel}`, {
+          reason: "rate_limit",
+          provider: selectedProvider,
+          model: selectedModel,
+          status: 429,
+        });
+      });
+
+      await expect(
+        agentCommand({ message: "Please review this policy and risks.", to: "+1555" }, runtime),
+      ).rejects.toThrow("All models failed (4)");
+
+      expect(attempts).toEqual([
+        {
+          requested: "openai-codex/gpt-5.1",
+          selected: "ollama/glm-5:cloud",
+          lane: undefined,
+        },
+        {
+          requested: "openrouter/z-ai/glm-5",
+          selected: "openrouter/z-ai/glm-5",
+          lane: "fallback:openrouter/z-ai/glm-5",
+        },
+        {
+          requested: "openai/gpt-5.1",
+          selected: "openai/gpt-5.1",
+          lane: "fallback:openai/gpt-5.1",
+        },
+        {
+          requested: "minimax/MiniMax-M2.5",
+          selected: "minimax/MiniMax-M2.5",
+          lane: "fallback:minimax/MiniMax-M2.5",
+        },
+      ]);
+    });
+  });
+
+  it("telemetry contract: fallback lanes never log requested/selected provider mismatch", async () => {
+    await withTempHome(async (home) => {
+      const store = path.join(home, "sessions.json");
+      mockConfig(home, store, {
+        model: {
+          primary: "openai-codex/gpt-5.1",
+          fallbacks: ["openrouter/z-ai/glm-5", "openai/gpt-5.1", "minimax/MiniMax-M2.5"],
+        },
+        models: {
+          "openai-codex/gpt-5.1": {},
+          "openrouter/z-ai/glm-5": {},
+          "openai/gpt-5.1": {},
+          "minimax/MiniMax-M2.5": {},
+          "ollama/glm-5:cloud": {},
+        },
+      });
+
+      delete process.env.OPENCLAW_RUNTIME_TELEMETRY_FILE;
+      process.env.OPENCLAW_RUNTIME_TELEMETRY_WRITE_LEGACY = "0";
+
+      const telemetryPath = path.join(home, ".openclaw", "logs", "runtime-telemetry.jsonl");
+
+      const policy = {
+        enabled: true,
+        defaults: {
+          workerModel: "minimax/MiniMax-M2.5",
+        },
+        laneRules: [
+          {
+            id: "reasoning-policy-default",
+            enabled: true,
+            if: { taskClassesAny: ["policy-review"] },
+            then: { workerModel: "ollama/glm-5:cloud" },
+          },
+        ],
+      } as const;
+
+      vi.mocked(runEmbeddedPiAgent).mockImplementation(async (params) => {
+        const lane = (params as { lane?: string }).lane;
+        const requestedProvider = String((params as { provider?: string }).provider ?? "");
+        const requestedModel = String((params as { model?: string }).model ?? "");
+        const prompt = String((params as { prompt?: string }).prompt ?? "");
+        const extraSystemPrompt = String(
+          (params as { extraSystemPrompt?: string }).extraSystemPrompt ?? "",
+        );
+        const hints = extractRoutingHints({ prompt, extraSystemPrompt, lane });
+        const decision = decideDeterministicRoute({
+          policy,
+          policyPath: "/tmp/routing-policy.v1.json",
+          hints,
+          provider: requestedProvider,
+          model: requestedModel,
+        });
+        const selectedProvider = decision.provider ?? requestedProvider;
+        const selectedModel = decision.model ?? requestedModel;
+
+        recordRuntimeTelemetryEvent({
+          event: "agent.model_route_selected",
+          subsystem: "agent-embedded",
+          details: {
+            requestedProvider,
+            requestedModel,
+            selectedProvider,
+            selectedModel,
+            lane: lane ?? null,
+            source: hints.source,
+          },
+        });
+
+        if (!lane) {
+          throw new FailoverError("forced primary failure", {
+            reason: "rate_limit",
+            provider: selectedProvider,
+            model: selectedModel,
+            status: 429,
+          });
+        }
+
+        return {
+          payloads: [{ text: "ok" }],
+          meta: {
+            durationMs: 5,
+            agentMeta: { sessionId: "s", provider: selectedProvider, model: selectedModel },
+          },
+        };
+      });
+
+      await agentCommand({ message: "Please review this policy and risks.", to: "+1555" }, runtime);
+
+      expect(fs.existsSync(telemetryPath)).toBe(true);
+      const rows = fs
+        .readFileSync(telemetryPath, "utf8")
+        .trim()
+        .split(/\r?\n/)
+        .map((line) => JSON.parse(line) as { event?: string; details?: Record<string, unknown> });
+
+      const fallbackRouteRows = rows.filter((row) => {
+        if (row.event !== "agent.model_route_selected") return false;
+        const lane = String(row.details?.lane ?? "");
+        return lane.startsWith("fallback:");
+      });
+      expect(fallbackRouteRows.length).toBeGreaterThan(0);
+      for (const row of fallbackRouteRows) {
+        expect(row.details?.requestedProvider).toBe(row.details?.selectedProvider);
+        expect(row.details?.requestedModel).toBe(row.details?.selectedModel);
+      }
     });
   });
 });

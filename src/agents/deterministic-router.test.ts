@@ -116,4 +116,115 @@ describe("decideDeterministicRoute", () => {
     expect(decision.model).toBe("MiniMax-M2.5");
     expect(decision.reason).toContain("equals current");
   });
+
+  it("bypasses deterministic routing for fallback lanes", () => {
+    const decision = decideDeterministicRoute({
+      policy,
+      policyPath: "/tmp/routing-policy.json",
+      hints: {
+        taskClass: "policy-review",
+        lane: "fallback:openrouter/z-ai/glm-5",
+        source: "keyword",
+      },
+      provider: "openrouter",
+      model: "z-ai/glm-5",
+    });
+    expect(decision.applied).toBe(false);
+    expect(decision.provider).toBe("openrouter");
+    expect(decision.model).toBe("z-ai/glm-5");
+    expect(decision.reason).toContain("bypassed");
+  });
+
+  it("bypasses deterministic routing for auth probe lanes", () => {
+    const decision = decideDeterministicRoute({
+      policy,
+      policyPath: "/tmp/routing-policy.json",
+      hints: {
+        taskClass: "policy-review",
+        lane: "auth-probe:openrouter:openrouter:default",
+        source: "envelope",
+      },
+      provider: "openrouter",
+      model: "z-ai/glm-5",
+    });
+    expect(decision.applied).toBe(false);
+    expect(decision.provider).toBe("openrouter");
+    expect(decision.model).toBe("z-ai/glm-5");
+    expect(decision.reason).toContain("bypassed");
+  });
+
+  it("bypasses routing for fallback/probe lanes with mixed case and whitespace", () => {
+    const fallbackDecision = decideDeterministicRoute({
+      policy,
+      policyPath: "/tmp/routing-policy.json",
+      hints: {
+        taskClass: "policy-review",
+        lane: "  Fallback:OpenRouter/z-ai/glm-5  ",
+        source: "envelope",
+      },
+      provider: "openrouter",
+      model: "z-ai/glm-5",
+    });
+    expect(fallbackDecision.applied).toBe(false);
+    expect(fallbackDecision.provider).toBe("openrouter");
+    expect(fallbackDecision.model).toBe("z-ai/glm-5");
+
+    const probeDecision = decideDeterministicRoute({
+      policy,
+      policyPath: "/tmp/routing-policy.json",
+      hints: {
+        taskClass: "policy-review",
+        lane: "  AUTH-PROBE:openrouter:openrouter:default ",
+        source: "envelope",
+      },
+      provider: "openrouter",
+      model: "z-ai/glm-5",
+    });
+    expect(probeDecision.applied).toBe(false);
+    expect(probeDecision.provider).toBe("openrouter");
+    expect(probeDecision.model).toBe("z-ai/glm-5");
+  });
+
+  it("chaos: never remaps fallback/probe lanes across randomized inputs", () => {
+    const providers = ["openrouter", "openai", "minimax", "ollama"];
+    const models = ["z-ai/glm-5", "gpt-5.1", "MiniMax-M2.5", "glm-5:cloud"];
+    let seed = 0x1234abcd;
+    const next = () => {
+      // Deterministic LCG for reproducible chaos vectors.
+      seed = (seed * 1664525 + 1013904223) >>> 0;
+      return seed / 0xffffffff;
+    };
+
+    for (let i = 0; i < 200; i += 1) {
+      const provider = providers[Math.floor(next() * providers.length)];
+      const model = models[Math.floor(next() * models.length)];
+      const laneVariant = Math.floor(next() * 3);
+      const lane =
+        laneVariant === 0
+          ? ` fallback:${provider}/${model} `
+          : laneVariant === 1
+            ? `AUTH-PROBE:${provider}:${provider}:default`
+            : `regular:${provider}:${model}`;
+
+      const decision = decideDeterministicRoute({
+        policy,
+        policyPath: "/tmp/routing-policy.json",
+        hints: { taskClass: "policy-review", lane, source: "envelope" },
+        provider,
+        model,
+      });
+
+      const normalizedLane = lane.trim().toLowerCase();
+      const shouldBypass =
+        normalizedLane.startsWith("fallback:") || normalizedLane.startsWith("auth-probe:");
+      if (shouldBypass) {
+        expect(decision.applied).toBe(false);
+        expect(decision.provider).toBe(provider);
+        expect(decision.model).toBe(model);
+      } else {
+        expect(decision.provider).toBe("openrouter");
+        expect(decision.model).toBe("z-ai/glm-5");
+      }
+    }
+  });
 });
