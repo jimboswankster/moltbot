@@ -3,6 +3,7 @@ import type { OpenClawConfig } from "../../config/config.js";
 import type { MemoryCitationsMode } from "../../config/types.memory.js";
 import type { MemorySearchResult } from "../../memory/types.js";
 import type { AnyAgentTool } from "./common.js";
+import { routeMemorySearch } from "../../memory/adapter-rollout.js";
 import { resolveMemoryBackendConfig } from "../../memory/backend-config.js";
 import { getMemorySearchManager } from "../../memory/index.js";
 import { parseAgentSessionKey } from "../../routing/session-key.js";
@@ -60,11 +61,20 @@ export function createMemorySearchTool(options: {
           mode: citationsMode,
           sessionKey: options.agentSessionKey,
         });
-        const rawResults = await manager.search(query, {
+        const routed = await routeMemorySearch({
+          query,
           maxResults,
           minScore,
           sessionKey: options.agentSessionKey,
+          agentId,
+          legacySearch: async (input) =>
+            await manager.search(input.query, {
+              maxResults: input.maxResults,
+              minScore: input.minScore,
+              sessionKey: input.sessionKey,
+            }),
         });
+        const rawResults = routed.results;
         const status = manager.status();
         const decorated = decorateCitations(rawResults, includeCitations);
         const resolved = resolveMemoryBackendConfig({ cfg, agentId });
@@ -78,6 +88,11 @@ export function createMemorySearchTool(options: {
           model: status.model,
           fallback: status.fallback,
           citations: citationsMode,
+          broker: {
+            backend: routed.chosenBackend,
+            reason: routed.decision.reason,
+            degradationMode: routed.degradationMode,
+          },
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
