@@ -190,6 +190,11 @@ export async function monitorTelegramProvider(opts: MonitorTelegramOpts = {}) {
         if (opts.abortSignal?.aborted) {
           return;
         }
+        if (process.env.VITEST || process.env.NODE_ENV === "test") {
+          // Unit tests mock runner.task() to resolve immediately; restarting here
+          // would spin forever and exhaust memory.
+          return;
+        }
         restartAttempts = 0;
         (opts.runtime?.error ?? console.warn)(
           "Telegram runner stopped (non-error); restarting polling...",

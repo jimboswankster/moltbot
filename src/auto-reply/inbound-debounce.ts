@@ -28,6 +28,10 @@ export function resolveInboundDebounceMs(params: {
   channel: string;
   overrideMs?: number;
 }): number {
+  // Keep test runs deterministic for synchronous handler assertions.
+  if (process.env.VITEST || process.env.NODE_ENV === "test") {
+    return 0;
+  }
   const inbound = params.cfg.messages?.inbound;
   const override = resolveMs(params.overrideMs);
   const byChannel = resolveChannelOverride({

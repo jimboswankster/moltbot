@@ -42,6 +42,8 @@ export type GatewayClientOptions = {
   url?: string; // ws://127.0.0.1:18789
   token?: string;
   password?: string;
+  /** Ignore cached per-device auth tokens and use only provided shared auth fields. */
+  disableStoredDeviceToken?: boolean;
   instanceId?: string;
   clientName?: GatewayClientName;
   clientDisplayName?: string;
@@ -185,9 +187,10 @@ export class GatewayClient {
       this.connectTimer = null;
     }
     const role = this.opts.role ?? "operator";
-    const storedToken = this.opts.deviceIdentity
-      ? loadDeviceAuthToken({ deviceId: this.opts.deviceIdentity.deviceId, role })?.token
-      : null;
+    const storedToken =
+      !this.opts.disableStoredDeviceToken && this.opts.deviceIdentity
+        ? loadDeviceAuthToken({ deviceId: this.opts.deviceIdentity.deviceId, role })?.token
+        : null;
     const authToken = storedToken ?? this.opts.token ?? undefined;
     const canFallbackToShared = Boolean(storedToken && this.opts.token);
     const auth =

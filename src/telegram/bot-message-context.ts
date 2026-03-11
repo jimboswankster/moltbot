@@ -230,7 +230,7 @@ export const buildTelegramMessageContext = async ({
     }
 
     if (dmPolicy !== "open") {
-      const candidate = String(chatId);
+      const candidate = msg.from?.id != null ? String(msg.from.id) : String(chatId);
       const senderUsername = msg.from?.username ?? "";
       const allowMatch = resolveSenderAllowMatch({
         allow: effectiveDmAllow,
@@ -643,6 +643,7 @@ export const buildTelegramMessageContext = async ({
           channel: "telegram",
           to: String(chatId),
           accountId: route.accountId,
+          threadId: dmThreadId != null ? String(dmThreadId) : undefined,
         }
       : undefined,
     onRecordError: (err) => {

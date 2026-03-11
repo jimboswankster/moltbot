@@ -60,6 +60,8 @@ export async function probeGateway(opts: {
       url: opts.url,
       token: opts.auth?.token,
       password: opts.auth?.password,
+      // Keep CLI auth probes deterministic: do not silently prefer cached device tokens.
+      disableStoredDeviceToken: true,
       clientName: GATEWAY_CLIENT_NAMES.CLI,
       clientVersion: "dev",
       mode: GATEWAY_CLIENT_MODES.PROBE,
