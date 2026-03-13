@@ -14,6 +14,8 @@ Docs: https://docs.openclaw.ai
 - Docs: fix typo - clawdbot is the compatibility shim, not openclaw. (#7415) Thanks @lailoo.
 - Config: allow setting a default subagent thinking level via `agents.defaults.subagents.thinking` (and per-agent `agents.list[].subagents.thinking`). (#7372) Thanks @tyler6204.
 - Memory: implement the opt-in QMD backend for workspace memory. (#3160) Thanks @vignesh07.
+- Telegram: add phase-c queue policy defaults (conversation `steer-backlog`, command/control `interrupt`) with per-channel timeout defaults and lane routing for followup runs.
+- Memory: enforce adapter rollout contract parity (legacy-memory path guard + automatic legacy fallback) and emit confidence metadata on adapter query outcomes.
 
 ### Fixes
 
@@ -34,6 +36,7 @@ Docs: https://docs.openclaw.ai
 - Security: guard skill installer downloads with SSRF checks (block private/localhost URLs).
 - Media understanding: apply SSRF guardrails to provider fetches; allow private baseUrl overrides explicitly.
 - Tests: stub SSRF DNS pinning in web auto-reply + Gemini video coverage. (#6619) Thanks @joshp123.
+- Telemetry: emit embedded agent lifecycle queue/duration/outcome events and process command-queue enqueue/dequeue/completion/failure events for runtime diagnostics.
 
 ## 2026.2.1
 
