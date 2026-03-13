@@ -1,3 +1,4 @@
+import { recordRuntimeTelemetryEvent } from "../infra/runtime-telemetry.js";
 import { diagnosticLogger as diag, logLaneDequeue, logLaneEnqueue } from "../logging/diagnostic.js";
 import { CommandLane } from "./lanes.js";
 
@@ -59,24 +60,63 @@ function drainLane(lane: string) {
         );
       }
       logLaneDequeue(lane, waitedMs, state.queue.length);
+      recordRuntimeTelemetryEvent({
+        event: "command_queue.dequeued",
+        subsystem: "process-command-queue",
+        details: {
+          lane,
+          waitMs: waitedMs,
+          queuedDepth: state.queue.length,
+          active: state.active,
+          maxConcurrent: state.maxConcurrent,
+          totalDepth: state.queue.length + state.active,
+        },
+      });
       state.active += 1;
       void (async () => {
         const startTime = Date.now();
         try {
           const result = await entry.task();
+          const runMs = Date.now() - startTime;
           state.active -= 1;
+          recordRuntimeTelemetryEvent({
+            event: "command_queue.completed",
+            subsystem: "process-command-queue",
+            details: {
+              lane,
+              runMs,
+              queuedDepth: state.queue.length,
+              active: state.active,
+              maxConcurrent: state.maxConcurrent,
+              totalDepth: state.queue.length + state.active,
+            },
+          });
           diag.debug(
-            `lane task done: lane=${lane} durationMs=${Date.now() - startTime} active=${state.active} queued=${state.queue.length}`,
+            `lane task done: lane=${lane} durationMs=${runMs} active=${state.active} queued=${state.queue.length}`,
           );
           pump();
           entry.resolve(result);
         } catch (err) {
+          const runMs = Date.now() - startTime;
           state.active -= 1;
+          recordRuntimeTelemetryEvent({
+            event: "command_queue.failed",
+            subsystem: "process-command-queue",
+            severity: "warning",
+            status: "degraded",
+            details: {
+              lane,
+              runMs,
+              error: String(err),
+              queuedDepth: state.queue.length,
+              active: state.active,
+              maxConcurrent: state.maxConcurrent,
+              totalDepth: state.queue.length + state.active,
+            },
+          });
           const isProbeLane = lane.startsWith("auth-probe:") || lane.startsWith("session:probe-");
           if (!isProbeLane) {
-            diag.error(
-              `lane task error: lane=${lane} durationMs=${Date.now() - startTime} error="${String(err)}"`,
-            );
+            diag.error(`lane task error: lane=${lane} durationMs=${runMs} error="${String(err)}"`);
           }
           pump();
           entry.reject(err);
@@ -117,6 +157,17 @@ export function enqueueCommandInLane<T>(
       onWait: opts?.onWait,
     });
     logLaneEnqueue(cleaned, state.queue.length + state.active);
+    recordRuntimeTelemetryEvent({
+      event: "command_queue.enqueued",
+      subsystem: "process-command-queue",
+      details: {
+        lane: cleaned,
+        queuedDepth: state.queue.length,
+        active: state.active,
+        maxConcurrent: state.maxConcurrent,
+        totalDepth: state.queue.length + state.active,
+      },
+    });
     drainLane(cleaned);
   });
 }

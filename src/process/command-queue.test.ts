@@ -10,10 +10,18 @@ const diagnosticMocks = vi.hoisted(() => ({
   },
 }));
 
+const telemetryMocks = vi.hoisted(() => ({
+  recordRuntimeTelemetryEvent: vi.fn(),
+}));
+
 vi.mock("../logging/diagnostic.js", () => ({
   logLaneEnqueue: diagnosticMocks.logLaneEnqueue,
   logLaneDequeue: diagnosticMocks.logLaneDequeue,
   diagnosticLogger: diagnosticMocks.diag,
+}));
+
+vi.mock("../infra/runtime-telemetry.js", () => ({
+  recordRuntimeTelemetryEvent: telemetryMocks.recordRuntimeTelemetryEvent,
 }));
 
 import { enqueueCommand, getQueueSize } from "./command-queue.js";
@@ -25,6 +33,7 @@ describe("command queue", () => {
     diagnosticMocks.diag.debug.mockClear();
     diagnosticMocks.diag.warn.mockClear();
     diagnosticMocks.diag.error.mockClear();
+    telemetryMocks.recordRuntimeTelemetryEvent.mockClear();
   });
 
   it("runs tasks one at a time in order", async () => {
@@ -60,6 +69,25 @@ describe("command queue", () => {
     expect(diagnosticMocks.logLaneEnqueue.mock.calls[0]?.[1]).toBe(1);
 
     await task;
+
+    expect(telemetryMocks.recordRuntimeTelemetryEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: "command_queue.enqueued",
+        subsystem: "process-command-queue",
+      }),
+    );
+    expect(telemetryMocks.recordRuntimeTelemetryEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: "command_queue.dequeued",
+        subsystem: "process-command-queue",
+      }),
+    );
+    expect(telemetryMocks.recordRuntimeTelemetryEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: "command_queue.completed",
+        subsystem: "process-command-queue",
+      }),
+    );
   });
 
   it("invokes onWait callback when a task waits past the threshold", async () => {
@@ -84,5 +112,22 @@ describe("command queue", () => {
     expect(waited).not.toBeNull();
     expect(waited as number).toBeGreaterThanOrEqual(5);
     expect(queuedAhead).toBe(0);
+  });
+
+  it("emits failure telemetry when a task throws", async () => {
+    await expect(
+      enqueueCommand(async () => {
+        throw new Error("boom");
+      }),
+    ).rejects.toThrow("boom");
+
+    expect(telemetryMocks.recordRuntimeTelemetryEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: "command_queue.failed",
+        subsystem: "process-command-queue",
+        severity: "warning",
+        status: "degraded",
+      }),
+    );
   });
 });

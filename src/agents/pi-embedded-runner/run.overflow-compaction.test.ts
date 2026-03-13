@@ -38,6 +38,10 @@ vi.mock("../models-config.js", () => ({
   ensureOpenClawModelsJson: vi.fn(async () => {}),
 }));
 
+vi.mock("../../infra/runtime-telemetry.js", () => ({
+  recordRuntimeTelemetryEvent: vi.fn(),
+}));
+
 vi.mock("../context-window-guard.js", () => ({
   CONTEXT_WINDOW_HARD_MIN_TOKENS: 1000,
   CONTEXT_WINDOW_WARN_BELOW_TOKENS: 5000,
@@ -146,6 +150,7 @@ vi.mock("../pi-embedded-helpers.js", async () => {
 });
 
 import type { EmbeddedRunAttemptResult } from "./run/types.js";
+import { recordRuntimeTelemetryEvent } from "../../infra/runtime-telemetry.js";
 import { compactEmbeddedPiSessionDirect } from "./compact.js";
 import { log } from "./logger.js";
 import { runEmbeddedPiAgent } from "./run.js";
@@ -153,6 +158,7 @@ import { runEmbeddedAttempt } from "./run/attempt.js";
 
 const mockedRunEmbeddedAttempt = vi.mocked(runEmbeddedAttempt);
 const mockedCompactDirect = vi.mocked(compactEmbeddedPiSessionDirect);
+const mockedRecordRuntimeTelemetryEvent = vi.mocked(recordRuntimeTelemetryEvent);
 
 function makeAttemptResult(
   overrides: Partial<EmbeddedRunAttemptResult> = {},
@@ -239,6 +245,15 @@ describe("overflow compaction in run loop", () => {
     expect(result.meta.error?.kind).toBe("context_overflow");
     expect(result.payloads?.[0]?.isError).toBe(true);
     expect(log.warn).toHaveBeenCalledWith(expect.stringContaining("auto-compaction failed"));
+    expect(mockedRecordRuntimeTelemetryEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: "agent.run.lifecycle_finished",
+        details: expect.objectContaining({
+          outcome: "error",
+          errorKind: "context_overflow",
+        }),
+      }),
+    );
   });
 
   it("returns error if overflow persists after max compaction attempts (2)", async () => {
@@ -294,5 +309,26 @@ describe("overflow compaction in run loop", () => {
     expect(mockedCompactDirect).not.toHaveBeenCalled();
     expect(mockedRunEmbeddedAttempt).toHaveBeenCalledTimes(1);
     expect(result.meta.error?.kind).toBe("compaction_failure");
+  });
+
+  it("emits lifecycle telemetry for successful runs", async () => {
+    mockedRunEmbeddedAttempt.mockResolvedValueOnce(makeAttemptResult({ promptError: null }));
+
+    await runEmbeddedPiAgent(baseParams);
+
+    expect(mockedRecordRuntimeTelemetryEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: "agent.run.lifecycle_started",
+        subsystem: "agent-embedded",
+      }),
+    );
+    expect(mockedRecordRuntimeTelemetryEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: "agent.run.lifecycle_finished",
+        details: expect.objectContaining({
+          outcome: "ok",
+        }),
+      }),
+    );
   });
 });

@@ -99,17 +99,38 @@ export async function runEmbeddedPiAgent(
   console.log(
     `[runEmbeddedPiAgent] enqueueing: runId=${params.runId ?? "(none)"} sessionLane=${sessionLane} globalLane=${globalLane}`,
   );
+  const runEnqueuedAt = Date.now();
   return enqueueSession(() => {
+    const sessionLaneWaitMs = Date.now() - runEnqueuedAt;
     console.log(
       `[runEmbeddedPiAgent] sessionLane acquired: runId=${params.runId ?? "(none)"} sessionLane=${sessionLane}`,
     );
+    const globalEnqueuedAt = Date.now();
     return enqueueGlobal(async () => {
+      const globalLaneWaitMs = Date.now() - globalEnqueuedAt;
       console.log(
         `[runEmbeddedPiAgent] globalLane acquired: runId=${params.runId ?? "(none)"} globalLane=${globalLane}`,
       );
       const started = Date.now();
       const resolvedWorkspace = resolveUserPath(params.workspaceDir);
       const prevCwd = process.cwd();
+      let runOutcome: "ok" | "error" | "failed" = "failed";
+      let runErrorKind: string | null = null;
+      let runErrorMessage: string | null = null;
+      recordRuntimeTelemetryEvent({
+        event: "agent.run.lifecycle_started",
+        subsystem: "agent-embedded",
+        status: "ok",
+        details: {
+          runId: params.runId,
+          sessionId: params.sessionId,
+          sessionKey: params.sessionKey,
+          sessionLane,
+          globalLane,
+          sessionLaneWaitMs,
+          globalLaneWaitMs,
+        },
+      });
 
       const requestedProvider = (params.provider ?? DEFAULT_PROVIDER).trim() || DEFAULT_PROVIDER;
       const requestedModelId = (params.model ?? DEFAULT_MODEL).trim() || DEFAULT_MODEL;
@@ -530,6 +551,9 @@ export async function runEmbeddedPiAgent(
                 );
               }
               const kind = isCompactionFailure ? "compaction_failure" : "context_overflow";
+              runOutcome = "error";
+              runErrorKind = kind;
+              runErrorMessage = errorText;
               return {
                 payloads: [
                   {
@@ -553,6 +577,9 @@ export async function runEmbeddedPiAgent(
             }
             // Handle role ordering errors with a user-friendly message
             if (/incorrect role information|roles must alternate/i.test(errorText)) {
+              runOutcome = "error";
+              runErrorKind = "role_ordering";
+              runErrorMessage = errorText;
               return {
                 payloads: [
                   {
@@ -581,6 +608,9 @@ export async function runEmbeddedPiAgent(
               const maxMbLabel =
                 typeof maxMb === "number" && Number.isFinite(maxMb) ? `${maxMb}` : null;
               const maxBytesHint = maxMbLabel ? ` (max ${maxMbLabel}MB)` : "";
+              runOutcome = "error";
+              runErrorKind = "image_size";
+              runErrorMessage = errorText;
               return {
                 payloads: [
                   {
@@ -849,6 +879,7 @@ export async function runEmbeddedPiAgent(
             }
           }
 
+          runOutcome = "ok";
           return {
             payloads: payloads.length ? payloads : undefined,
             meta: {
@@ -873,7 +904,31 @@ export async function runEmbeddedPiAgent(
             messagingToolSentTargets: attempt.messagingToolSentTargets,
           };
         }
+      } catch (err) {
+        runOutcome = "failed";
+        runErrorKind = err instanceof FailoverError ? "failover_error" : "exception";
+        runErrorMessage = describeUnknownError(err);
+        throw err;
       } finally {
+        recordRuntimeTelemetryEvent({
+          event: "agent.run.lifecycle_finished",
+          subsystem: "agent-embedded",
+          severity: runOutcome === "ok" ? "info" : runOutcome === "error" ? "warning" : "error",
+          status: runOutcome === "ok" ? "ok" : runOutcome === "error" ? "degraded" : "failed",
+          details: {
+            runId: params.runId,
+            sessionId: params.sessionId,
+            sessionKey: params.sessionKey,
+            sessionLane,
+            globalLane,
+            sessionLaneWaitMs,
+            globalLaneWaitMs,
+            durationMs: Date.now() - started,
+            outcome: runOutcome,
+            errorKind: runErrorKind,
+            errorMessage: runErrorMessage,
+          },
+        });
         process.chdir(prevCwd);
       }
     });
