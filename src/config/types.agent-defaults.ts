@@ -193,6 +193,8 @@ export type AgentDefaultsConfig = {
   /** Human-like delay between block replies. */
   humanDelay?: HumanDelayConfig;
   timeoutSeconds?: number;
+  /** Optional per-channel run timeout overrides in seconds (e.g. telegram). */
+  timeoutSecondsByChannel?: Record<string, number>;
   /** Max inbound media size in MB for agent-visible attachments (text note or future image attach). */
   mediaMaxMb?: number;
   typingIntervalSeconds?: number;

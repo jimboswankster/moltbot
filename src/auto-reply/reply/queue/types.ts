@@ -74,6 +74,7 @@ export type FollowupRun = {
       defaultLevel: ElevatedLevel;
     };
     timeoutMs: number;
+    lane?: string;
     blockReplyBreak: "text_end" | "message_end";
     ownerNumbers?: string[];
     extraSystemPrompt?: string;
@@ -84,7 +85,9 @@ export type FollowupRun = {
 export type ResolveQueueSettingsParams = {
   cfg: OpenClawConfig;
   channel?: string;
+  sessionKey?: string;
   sessionEntry?: SessionEntry;
+  intent?: "conversation" | "command-control";
   inlineMode?: QueueMode;
   inlineOptions?: Partial<QueueSettings>;
 };

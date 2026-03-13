@@ -101,7 +101,11 @@ export async function getReplyFromConfig(
   });
   const workspaceDir = workspace.dir;
   const agentDir = resolveAgentDir(cfg, agentId);
-  const timeoutMs = resolveAgentTimeoutMs({ cfg });
+  const timeoutMs = resolveAgentTimeoutMs({
+    cfg,
+    channel: ctx.Provider,
+    sessionKey: agentSessionKey,
+  });
   const configuredTypingSeconds =
     agentCfg?.typingIntervalSeconds ?? sessionCfg?.typingIntervalSeconds;
   const typingIntervalSeconds =

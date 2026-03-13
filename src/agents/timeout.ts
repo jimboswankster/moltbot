@@ -1,24 +1,73 @@
 import type { OpenClawConfig } from "../config/config.js";
 
 const DEFAULT_AGENT_TIMEOUT_SECONDS = 600;
+const DEFAULT_TELEGRAM_AGENT_TIMEOUT_SECONDS = 120;
 
 const normalizeNumber = (value: unknown): number | undefined =>
   typeof value === "number" && Number.isFinite(value) ? Math.floor(value) : undefined;
 
-export function resolveAgentTimeoutSeconds(cfg?: OpenClawConfig): number {
+function normalizeChannel(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const normalized = value.trim().toLowerCase();
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function isTelegramContext(params: { channel?: string; sessionKey?: string }): boolean {
+  const channel = normalizeChannel(params.channel);
+  if (channel === "telegram") {
+    return true;
+  }
+  const sessionKey = normalizeChannel(params.sessionKey);
+  if (!sessionKey) {
+    return false;
+  }
+  return sessionKey.startsWith("telegram:") || sessionKey.includes(":telegram:");
+}
+
+export function resolveAgentTimeoutSeconds(
+  cfg?: OpenClawConfig,
+  context?: {
+    channel?: string;
+    sessionKey?: string;
+  },
+): number {
   const raw = normalizeNumber(cfg?.agents?.defaults?.timeoutSeconds);
-  const seconds = raw ?? DEFAULT_AGENT_TIMEOUT_SECONDS;
+  const defaultSeconds = raw ?? DEFAULT_AGENT_TIMEOUT_SECONDS;
+  const channelKey = normalizeChannel(context?.channel);
+  const byChannelRaw = channelKey
+    ? normalizeNumber(
+        (cfg?.agents?.defaults?.timeoutSecondsByChannel as Record<string, number | undefined>)?.[
+          channelKey
+        ],
+      )
+    : undefined;
+  const isTelegram = isTelegramContext({
+    channel: channelKey,
+    sessionKey: context?.sessionKey,
+  });
+  const scopedDefault = isTelegram
+    ? Math.min(defaultSeconds, DEFAULT_TELEGRAM_AGENT_TIMEOUT_SECONDS)
+    : defaultSeconds;
+  const seconds = byChannelRaw ?? scopedDefault;
   return Math.max(seconds, 1);
 }
 
 export function resolveAgentTimeoutMs(opts: {
   cfg?: OpenClawConfig;
+  channel?: string;
+  sessionKey?: string;
   overrideMs?: number | null;
   overrideSeconds?: number | null;
   minMs?: number;
 }): number {
   const minMs = Math.max(normalizeNumber(opts.minMs) ?? 1, 1);
-  const defaultMs = resolveAgentTimeoutSeconds(opts.cfg) * 1000;
+  const defaultMs =
+    resolveAgentTimeoutSeconds(opts.cfg, {
+      channel: opts.channel,
+      sessionKey: opts.sessionKey,
+    }) * 1000;
   // Use a very large timeout value (Int32 Max) to represent "no timeout"
   // when explicitly set to 0. This avoids setTimeout issues with Infinity and Int32 overflow.
   const NO_TIMEOUT_MS = 2147483647;

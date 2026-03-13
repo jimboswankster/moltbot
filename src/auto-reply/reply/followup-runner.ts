@@ -15,6 +15,7 @@ import { registerAgentRunContext } from "../../infra/agent-events.js";
 import { defaultRuntime } from "../../runtime.js";
 import { stripHeartbeatToken } from "../heartbeat.js";
 import { isSilentReplyText, SILENT_REPLY_TOKEN } from "../tokens.js";
+import { resolvePreferredRunLane } from "./agent-runner-utils.js";
 import {
   applyReplyThreading,
   filterMessagingToolDuplicates,
@@ -169,6 +170,10 @@ export function createFollowupRunner(params: {
               execOverrides: queued.run.execOverrides,
               bashElevated: queued.run.bashElevated,
               timeoutMs: queued.run.timeoutMs,
+              lane: resolvePreferredRunLane({
+                explicitLane: queued.run.lane,
+                messageProvider: queued.run.messageProvider,
+              }),
               runId,
               blockReplyBreak: queued.run.blockReplyBreak,
               onAgentEvent: (evt) => {

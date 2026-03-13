@@ -237,4 +237,49 @@ describe("createFollowupRunner messaging tool dedupe", () => {
     expect(store[sessionKey]?.totalTokens ?? 0).toBeGreaterThan(0);
     expect(store[sessionKey]?.model).toBe("claude-opus-4-5");
   });
+
+  it("routes telegram followups through the telegram lane by default", async () => {
+    const onBlockReply = vi.fn(async () => {});
+    runEmbeddedPiAgentMock.mockReset();
+    runEmbeddedPiAgentMock.mockResolvedValueOnce({
+      payloads: [{ text: "hello world!" }],
+      meta: {},
+    });
+
+    const runner = createFollowupRunner({
+      opts: { onBlockReply },
+      typing: createMockTypingController(),
+      typingMode: "instant",
+      defaultModel: "anthropic/claude-opus-4-5",
+    });
+
+    await runner(baseQueuedRun("telegram"));
+
+    const call = runEmbeddedPiAgentMock.mock.calls.at(-1)?.[0] as { lane?: string };
+    expect(call.lane).toBe("telegram");
+  });
+
+  it("keeps explicit followup lane overrides", async () => {
+    const onBlockReply = vi.fn(async () => {});
+    runEmbeddedPiAgentMock.mockReset();
+    runEmbeddedPiAgentMock.mockResolvedValueOnce({
+      payloads: [{ text: "hello world!" }],
+      meta: {},
+    });
+
+    const runner = createFollowupRunner({
+      opts: { onBlockReply },
+      typing: createMockTypingController(),
+      typingMode: "instant",
+      defaultModel: "anthropic/claude-opus-4-5",
+    });
+
+    const queued = baseQueuedRun("telegram");
+    queued.run.lane = "custom-lane";
+
+    await runner(queued);
+
+    const call = runEmbeddedPiAgentMock.mock.calls.at(-1)?.[0] as { lane?: string };
+    expect(call.lane).toBe("custom-lane");
+  });
 });

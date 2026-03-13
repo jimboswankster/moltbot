@@ -5,18 +5,22 @@ import { createMockTypingController } from "./test-helpers.js";
 
 const runEmbeddedPiAgentMock = vi.fn();
 
-vi.mock("../../agents/model-fallback.js", () => ({
-  runWithModelFallback: async ({
-    run,
-  }: {
-    run: (provider: string, model: string) => Promise<unknown>;
-  }) => ({
-    // Force a cross-provider fallback candidate
-    result: await run("openai-codex", "gpt-5.2"),
-    provider: "openai-codex",
-    model: "gpt-5.2",
-  }),
-}));
+vi.mock("../../agents/model-fallback.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../agents/model-fallback.js")>();
+  return {
+    ...actual,
+    runWithModelFallback: async ({
+      run,
+    }: {
+      run: (provider: string, model: string) => Promise<unknown>;
+    }) => ({
+      // Force a cross-provider fallback candidate
+      result: await run("openai-codex", "gpt-5.2"),
+      provider: "openai-codex",
+      model: "gpt-5.2",
+    }),
+  };
+});
 
 vi.mock("../../agents/pi-embedded.js", () => ({
   queueEmbeddedPiMessage: vi.fn().mockReturnValue(false),
@@ -140,10 +144,59 @@ describe("authProfileId fallback scoping", () => {
       authProfileId?: unknown;
       authProfileIdSource?: unknown;
       provider?: unknown;
+      lane?: unknown;
     };
 
     expect(call.provider).toBe("openai-codex");
     expect(call.authProfileId).toBeUndefined();
     expect(call.authProfileIdSource).toBeUndefined();
+    expect(call.lane).toBe("telegram");
+  });
+
+  it("preserves explicit lane override when provided", async () => {
+    runEmbeddedPiAgentMock.mockReset();
+    runEmbeddedPiAgentMock.mockResolvedValue({ payloads: [{ text: "ok" }], meta: {} });
+
+    const sessionKey = "main";
+    const sessionEntry = {
+      sessionId: "session",
+      updatedAt: Date.now(),
+      totalTokens: 1,
+      compactionCount: 0,
+    };
+
+    const { typing, sessionCtx, resolvedQueue, followupRun } = createBaseRun({
+      runOverrides: {
+        lane: "custom-lane",
+      },
+    });
+
+    await runReplyAgent({
+      commandBody: "hello",
+      followupRun,
+      queueKey: sessionKey,
+      resolvedQueue,
+      shouldSteer: false,
+      shouldFollowup: false,
+      isActive: false,
+      isStreaming: false,
+      typing,
+      sessionCtx,
+      sessionEntry,
+      sessionStore: { [sessionKey]: sessionEntry },
+      sessionKey,
+      storePath: undefined,
+      defaultModel: "anthropic/claude-opus-4-5",
+      agentCfgContextTokens: 100_000,
+      resolvedVerboseLevel: "off",
+      isNewSession: false,
+      blockStreamingEnabled: false,
+      resolvedBlockStreamingBreak: "message_end",
+      shouldInjectGroupIntro: false,
+      typingMode: "instant",
+    });
+
+    const call = runEmbeddedPiAgentMock.mock.calls[0]?.[0] as { lane?: unknown };
+    expect(call.lane).toBe("custom-lane");
   });
 });

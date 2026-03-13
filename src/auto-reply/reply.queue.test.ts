@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { pollUntil } from "../../test/helpers/poll.js";
 import { withTempHome as withTempHomeBase } from "../../test/helpers/temp-home.js";
 import {
+  queueEmbeddedPiMessage,
   isEmbeddedPiRunActive,
   isEmbeddedPiRunStreaming,
   runEmbeddedPiAgent,
@@ -141,6 +142,79 @@ describe("queue followups", () => {
       );
 
       expect(prompts.some((p) => p.includes("[Queue overflow]"))).toBe(true);
+    });
+  });
+
+  it("uses telegram conversational defaults to steer+backlog during bursts", async () => {
+    vi.useFakeTimers();
+    await withTempHome(async (home) => {
+      const prompts: string[] = [];
+      vi.mocked(runEmbeddedPiAgent).mockImplementation(async (params) => {
+        prompts.push(params.prompt);
+        if (params.prompt.includes("[Queued messages while agent was busy]")) {
+          return makeResult("followup");
+        }
+        return makeResult("main");
+      });
+      vi.mocked(queueEmbeddedPiMessage).mockReturnValue(true);
+      vi.mocked(isEmbeddedPiRunActive).mockReturnValue(true);
+      vi.mocked(isEmbeddedPiRunStreaming).mockReturnValue(true);
+
+      const cfg = {
+        agents: {
+          defaults: {
+            model: "anthropic/claude-opus-4-5",
+            workspace: path.join(home, "openclaw"),
+          },
+        },
+        channels: { telegram: { allowFrom: ["*"] } },
+        session: { store: path.join(home, "sessions.json") },
+      };
+
+      const first = await getReplyFromConfig(
+        {
+          Body: "first",
+          From: "telegram:111",
+          To: "telegram:111",
+          Provider: "telegram",
+          Surface: "telegram",
+          SessionKey: "agent:main:telegram:group:-100123:topic:99",
+          MessageSid: "tg-1",
+        },
+        {},
+        cfg,
+      );
+      expect(first).toBeUndefined();
+      expect(runEmbeddedPiAgent).not.toHaveBeenCalled();
+      expect(queueEmbeddedPiMessage).toHaveBeenCalledTimes(1);
+
+      vi.mocked(isEmbeddedPiRunActive).mockReturnValue(false);
+      vi.mocked(isEmbeddedPiRunStreaming).mockReturnValue(false);
+
+      const second = await getReplyFromConfig(
+        {
+          Body: "second",
+          From: "telegram:111",
+          To: "telegram:111",
+          Provider: "telegram",
+          Surface: "telegram",
+          SessionKey: "agent:main:telegram:group:-100123:topic:99",
+        },
+        {},
+        cfg,
+      );
+      const secondText = Array.isArray(second) ? second[0]?.text : second?.text;
+      expect(secondText).toBe("main");
+
+      await vi.advanceTimersByTimeAsync(1200);
+      await Promise.resolve();
+
+      expect(runEmbeddedPiAgent).toHaveBeenCalledTimes(2);
+      const queuedPrompt = prompts.find(
+        (p) => p.includes("first") && p.includes("[message_id: tg-1]"),
+      );
+      expect(queuedPrompt).toBeTruthy();
+      expect(queuedPrompt).toContain("[message_id: tg-1]");
     });
   });
 });

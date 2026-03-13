@@ -323,7 +323,9 @@ export async function runPreparedReply(
   const resolvedQueue = resolveQueueSettings({
     cfg,
     channel: sessionCtx.Provider,
+    sessionKey,
     sessionEntry,
+    intent: hasControlCommand(commandSource, cfg) ? "command-control" : "conversation",
     inlineMode: perMessageQueueMode,
     inlineOptions: perMessageQueueOptions,
   });

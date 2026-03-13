@@ -33,7 +33,11 @@ import {
 } from "../../utils/message-channel.js";
 import { stripHeartbeatToken } from "../heartbeat.js";
 import { isSilentReplyText, SILENT_REPLY_TOKEN } from "../tokens.js";
-import { buildThreadingToolContext, resolveEnforceFinalTag } from "./agent-runner-utils.js";
+import {
+  buildThreadingToolContext,
+  resolveEnforceFinalTag,
+  resolvePreferredRunLane,
+} from "./agent-runner-utils.js";
 import { createBlockReplyPayloadKey, type BlockReplyPipeline } from "./block-reply-pipeline.js";
 import { parseReplyDirectives } from "./reply-directives.js";
 import { applyReplyTagsToPayload, isRenderablePayload } from "./reply-payloads.js";
@@ -304,6 +308,10 @@ export async function runAgentTurnWithFallback(params: {
             })(),
             bashElevated: params.followupRun.run.bashElevated,
             timeoutMs: params.followupRun.run.timeoutMs,
+            lane: resolvePreferredRunLane({
+              explicitLane: params.followupRun.run.lane,
+              messageProvider: params.sessionCtx.Provider ?? params.followupRun.run.messageProvider,
+            }),
             runId,
             images: params.opts?.images,
             abortSignal: params.opts?.abortSignal,

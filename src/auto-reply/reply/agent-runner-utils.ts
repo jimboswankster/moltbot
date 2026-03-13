@@ -6,6 +6,7 @@ import type { ReplyPayload } from "../types.js";
 import type { FollowupRun } from "./queue.js";
 import { getChannelDock } from "../../channels/dock.js";
 import { normalizeAnyChannelId, normalizeChannelId } from "../../channels/registry.js";
+import { CommandLane } from "../../process/lanes.js";
 import { isReasoningTagProvider } from "../../utils/provider-utils.js";
 import { estimateUsageCost, formatTokenCount, formatUsd } from "../../utils/usage-format.js";
 
@@ -134,3 +135,18 @@ export const appendUsageLine = (payloads: ReplyPayload[], line: string): ReplyPa
 
 export const resolveEnforceFinalTag = (run: FollowupRun["run"], provider: string) =>
   Boolean(run.enforceFinalTag || isReasoningTagProvider(provider));
+
+export const resolvePreferredRunLane = (params: {
+  explicitLane?: string;
+  messageProvider?: string;
+}) => {
+  const explicit = params.explicitLane?.trim();
+  if (explicit) {
+    return explicit;
+  }
+  const provider = params.messageProvider?.trim().toLowerCase();
+  if (provider === "telegram") {
+    return CommandLane.Telegram;
+  }
+  return undefined;
+};

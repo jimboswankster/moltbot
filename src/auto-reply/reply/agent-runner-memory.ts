@@ -21,7 +21,11 @@ import { registerAgentRunContext } from "../../infra/agent-events.js";
 import { emitAgentEvent } from "../../infra/agent-events.js";
 import { emitDiagnosticEvent, isDiagnosticsEnabled } from "../../infra/diagnostic-events.js";
 import { logWarn } from "../../logger.js";
-import { buildThreadingToolContext, resolveEnforceFinalTag } from "./agent-runner-utils.js";
+import {
+  buildThreadingToolContext,
+  resolveEnforceFinalTag,
+  resolvePreferredRunLane,
+} from "./agent-runner-utils.js";
 import {
   resolveMemoryFlushContextWindowTokens,
   resolveMemoryFlushSettings,
@@ -270,6 +274,10 @@ export async function runMemoryFlushIfNeeded(params: {
           execOverrides: params.followupRun.run.execOverrides,
           bashElevated: params.followupRun.run.bashElevated,
           timeoutMs: params.followupRun.run.timeoutMs,
+          lane: resolvePreferredRunLane({
+            explicitLane: params.followupRun.run.lane,
+            messageProvider: params.sessionCtx.Provider ?? params.followupRun.run.messageProvider,
+          }),
           runId: flushRunId,
           onAgentEvent: (evt) => {
             if (evt.stream === "compaction") {

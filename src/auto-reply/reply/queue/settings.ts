@@ -4,7 +4,24 @@ import { getChannelPlugin } from "../../../channels/plugins/index.js";
 import { normalizeQueueDropPolicy, normalizeQueueMode } from "./normalize.js";
 import { DEFAULT_QUEUE_CAP, DEFAULT_QUEUE_DEBOUNCE_MS, DEFAULT_QUEUE_DROP } from "./state.js";
 
-function defaultQueueModeForChannel(_channel?: string): QueueMode {
+function defaultQueueModeForChannel(params: {
+  channel?: string;
+  sessionKey?: string;
+  intent?: ResolveQueueSettingsParams["intent"];
+}): QueueMode {
+  const channelKey = params.channel?.trim().toLowerCase();
+  if (channelKey === "telegram") {
+    if (params.intent === "command-control") {
+      return "interrupt";
+    }
+    const sessionKey = params.sessionKey?.trim().toLowerCase();
+    if (sessionKey?.includes(":topic:")) {
+      return "steer-backlog";
+    }
+    // Keep conversational Telegram sessions responsive under bursts by steering
+    // in-flight content while preserving backlog continuity.
+    return "steer-backlog";
+  }
   return "collect";
 }
 
@@ -41,7 +58,11 @@ export function resolveQueueSettings(params: ResolveQueueSettingsParams): QueueS
     normalizeQueueMode(params.sessionEntry?.queueMode) ??
     normalizeQueueMode(providerModeRaw) ??
     normalizeQueueMode(queueCfg?.mode) ??
-    defaultQueueModeForChannel(channelKey);
+    defaultQueueModeForChannel({
+      channel: channelKey,
+      sessionKey: params.sessionKey,
+      intent: params.intent,
+    });
   const debounceRaw =
     params.inlineOptions?.debounceMs ??
     params.sessionEntry?.queueDebounceMs ??

@@ -36,6 +36,30 @@ describe("resolveAgentTimeoutSeconds", () => {
     const cfg = { agents: { defaults: { timeoutSeconds: 0 } } } as any;
     expect(resolveAgentTimeoutSeconds(cfg)).toBe(1);
   });
+
+  it("caps telegram timeout to 120s by default when global timeout is higher", () => {
+    const cfg = { agents: { defaults: { timeoutSeconds: 240 } } } as any;
+    expect(resolveAgentTimeoutSeconds(cfg, { channel: "telegram" })).toBe(120);
+  });
+
+  it("supports explicit per-channel timeout override", () => {
+    const cfg = {
+      agents: { defaults: { timeoutSeconds: 240, timeoutSecondsByChannel: { telegram: 90 } } },
+    } as any;
+    expect(resolveAgentTimeoutSeconds(cfg, { channel: "telegram" })).toBe(90);
+  });
+
+  it("detects telegram context from session key when channel is absent", () => {
+    const cfg = { agents: { defaults: { timeoutSeconds: 240 } } } as any;
+    expect(
+      resolveAgentTimeoutSeconds(cfg, { sessionKey: "agent:main:telegram:group:-100123:topic:99" }),
+    ).toBe(120);
+  });
+
+  it("does not increase timeout when global default is already lower than telegram cap", () => {
+    const cfg = { agents: { defaults: { timeoutSeconds: 75 } } } as any;
+    expect(resolveAgentTimeoutSeconds(cfg, { channel: "telegram" })).toBe(75);
+  });
 });
 
 describe("resolveAgentTimeoutMs", () => {
@@ -118,5 +142,15 @@ describe("resolveAgentTimeoutMs", () => {
     expect(resolveAgentTimeoutMs({ overrideMs: NaN })).toBe(600_000);
     expect(resolveAgentTimeoutMs({ overrideMs: Infinity })).toBe(600_000);
     expect(resolveAgentTimeoutMs({ overrideSeconds: NaN })).toBe(600_000);
+  });
+
+  it("uses telegram-scoped default when channel is telegram", () => {
+    const cfg = { agents: { defaults: { timeoutSeconds: 240 } } } as any;
+    expect(resolveAgentTimeoutMs({ cfg, channel: "telegram" })).toBe(120_000);
+  });
+
+  it("keeps explicit override precedence over telegram-scoped default", () => {
+    const cfg = { agents: { defaults: { timeoutSeconds: 240 } } } as any;
+    expect(resolveAgentTimeoutMs({ cfg, channel: "telegram", overrideSeconds: 300 })).toBe(300_000);
   });
 });
