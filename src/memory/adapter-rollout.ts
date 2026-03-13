@@ -129,6 +129,16 @@ function safeTelemetryWrite(kind: "query" | "errors", row: Record<string, unknow
   }
 }
 
+function isLegacyMemoryPath(rawPath: string): boolean {
+  const normalized = String(rawPath || "")
+    .trim()
+    .replace(/\\/g, "/")
+    .replace(/^\.\/+/, "");
+  if (!normalized) return false;
+  if (normalized === "MEMORY.md" || normalized === "memory.md") return true;
+  return normalized.startsWith("memory/");
+}
+
 function clampPercent(value: number): number {
   if (!Number.isFinite(value)) return 0;
   return Math.max(0, Math.min(100, Math.floor(value)));
@@ -337,6 +347,7 @@ export async function routeMemorySearch(
     routing_key_hash: memoryBrokerCanaryBucket(routingKey),
     agent_id: params.agentId,
     has_session_key: Boolean(params.sessionKey),
+    contract_parity_violation: false,
   };
 
   try {
@@ -365,7 +376,107 @@ export async function routeMemorySearch(
         minScore: params.minScore,
         sessionKey: params.sessionKey,
       });
+      const invalidPaths = Array.isArray(results)
+        ? results
+            .map((entry) => String(entry?.path || ""))
+            .filter((p) => p.length > 0 && !isLegacyMemoryPath(p))
+        : [];
+      if (invalidPaths.length > 0) {
+        const parityError = {
+          ts: new Date().toISOString(),
+          event: "memory.broker.error",
+          status: "failed",
+          details: {
+            ...telemetryBase,
+            contract_parity_violation: true,
+            attempted_backend: "adapter",
+            fallback_backend: "legacy",
+            error: "adapter_result_path_out_of_contract",
+            invalid_path_count: invalidPaths.length,
+            invalid_path_sample: invalidPaths.slice(0, 3),
+            latency_ms: Date.now() - startedAt,
+            phase: "contract_parity",
+          },
+        };
+        safeTelemetryWrite("errors", parityError);
+        recordRuntimeTelemetryEvent({
+          event: "memory.broker.error",
+          subsystem: "memory",
+          status: "failed",
+          severity: "warning",
+          details: parityError.details as Record<string, unknown>,
+        });
+        try {
+          const fallbackResults = await params.legacySearch({
+            query: params.query,
+            maxResults: params.maxResults,
+            minScore: params.minScore,
+            sessionKey: params.sessionKey,
+          });
+          const latencyMs = Date.now() - startedAt;
+          safeTelemetryWrite("query", {
+            ts: new Date().toISOString(),
+            event: "memory.broker.query.outcome",
+            status: "degraded",
+            details: {
+              ...telemetryBase,
+              contract_parity_violation: true,
+              chosen_backend: "legacy",
+              degradation_mode: "fallback_mit",
+              contradiction: false,
+              stale: false,
+              result_count: Array.isArray(fallbackResults) ? fallbackResults.length : 0,
+              latency_ms: latencyMs,
+            },
+          });
+          return {
+            results: fallbackResults,
+            chosenBackend: "legacy",
+            decision,
+            degradationMode: "fallback_mit",
+          };
+        } catch (fallbackError) {
+          const fallbackMessage =
+            fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
+          safeTelemetryWrite("errors", {
+            ts: new Date().toISOString(),
+            event: "memory.broker.error",
+            status: "failed",
+            details: {
+              ...telemetryBase,
+              contract_parity_violation: true,
+              attempted_backend: "legacy",
+              fallback_backend: "none",
+              error: fallbackMessage,
+              latency_ms: Date.now() - startedAt,
+              phase: "contract_parity_fallback",
+            },
+          });
+          safeTelemetryWrite("query", {
+            ts: new Date().toISOString(),
+            event: "memory.broker.query.outcome",
+            status: "degraded",
+            details: {
+              ...telemetryBase,
+              contract_parity_violation: true,
+              chosen_backend: "legacy",
+              degradation_mode: "summary_only",
+              contradiction: false,
+              stale: true,
+              result_count: 0,
+              latency_ms: Date.now() - startedAt,
+            },
+          });
+          return {
+            results: [],
+            chosenBackend: "legacy",
+            decision,
+            degradationMode: "summary_only",
+          };
+        }
+      }
       const latencyMs = Date.now() - startedAt;
+      const confidence = confidenceFromAdapterResults(results);
       const row = {
         ts: new Date().toISOString(),
         event: "memory.broker.query.outcome",
@@ -376,6 +487,8 @@ export async function routeMemorySearch(
           degradation_mode: "none",
           contradiction: false,
           stale: false,
+          confidence_band: confidence.confidence_band,
+          confidence_score: confidence.confidence_score,
           result_count: Array.isArray(results) ? results.length : 0,
           latency_ms: latencyMs,
         },
@@ -441,6 +554,7 @@ export async function routeMemorySearch(
       status: "failed",
       details: {
         ...telemetryBase,
+        contract_parity_violation: false,
         attempted_backend: decision.backend,
         fallback_backend: "legacy",
         error: message,
@@ -470,6 +584,7 @@ export async function routeMemorySearch(
         status: "degraded",
         details: {
           ...telemetryBase,
+          contract_parity_violation: false,
           chosen_backend: "legacy",
           degradation_mode: "summary_only",
           contradiction: false,
@@ -493,6 +608,7 @@ export async function routeMemorySearch(
         status: "failed",
         details: {
           ...telemetryBase,
+          contract_parity_violation: false,
           attempted_backend: "legacy",
           fallback_backend: "none",
           error: fallbackMessage,
@@ -506,6 +622,7 @@ export async function routeMemorySearch(
         status: "degraded",
         details: {
           ...telemetryBase,
+          contract_parity_violation: false,
           chosen_backend: "legacy",
           degradation_mode: "summary_only",
           contradiction: false,
@@ -535,4 +652,21 @@ function summarizeMemoryResults(results: MemorySearchResult[]): MemorySearchResu
       snippet: snippet.length <= maxChars ? snippet : `${snippet.slice(0, maxChars)}...`,
     },
   ];
+}
+
+function confidenceFromAdapterResults(results: MemorySearchResult[]): {
+  confidence_score: number;
+  confidence_band: "low" | "medium" | "high";
+} {
+  const count = Array.isArray(results) ? results.length : 0;
+  const topScore = count > 0 ? Number(results[0]?.score || 0) : 0;
+  const score = Math.max(
+    0,
+    Math.min(1, 0.35 + Math.min(0.45, count * 0.08) + Math.min(0.2, topScore * 0.2)),
+  );
+  const band: "low" | "medium" | "high" = score >= 0.8 ? "high" : score >= 0.55 ? "medium" : "low";
+  return {
+    confidence_score: Number(score.toFixed(4)),
+    confidence_band: band,
+  };
 }

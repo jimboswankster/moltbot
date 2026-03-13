@@ -230,4 +230,151 @@ describe("routeMemorySearch", () => {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
+
+  it("falls back to legacy when adapter returns non-memory paths and records parity violation", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "adapter-rollout-contract-parity-"));
+    const prev = {
+      enabled: process.env.OPENCLAW_MEMORY_BROKER_TELEMETRY,
+      query: process.env.OPENCLAW_MEMORY_BROKER_QUERY_TELEMETRY_FILE,
+      errors: process.env.OPENCLAW_MEMORY_BROKER_ERROR_TELEMETRY_FILE,
+    };
+    const queryPath = path.join(tmp, "query.jsonl");
+    const errorPath = path.join(tmp, "error.jsonl");
+    process.env.OPENCLAW_MEMORY_BROKER_TELEMETRY = "1";
+    process.env.OPENCLAW_MEMORY_BROKER_QUERY_TELEMETRY_FILE = queryPath;
+    process.env.OPENCLAW_MEMORY_BROKER_ERROR_TELEMETRY_FILE = errorPath;
+    try {
+      const result = await routeMemorySearch({
+        query: "decision ledger",
+        agentId: "main",
+        sessionKey: "s",
+        stateOverride: {
+          mode: "default_prefer",
+          rollout_percent: 100,
+          legacy_fallback_hot: true,
+        },
+        adapterSearch: async () => [
+          {
+            path: "os/data/mission-control/decisions/ledger.jsonl",
+            startLine: 1,
+            endLine: 1,
+            score: 0.95,
+            snippet: "adapter row",
+            source: "sessions" as const,
+          },
+        ],
+        legacySearch: async () => [
+          {
+            path: "MEMORY.md",
+            startLine: 1,
+            endLine: 1,
+            score: 0.4,
+            snippet: "legacy row",
+            source: "memory" as const,
+          },
+        ],
+      });
+
+      expect(result.chosenBackend).toBe("legacy");
+      expect(result.degradationMode).toBe("fallback_mit");
+      expect(result.results[0]?.path).toBe("MEMORY.md");
+
+      const queryRows = fs
+        .readFileSync(queryPath, "utf8")
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as Record<string, unknown>);
+      const degraded = queryRows.find((row) => String(row.status || "") === "degraded");
+      expect(degraded).toBeTruthy();
+      const degradedDetails = (degraded?.details || {}) as Record<string, unknown>;
+      expect(degradedDetails.contract_parity_violation).toBe(true);
+      expect(degradedDetails.degradation_mode).toBe("fallback_mit");
+
+      const errorRows = fs
+        .readFileSync(errorPath, "utf8")
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as Record<string, unknown>);
+      const parityError = errorRows.find(
+        (row) =>
+          String((row.details as Record<string, unknown>)?.phase || "") === "contract_parity",
+      );
+      expect(parityError).toBeTruthy();
+      const parityDetails = (parityError?.details || {}) as Record<string, unknown>;
+      expect(parityDetails.contract_parity_violation).toBe(true);
+    } finally {
+      if (prev.enabled === undefined) delete process.env.OPENCLAW_MEMORY_BROKER_TELEMETRY;
+      else process.env.OPENCLAW_MEMORY_BROKER_TELEMETRY = prev.enabled;
+      if (prev.query === undefined) delete process.env.OPENCLAW_MEMORY_BROKER_QUERY_TELEMETRY_FILE;
+      else process.env.OPENCLAW_MEMORY_BROKER_QUERY_TELEMETRY_FILE = prev.query;
+      if (prev.errors === undefined) delete process.env.OPENCLAW_MEMORY_BROKER_ERROR_TELEMETRY_FILE;
+      else process.env.OPENCLAW_MEMORY_BROKER_ERROR_TELEMETRY_FILE = prev.errors;
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("emits confidence fields on adapter-served query outcomes", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "adapter-rollout-confidence-"));
+    const prev = {
+      enabled: process.env.OPENCLAW_MEMORY_BROKER_TELEMETRY,
+      query: process.env.OPENCLAW_MEMORY_BROKER_QUERY_TELEMETRY_FILE,
+      errors: process.env.OPENCLAW_MEMORY_BROKER_ERROR_TELEMETRY_FILE,
+    };
+    const queryPath = path.join(tmp, "query.jsonl");
+    const errorPath = path.join(tmp, "error.jsonl");
+    process.env.OPENCLAW_MEMORY_BROKER_TELEMETRY = "1";
+    process.env.OPENCLAW_MEMORY_BROKER_QUERY_TELEMETRY_FILE = queryPath;
+    process.env.OPENCLAW_MEMORY_BROKER_ERROR_TELEMETRY_FILE = errorPath;
+    try {
+      const result = await routeMemorySearch({
+        query: "root memory continuity",
+        agentId: "main",
+        sessionKey: "s",
+        stateOverride: {
+          mode: "default_prefer",
+          rollout_percent: 100,
+          legacy_fallback_hot: true,
+        },
+        adapterSearch: async () => [
+          {
+            path: "MEMORY.md",
+            startLine: 1,
+            endLine: 1,
+            score: 0.93,
+            snippet: "adapter memory row",
+            source: "memory" as const,
+          },
+        ],
+        legacySearch: async () => [],
+      });
+      expect(result.chosenBackend).toBe("adapter");
+      const rows = fs
+        .readFileSync(queryPath, "utf8")
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as Record<string, unknown>);
+      const okRow = rows.find(
+        (row) =>
+          String(row.event || "") === "memory.broker.query.outcome" &&
+          String(((row.details || {}) as Record<string, unknown>).chosen_backend || "") ===
+            "adapter",
+      );
+      expect(okRow).toBeTruthy();
+      const details = (okRow?.details || {}) as Record<string, unknown>;
+      expect(["low", "medium", "high"]).toContain(String(details.confidence_band || ""));
+      expect(Number(details.confidence_score || -1)).toBeGreaterThanOrEqual(0);
+      expect(Number(details.confidence_score || 2)).toBeLessThanOrEqual(1);
+    } finally {
+      if (prev.enabled === undefined) delete process.env.OPENCLAW_MEMORY_BROKER_TELEMETRY;
+      else process.env.OPENCLAW_MEMORY_BROKER_TELEMETRY = prev.enabled;
+      if (prev.query === undefined) delete process.env.OPENCLAW_MEMORY_BROKER_QUERY_TELEMETRY_FILE;
+      else process.env.OPENCLAW_MEMORY_BROKER_QUERY_TELEMETRY_FILE = prev.query;
+      if (prev.errors === undefined) delete process.env.OPENCLAW_MEMORY_BROKER_ERROR_TELEMETRY_FILE;
+      else process.env.OPENCLAW_MEMORY_BROKER_ERROR_TELEMETRY_FILE = prev.errors;
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 });

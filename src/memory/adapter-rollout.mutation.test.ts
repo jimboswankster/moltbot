@@ -77,4 +77,36 @@ describe("routeMemorySearch mutation guards", () => {
     expect(result.degradationMode).toBe("summary_only");
     expect(result.results).toEqual([]);
   });
+
+  it("must fallback to legacy when adapter paths violate memory_get contract", async () => {
+    const result = await routeMemorySearch({
+      query: "q",
+      agentId: "main",
+      sessionKey: "s",
+      stateOverride: { mode: "default_prefer", rollout_percent: 100, legacy_fallback_hot: true },
+      adapterSearch: async () => [
+        {
+          path: "os/data/mission-control/decisions/ledger.jsonl",
+          startLine: 1,
+          endLine: 1,
+          score: 0.9,
+          snippet: "adapter",
+          source: "sessions" as const,
+        },
+      ],
+      legacySearch: async () => [
+        {
+          path: "MEMORY.md",
+          startLine: 1,
+          endLine: 1,
+          score: 0.5,
+          snippet: "legacy",
+          source: "memory" as const,
+        },
+      ],
+    });
+    expect(result.chosenBackend).toBe("legacy");
+    expect(result.degradationMode).toBe("fallback_mit");
+    expect(result.results[0]?.path).toBe("MEMORY.md");
+  });
 });
