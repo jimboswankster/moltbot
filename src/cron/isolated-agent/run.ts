@@ -18,6 +18,7 @@ import {
   resolveUserTimezone,
 } from "../../agents/date-time.js";
 import { DEFAULT_CONTEXT_TOKENS, DEFAULT_MODEL, DEFAULT_PROVIDER } from "../../agents/defaults.js";
+import { resolveDeterministicFallbackConstraints } from "../../agents/deterministic-fallback-constraints.js";
 import { loadModelCatalog } from "../../agents/model-catalog.js";
 import { runWithModelFallback } from "../../agents/model-fallback.js";
 import {
@@ -369,11 +370,25 @@ export async function runCronIsolatedAgentTurn(params: {
       verboseLevel: resolvedVerboseLevel,
     });
     const messageChannel = resolvedDelivery.channel;
-    const fallbackResult = await runWithModelFallback({
-      cfg: cfgWithAgentDefaults,
+    const deterministic = await resolveDeterministicFallbackConstraints({
+      prompt: commandBody,
+      lane: params.lane,
       provider,
       model,
+    });
+    const routedProvider = deterministic.provider;
+    const routedModel = deterministic.model;
+    const fallbackResult = await runWithModelFallback({
+      cfg: cfgWithAgentDefaults,
+      provider: routedProvider,
+      model: routedModel,
       agentDir,
+      telemetryContext: {
+        runId: cronRunId,
+        sessionId: cronSession.sessionEntry.sessionId,
+        sessionKey: agentSessionKey,
+      },
+      providerAllowlist: deterministic.providerAllowlist,
       fallbacksOverride: resolveAgentModelFallbacksOverride(params.cfg, agentId),
       run: (providerOverride, modelOverride) => {
         if (isCliProvider(providerOverride, cfgWithAgentDefaults)) {
@@ -393,6 +408,10 @@ export async function runCronIsolatedAgentTurn(params: {
             cliSessionId,
           });
         }
+        const lane =
+          providerOverride === routedProvider && modelOverride === routedModel
+            ? (params.lane ?? "cron")
+            : `fallback:${providerOverride}/${modelOverride}`;
         return runEmbeddedPiAgent({
           sessionId: cronSession.sessionEntry.sessionId,
           sessionKey: agentSessionKey,
@@ -403,7 +422,7 @@ export async function runCronIsolatedAgentTurn(params: {
           config: cfgWithAgentDefaults,
           skillsSnapshot,
           prompt: commandBody,
-          lane: params.lane ?? "cron",
+          lane,
           provider: providerOverride,
           model: modelOverride,
           thinkLevel,
