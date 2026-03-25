@@ -8,6 +8,7 @@ import type { TypingSignaler } from "./typing-mode.js";
 import { resolveAgentModelFallbacksOverride } from "../../agents/agent-scope.js";
 import { runCliAgent } from "../../agents/cli-runner.js";
 import { getCliSessionId } from "../../agents/cli-session.js";
+import { resolveDeterministicFallbackConstraints } from "../../agents/deterministic-fallback-constraints.js";
 import { runWithModelFallback } from "../../agents/model-fallback.js";
 import { isCliProvider } from "../../agents/model-selection.js";
 import {
@@ -147,11 +148,26 @@ export async function runAgentTurnWithFallback(params: {
       };
       const blockReplyPipeline = params.blockReplyPipeline;
       const onToolResult = params.opts?.onToolResult;
-      const fallbackResult = await runWithModelFallback({
-        cfg: params.followupRun.run.config,
+      const deterministic = await resolveDeterministicFallbackConstraints({
+        prompt: params.commandBody,
+        extraSystemPrompt: params.followupRun.run.extraSystemPrompt,
+        lane: params.followupRun.run.lane,
         provider: params.followupRun.run.provider,
         model: params.followupRun.run.model,
+      });
+      const routedProvider = deterministic.provider;
+      const routedModel = deterministic.model;
+      const fallbackResult = await runWithModelFallback({
+        cfg: params.followupRun.run.config,
+        provider: routedProvider,
+        model: routedModel,
         agentDir: params.followupRun.run.agentDir,
+        telemetryContext: {
+          runId,
+          sessionId: params.followupRun.run.sessionId,
+          sessionKey: params.sessionKey,
+        },
+        providerAllowlist: deterministic.providerAllowlist,
         fallbacksOverride: resolveAgentModelFallbacksOverride(
           params.followupRun.run.config,
           resolveAgentIdFromSessionKey(params.followupRun.run.sessionKey),
@@ -253,9 +269,15 @@ export async function runAgentTurnWithFallback(params: {
             })();
           }
           const authProfileId =
-            provider === params.followupRun.run.provider
-              ? params.followupRun.run.authProfileId
-              : undefined;
+            provider === routedProvider ? params.followupRun.run.authProfileId : undefined;
+          const preferredLane = resolvePreferredRunLane({
+            explicitLane: params.followupRun.run.lane,
+            messageProvider: params.sessionCtx.Provider ?? params.followupRun.run.messageProvider,
+          });
+          const lane =
+            provider === routedProvider && model === routedModel
+              ? preferredLane
+              : `fallback:${provider}/${model}`;
           return runEmbeddedPiAgent({
             sessionId: params.followupRun.run.sessionId,
             sessionKey: params.sessionKey,
@@ -308,10 +330,7 @@ export async function runAgentTurnWithFallback(params: {
             })(),
             bashElevated: params.followupRun.run.bashElevated,
             timeoutMs: params.followupRun.run.timeoutMs,
-            lane: resolvePreferredRunLane({
-              explicitLane: params.followupRun.run.lane,
-              messageProvider: params.sessionCtx.Provider ?? params.followupRun.run.messageProvider,
-            }),
+            lane,
             runId,
             images: params.opts?.images,
             abortSignal: params.opts?.abortSignal,

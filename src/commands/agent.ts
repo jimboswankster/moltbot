@@ -12,6 +12,7 @@ import { clearSessionAuthProfileOverride } from "../agents/auth-profiles/session
 import { runCliAgent } from "../agents/cli-runner.js";
 import { getCliSessionId } from "../agents/cli-session.js";
 import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "../agents/defaults.js";
+import { resolveDeterministicFallbackConstraints } from "../agents/deterministic-fallback-constraints.js";
 import { loadModelCatalog } from "../agents/model-catalog.js";
 import { runWithModelFallback } from "../agents/model-fallback.js";
 import {
@@ -371,6 +372,21 @@ export async function agentCommand(
 
     const startedAt = Date.now();
     let lifecycleEnded = false;
+    const deterministic = await resolveDeterministicFallbackConstraints({
+      prompt: body,
+      extraSystemPrompt: opts.extraSystemPrompt,
+      lane: opts.lane,
+      provider,
+      model,
+      telemetryContext: {
+        runId,
+        sessionId,
+        sessionKey,
+        clientRunId: undefined,
+      },
+    });
+    const routedProvider = deterministic.provider;
+    const routedModel = deterministic.model;
 
     let result: Awaited<ReturnType<typeof runEmbeddedPiAgent>>;
     let fallbackProvider = provider;
@@ -384,9 +400,15 @@ export async function agentCommand(
       const spawnedBy = opts.spawnedBy ?? sessionEntry?.spawnedBy;
       const fallbackResult = await runWithModelFallback({
         cfg,
-        provider,
-        model,
+        provider: routedProvider,
+        model: routedModel,
         agentDir,
+        telemetryContext: {
+          runId,
+          sessionId,
+          sessionKey,
+        },
+        providerAllowlist: deterministic.providerAllowlist,
         fallbacksOverride: resolveAgentModelFallbacksOverride(cfg, sessionAgentId),
         run: (providerOverride, modelOverride) => {
           if (isCliProvider(providerOverride, cfg)) {
@@ -411,7 +433,7 @@ export async function agentCommand(
             });
           }
           const authProfileId =
-            providerOverride === provider ? sessionEntry?.authProfileOverride : undefined;
+            providerOverride === routedProvider ? sessionEntry?.authProfileOverride : undefined;
           return runEmbeddedPiAgent({
             sessionId,
             sessionKey,
@@ -447,7 +469,7 @@ export async function agentCommand(
             timeoutMs,
             runId,
             lane:
-              providerOverride === provider
+              providerOverride === routedProvider && modelOverride === routedModel
                 ? opts.lane
                 : `fallback:${providerOverride}/${modelOverride}`,
             abortSignal: opts.abortSignal,

@@ -7,6 +7,7 @@ import type { TypingController } from "./typing.js";
 import { resolveAgentModelFallbacksOverride } from "../../agents/agent-scope.js";
 import { lookupContextTokens } from "../../agents/context.js";
 import { DEFAULT_CONTEXT_TOKENS } from "../../agents/defaults.js";
+import { resolveDeterministicFallbackConstraints } from "../../agents/deterministic-fallback-constraints.js";
 import { runWithModelFallback } from "../../agents/model-fallback.js";
 import { runEmbeddedPiAgent } from "../../agents/pi-embedded.js";
 import { resolveAgentIdFromSessionKey, type SessionEntry } from "../../config/sessions.js";
@@ -126,18 +127,41 @@ export function createFollowupRunner(params: {
       let fallbackProvider = queued.run.provider;
       let fallbackModel = queued.run.model;
       try {
-        const fallbackResult = await runWithModelFallback({
-          cfg: queued.run.config,
+        const deterministic = await resolveDeterministicFallbackConstraints({
+          prompt: queued.prompt,
+          extraSystemPrompt: queued.run.extraSystemPrompt,
+          lane: queued.run.lane,
           provider: queued.run.provider,
           model: queued.run.model,
+        });
+        const routedProvider = deterministic.provider;
+        const routedModel = deterministic.model;
+        const fallbackResult = await runWithModelFallback({
+          cfg: queued.run.config,
+          provider: routedProvider,
+          model: routedModel,
           agentDir: queued.run.agentDir,
+          telemetryContext: {
+            runId,
+            sessionId: queued.run.sessionId,
+            sessionKey: queued.run.sessionKey,
+          },
+          providerAllowlist: deterministic.providerAllowlist,
           fallbacksOverride: resolveAgentModelFallbacksOverride(
             queued.run.config,
             resolveAgentIdFromSessionKey(queued.run.sessionKey),
           ),
           run: (provider, model) => {
             const authProfileId =
-              provider === queued.run.provider ? queued.run.authProfileId : undefined;
+              provider === routedProvider ? queued.run.authProfileId : undefined;
+            const preferredLane = resolvePreferredRunLane({
+              explicitLane: queued.run.lane,
+              messageProvider: queued.run.messageProvider,
+            });
+            const lane =
+              provider === routedProvider && model === routedModel
+                ? preferredLane
+                : `fallback:${provider}/${model}`;
             return runEmbeddedPiAgent({
               sessionId: queued.run.sessionId,
               sessionKey: queued.run.sessionKey,
@@ -170,10 +194,7 @@ export function createFollowupRunner(params: {
               execOverrides: queued.run.execOverrides,
               bashElevated: queued.run.bashElevated,
               timeoutMs: queued.run.timeoutMs,
-              lane: resolvePreferredRunLane({
-                explicitLane: queued.run.lane,
-                messageProvider: queued.run.messageProvider,
-              }),
+              lane,
               runId,
               blockReplyBreak: queued.run.blockReplyBreak,
               onAgentEvent: (evt) => {

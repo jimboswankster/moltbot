@@ -231,11 +231,24 @@ export async function runMemoryFlushIfNeeded(params: {
       provider: flushProvider,
       model: flushModel,
       agentDir: params.followupRun.run.agentDir,
+      telemetryContext: {
+        runId: flushRunId,
+        sessionId: params.followupRun.run.sessionId,
+        sessionKey: params.sessionKey,
+      },
       run: (provider, model) => {
         const authProfileId =
           provider === params.followupRun.run.provider
             ? params.followupRun.run.authProfileId
             : undefined;
+        const preferredLane = resolvePreferredRunLane({
+          explicitLane: params.followupRun.run.lane,
+          messageProvider: params.sessionCtx.Provider ?? params.followupRun.run.messageProvider,
+        });
+        const lane =
+          provider === params.followupRun.run.provider && model === params.followupRun.run.model
+            ? preferredLane
+            : `fallback:${provider}/${model}`;
         return runEmbeddedPiAgent({
           sessionId: params.followupRun.run.sessionId,
           sessionKey: params.sessionKey,
@@ -274,10 +287,7 @@ export async function runMemoryFlushIfNeeded(params: {
           execOverrides: params.followupRun.run.execOverrides,
           bashElevated: params.followupRun.run.bashElevated,
           timeoutMs: params.followupRun.run.timeoutMs,
-          lane: resolvePreferredRunLane({
-            explicitLane: params.followupRun.run.lane,
-            messageProvider: params.sessionCtx.Provider ?? params.followupRun.run.messageProvider,
-          }),
+          lane,
           runId: flushRunId,
           onAgentEvent: (evt) => {
             if (evt.stream === "compaction") {

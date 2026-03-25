@@ -1,6 +1,8 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { recordRuntimeTelemetryEvent } from "../infra/runtime-telemetry.js";
+import { logWarn } from "../logger.js";
 
 type Tier = "W1A" | "W1B" | "V2" | "E3";
 
@@ -14,6 +16,8 @@ type LaneRule = {
     lane?: string;
     workerTier?: Tier;
     workerModel?: string;
+    strictFallbackProviderFamily?: boolean;
+    allowedFallbackProviders?: string[];
   };
 };
 
@@ -23,6 +27,8 @@ type RoutingPolicy = {
     lane?: string;
     workerTier?: Tier;
     workerModel?: string;
+    strictFallbackProviderFamily?: boolean;
+    allowedFallbackProviders?: string[];
   };
   laneRules?: LaneRule[];
 };
@@ -43,10 +49,14 @@ export type RoutingDecision = {
   modelRef: string | null;
   provider: string | null;
   model: string | null;
+  strictFallbackProviderFamily: boolean;
+  allowedFallbackProviders: string[];
   reason: string;
 };
 
 const ROUTING_POLICY_ENV = "OPENCLAW_ROUTING_POLICY_PATH";
+const ROUTING_POLICY_ERROR_COOLDOWN_MS = 10 * 60 * 1000;
+let lastRoutingPolicyLoadErrorAt: number | null = null;
 
 function defaultRoutingPolicyPath(): string {
   return path.join(
@@ -80,6 +90,23 @@ function parseModelRef(modelRef: string): { provider: string; model: string } | 
   const model = raw.slice(slash + 1).trim();
   if (!provider || !model) return null;
   return { provider, model };
+}
+
+function normalizeProviderList(values: string[] | undefined): string[] {
+  if (!Array.isArray(values)) {
+    return [];
+  }
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of values) {
+    const value = normalize(raw);
+    if (!value || seen.has(value)) {
+      continue;
+    }
+    seen.add(value);
+    out.push(value);
+  }
+  return out;
 }
 
 function parseRoutingEnvelope(text: string): Partial<RoutingHints> {
@@ -164,7 +191,32 @@ export async function loadRoutingPolicy(): Promise<{
       return { policy: null, policyPath };
     }
     return { policy: parsed, policyPath };
-  } catch {
+  } catch (err) {
+    const code =
+      err && typeof err === "object" ? String((err as { code?: unknown }).code ?? "") : "";
+    // Missing policy file is expected for deployments that don't use deterministic routing.
+    if (code !== "ENOENT") {
+      const now = Date.now();
+      const shouldWarn =
+        !lastRoutingPolicyLoadErrorAt ||
+        now - lastRoutingPolicyLoadErrorAt >= ROUTING_POLICY_ERROR_COOLDOWN_MS;
+      if (shouldWarn) {
+        lastRoutingPolicyLoadErrorAt = now;
+        const message = err instanceof Error ? err.message : String(err);
+        logWarn(`deterministic routing policy load failed (${policyPath}): ${message}`);
+        recordRuntimeTelemetryEvent({
+          event: "agent.model_route_policy_load_failed",
+          subsystem: "agent-routing",
+          severity: "warning",
+          status: "degraded",
+          details: {
+            policyPath,
+            code: code || null,
+            message,
+          },
+        });
+      }
+    }
     return { policy: null, policyPath };
   }
 }
@@ -199,6 +251,8 @@ export function decideDeterministicRoute(params: {
       modelRef: null,
       provider: params.provider,
       model: params.model,
+      strictFallbackProviderFamily: false,
+      allowedFallbackProviders: [],
       reason: "deterministic routing bypassed for explicit fallback/probe lane",
     };
   }
@@ -213,12 +267,19 @@ export function decideDeterministicRoute(params: {
       modelRef: null,
       provider: null,
       model: null,
+      strictFallbackProviderFamily: false,
+      allowedFallbackProviders: [],
       reason: "routing policy unavailable or disabled",
     };
   }
 
   const matched = chooseRule(params.policy, params.hints);
   const defaults = params.policy.defaults;
+  const strictFallbackProviderFamily =
+    matched?.then?.strictFallbackProviderFamily ?? defaults?.strictFallbackProviderFamily ?? false;
+  const allowedFallbackProviders = normalizeProviderList(
+    matched?.then?.allowedFallbackProviders ?? defaults?.allowedFallbackProviders,
+  );
   const modelRef = matched?.then?.workerModel || defaults?.workerModel || null;
   const parsedRef = modelRef ? parseModelRef(modelRef) : null;
   if (!parsedRef) {
@@ -232,6 +293,8 @@ export function decideDeterministicRoute(params: {
       modelRef,
       provider: null,
       model: null,
+      strictFallbackProviderFamily,
+      allowedFallbackProviders,
       reason: "no valid model ref in matched/default route",
     };
   }
@@ -252,6 +315,8 @@ export function decideDeterministicRoute(params: {
     modelRef,
     provider: chosenProvider,
     model: chosenModel,
+    strictFallbackProviderFamily,
+    allowedFallbackProviders,
     reason: sameAsCurrent
       ? "matched route equals current provider/model"
       : "applied deterministic route",

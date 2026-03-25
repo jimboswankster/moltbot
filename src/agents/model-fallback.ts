@@ -2,6 +2,7 @@ import type { OpenClawConfig } from "../config/config.js";
 import type { FailoverReason } from "./pi-embedded-helpers.js";
 import { resolveMainSessionKey } from "../config/sessions.js";
 import { recordFallbackAttempt } from "../infra/fallback-telemetry.js";
+import { recordRuntimeTelemetryEvent } from "../infra/runtime-telemetry.js";
 import { enqueueSystemEvent } from "../infra/system-events.js";
 import { logWarn } from "../logger.js";
 import {
@@ -39,6 +40,13 @@ type FallbackAttempt = {
   reason?: FailoverReason;
   status?: number;
   code?: string;
+};
+
+type FallbackTelemetryContext = {
+  runId?: string;
+  sessionId?: string;
+  sessionKey?: string;
+  clientRunId?: string;
 };
 
 const candidateCooldownUntil = new Map<string, number>();
@@ -93,6 +101,29 @@ function resolveRateLimitCooldownMs(message: string): number {
   // Default mirrors auth-profile first cooldown step when provider doesn't expose retry delay.
   const fallbackMs = 60_000;
   return retryDelayMs ? Math.max(5_000, retryDelayMs + 1_000) : fallbackMs;
+}
+
+function extractEffectiveModelRef(result: unknown): {
+  provider: string | null;
+  model: string | null;
+} {
+  if (!result || typeof result !== "object") {
+    return { provider: null, model: null };
+  }
+  const meta = (result as { meta?: unknown }).meta;
+  if (!meta || typeof meta !== "object") {
+    return { provider: null, model: null };
+  }
+  const agentMeta = (meta as { agentMeta?: unknown }).agentMeta;
+  if (!agentMeta || typeof agentMeta !== "object") {
+    return { provider: null, model: null };
+  }
+  const providerRaw = (agentMeta as { provider?: unknown }).provider;
+  const modelRaw = (agentMeta as { model?: unknown }).model;
+  const provider =
+    typeof providerRaw === "string" && providerRaw.trim() ? providerRaw.trim() : null;
+  const model = typeof modelRaw === "string" && modelRaw.trim() ? modelRaw.trim() : null;
+  return { provider, model };
 }
 
 export class AllModelsInCooldownError extends Error {
@@ -273,6 +304,8 @@ export function resolveFallbackCandidates(params: {
   cfg: OpenClawConfig | undefined;
   provider: string;
   model: string;
+  /** Optional provider allowlist; when set, candidates outside these providers are discarded. */
+  providerAllowlist?: string[];
   /** Optional explicit fallbacks list; when provided (even empty), replaces agents.defaults.model.fallbacks. */
   fallbacksOverride?: string[];
 }): ModelCandidate[] {
@@ -292,11 +325,18 @@ export function resolveFallbackCandidates(params: {
     defaultProvider,
   });
   const allowlist = buildAllowedModelKeys(params.cfg, defaultProvider);
+  const providerAllowlist =
+    params.providerAllowlist && params.providerAllowlist.length > 0
+      ? new Set(params.providerAllowlist.map((entry) => entry.trim().toLowerCase()).filter(Boolean))
+      : null;
   const seen = new Set<string>();
   const candidates: ModelCandidate[] = [];
 
   const addCandidate = (candidate: ModelCandidate, enforceAllowlist: boolean) => {
     if (!candidate.provider || !candidate.model) {
+      return;
+    }
+    if (providerAllowlist && !providerAllowlist.has(candidate.provider.trim().toLowerCase())) {
       return;
     }
     const key = modelKey(candidate.provider, candidate.model);
@@ -361,6 +401,9 @@ export async function runWithModelFallback<T>(params: {
   provider: string;
   model: string;
   agentDir?: string;
+  telemetryContext?: FallbackTelemetryContext;
+  /** Optional provider allowlist; when set, candidates outside these providers are discarded. */
+  providerAllowlist?: string[];
   /** Optional explicit fallbacks list; when provided (even empty), replaces agents.defaults.model.fallbacks. */
   fallbacksOverride?: string[];
   run: (provider: string, model: string) => Promise<T>;
@@ -377,12 +420,104 @@ export async function runWithModelFallback<T>(params: {
   model: string;
   attempts: FallbackAttempt[];
 }> {
+  const telemetryContext = {
+    runId: params.telemetryContext?.runId ?? null,
+    sessionId: params.telemetryContext?.sessionId ?? null,
+    sessionKey: params.telemetryContext?.sessionKey ?? null,
+    clientRunId: params.telemetryContext?.clientRunId ?? null,
+  };
+  const unscopedCandidates = params.providerAllowlist?.length
+    ? resolveFallbackCandidates({
+        cfg: params.cfg,
+        provider: params.provider,
+        model: params.model,
+        fallbacksOverride: params.fallbacksOverride,
+      })
+    : null;
   const candidates = resolveFallbackCandidates({
     cfg: params.cfg,
     provider: params.provider,
     model: params.model,
+    providerAllowlist: params.providerAllowlist,
     fallbacksOverride: params.fallbacksOverride,
   });
+  const selectedCandidateSet = new Set(
+    candidates.map(
+      (candidate) =>
+        `${candidate.provider.trim().toLowerCase()}/${candidate.model.trim().toLowerCase()}`,
+    ),
+  );
+  const filteredByConstraints =
+    unscopedCandidates?.filter(
+      (candidate) =>
+        !selectedCandidateSet.has(
+          `${candidate.provider.trim().toLowerCase()}/${candidate.model.trim().toLowerCase()}`,
+        ),
+    ) ?? [];
+  recordRuntimeTelemetryEvent({
+    event: "agent.model_fallback_started",
+    subsystem: "agent-fallback",
+    severity: "info",
+    status: "ok",
+    details: {
+      ...telemetryContext,
+      requestedProvider: params.provider,
+      requestedModel: params.model,
+      providerAllowlist: params.providerAllowlist ?? null,
+      fallbacksOverrideProvided: params.fallbacksOverride !== undefined,
+      totalCandidates: candidates.length,
+      candidates: candidates.map((candidate) => `${candidate.provider}/${candidate.model}`),
+      unscopedTotalCandidates: unscopedCandidates?.length ?? null,
+      constrainedOutCandidates: filteredByConstraints.length,
+      constrainedOutCandidateRefs: filteredByConstraints.map(
+        (candidate) => `${candidate.provider}/${candidate.model}`,
+      ),
+    },
+  });
+  if (params.providerAllowlist?.length && filteredByConstraints.length > 0) {
+    recordRuntimeTelemetryEvent({
+      event: "agent.model_fallback_constraints_applied",
+      subsystem: "agent-fallback",
+      severity: "info",
+      status: "ok",
+      details: {
+        ...telemetryContext,
+        requestedProvider: params.provider,
+        requestedModel: params.model,
+        providerAllowlist: params.providerAllowlist,
+        unscopedTotalCandidates: unscopedCandidates?.length ?? null,
+        constrainedOutCandidates: filteredByConstraints.length,
+        constrainedOutCandidateRefs: filteredByConstraints.map(
+          (candidate) => `${candidate.provider}/${candidate.model}`,
+        ),
+      },
+    });
+  }
+  if (candidates.length === 0) {
+    recordRuntimeTelemetryEvent({
+      event: "agent.model_fallback_no_candidates",
+      subsystem: "agent-fallback",
+      severity: "error",
+      status: "failed",
+      details: {
+        ...telemetryContext,
+        requestedProvider: params.provider,
+        requestedModel: params.model,
+        providerAllowlist: params.providerAllowlist ?? null,
+        fallbacksOverrideProvided: params.fallbacksOverride !== undefined,
+        unscopedTotalCandidates: unscopedCandidates?.length ?? null,
+        constrainedOutCandidates: filteredByConstraints.length,
+        constrainedOutCandidateRefs: filteredByConstraints.map(
+          (candidate) => `${candidate.provider}/${candidate.model}`,
+        ),
+      },
+    });
+    throw new Error(
+      `No fallback candidates resolved for ${params.provider}/${params.model} (providerAllowlist=${JSON.stringify(
+        params.providerAllowlist ?? [],
+      )})`,
+    );
+  }
   const authStore = params.cfg
     ? ensureAuthProfileStore(params.agentDir, { allowKeychainPrompt: false })
     : null;
@@ -398,6 +533,30 @@ export async function runWithModelFallback<T>(params: {
         error: `Provider ${candidate.provider} blocked by active budget tier policy`,
         reason: "billing",
       });
+      const recorded = recordFallbackAttempt({
+        provider: candidate.provider,
+        model: candidate.model,
+        reason: "billing",
+      });
+      recordRuntimeTelemetryEvent({
+        event: "agent.model_fallback_skip",
+        subsystem: "agent-fallback",
+        severity: "warning",
+        status: "degraded",
+        details: {
+          ...telemetryContext,
+          provider: candidate.provider,
+          model: candidate.model,
+          reason: "billing",
+          message: `Provider ${candidate.provider} blocked by active budget tier policy`,
+          attempt: i + 1,
+          totalCandidates: candidates.length,
+          countLastHour: recorded.countLastHour,
+        },
+      });
+      if (recorded.warned) {
+        maybeWarnFallbackRate(params.cfg, recorded.countLastHour);
+      }
       continue;
     }
     const candidateCooldownMs = getCandidateCooldownRemainingMs(
@@ -419,6 +578,22 @@ export async function runWithModelFallback<T>(params: {
         provider: candidate.provider,
         model: candidate.model,
         reason: "rate_limit",
+      });
+      recordRuntimeTelemetryEvent({
+        event: "agent.model_fallback_skip",
+        subsystem: "agent-fallback",
+        severity: "warning",
+        status: "degraded",
+        details: {
+          ...telemetryContext,
+          provider: candidate.provider,
+          model: candidate.model,
+          reason: "rate_limit",
+          message: `Provider/model in cooldown (${cooldownSeconds}s remaining)`,
+          attempt: i + 1,
+          totalCandidates: candidates.length,
+          countLastHour: recorded.countLastHour,
+        },
       });
       if (recorded.warned) {
         maybeWarnFallbackRate(params.cfg, recorded.countLastHour);
@@ -455,6 +630,22 @@ export async function runWithModelFallback<T>(params: {
           model: candidate.model,
           reason: "rate_limit",
         });
+        recordRuntimeTelemetryEvent({
+          event: "agent.model_fallback_skip",
+          subsystem: "agent-fallback",
+          severity: "warning",
+          status: "degraded",
+          details: {
+            ...telemetryContext,
+            provider: candidate.provider,
+            model: candidate.model,
+            reason: "rate_limit",
+            message: `Provider ${candidate.provider} is in cooldown (all profiles unavailable)`,
+            attempt: i + 1,
+            totalCandidates: candidates.length,
+            countLastHour: recorded.countLastHour,
+          },
+        });
         if (recorded.warned) {
           maybeWarnFallbackRate(params.cfg, recorded.countLastHour);
         }
@@ -463,6 +654,28 @@ export async function runWithModelFallback<T>(params: {
     }
     try {
       const result = await params.run(candidate.provider, candidate.model);
+      const effective = extractEffectiveModelRef(result);
+      const routeMismatch =
+        effective.provider !== null &&
+        effective.model !== null &&
+        (effective.provider.trim().toLowerCase() !== candidate.provider.trim().toLowerCase() ||
+          effective.model.trim().toLowerCase() !== candidate.model.trim().toLowerCase());
+      recordRuntimeTelemetryEvent({
+        event: "agent.model_fallback_succeeded",
+        subsystem: "agent-fallback",
+        severity: "info",
+        status: "ok",
+        details: {
+          ...telemetryContext,
+          provider: candidate.provider,
+          model: candidate.model,
+          effectiveProvider: effective.provider,
+          effectiveModel: effective.model,
+          routeMismatch,
+          attemptsBeforeSuccess: attempts.length,
+          totalCandidates: candidates.length,
+        },
+      });
       return {
         result,
         provider: candidate.provider,
@@ -479,6 +692,23 @@ export async function runWithModelFallback<T>(params: {
           model: candidate.model,
         }) ?? err;
       if (!isFailoverError(normalized)) {
+        const message = normalized instanceof Error ? normalized.message : String(normalized);
+        recordRuntimeTelemetryEvent({
+          event: "agent.model_fallback_non_failover_terminal",
+          subsystem: "agent-fallback",
+          severity: "error",
+          status: "failed",
+          details: {
+            ...telemetryContext,
+            provider: candidate.provider,
+            model: candidate.model,
+            attempt: i + 1,
+            totalCandidates: candidates.length,
+            errorType:
+              normalized instanceof Error && normalized.name ? normalized.name : typeof normalized,
+            message,
+          },
+        });
         throw err;
       }
 
@@ -505,6 +735,28 @@ export async function runWithModelFallback<T>(params: {
         reason: described.reason,
         status: described.status,
         code: described.code,
+      });
+      recordRuntimeTelemetryEvent({
+        event: "agent.model_fallback_attempt_failed",
+        subsystem: "agent-fallback",
+        severity:
+          described.reason === "rate_limit" || described.reason === "timeout" ? "warning" : "error",
+        status:
+          described.reason === "rate_limit" || described.reason === "timeout"
+            ? "degraded"
+            : "failed",
+        details: {
+          ...telemetryContext,
+          provider: candidate.provider,
+          model: candidate.model,
+          reason: described.reason ?? null,
+          status: described.status ?? null,
+          code: described.code ?? null,
+          message: described.message,
+          attempt: i + 1,
+          totalCandidates: candidates.length,
+          countLastHour: recorded.countLastHour,
+        },
       });
       if (recorded.warned) {
         maybeWarnFallbackRate(params.cfg, recorded.countLastHour);
@@ -550,6 +802,33 @@ export async function runWithModelFallback<T>(params: {
           )
           .join(" | ")
       : "unknown";
+  recordRuntimeTelemetryEvent({
+    event: "agent.model_fallback_exhausted",
+    subsystem: "agent-fallback",
+    severity: "error",
+    status: "failed",
+    details: {
+      ...telemetryContext,
+      requestedProvider: params.provider,
+      requestedModel: params.model,
+      totalCandidates: candidates.length,
+      attempts: attempts.map((attempt) => ({
+        provider: attempt.provider,
+        model: attempt.model,
+        reason: attempt.reason ?? null,
+        status: attempt.status ?? null,
+        code: attempt.code ?? null,
+        error: attempt.error,
+      })),
+      summary,
+      lastError:
+        lastError instanceof Error
+          ? { name: lastError.name, message: lastError.message }
+          : lastError != null
+            ? String(lastError)
+            : null,
+    },
+  });
   throw new Error(`All models failed (${attempts.length || candidates.length}): ${summary}`, {
     cause: lastError instanceof Error ? lastError : undefined,
   });
