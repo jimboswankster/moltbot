@@ -3,6 +3,7 @@ import { normalizeVerboseLevel } from "../auto-reply/thinking.js";
 import { loadConfig } from "../config/config.js";
 import { type AgentEventPayload, getAgentRunContext } from "../infra/agent-events.js";
 import { resolveHeartbeatVisibility } from "../infra/heartbeat-visibility.js";
+import { recordRuntimeTelemetryEvent } from "../infra/runtime-telemetry.js";
 import { loadSessionEntry } from "./session-utils.js";
 import { formatForLog } from "./ws-log.js";
 
@@ -115,15 +116,40 @@ export function createChatRunState(): ChatRunState {
   // would stay forever, blocking future runs on that session.
   const sweepTimer = setInterval(() => {
     const now = Date.now();
+    let swept = 0;
+    let maxAgeMs = 0;
+    let firstRunId: string | null = null;
     for (const [runId, ts] of abortedRuns) {
       if (now - ts > ABORT_ORPHAN_TTL_MS) {
         abortedRuns.delete(runId);
         buffers.delete(runId);
         deltaSentAt.delete(runId);
+        swept += 1;
+        const ageMs = now - ts;
+        if (ageMs > maxAgeMs) {
+          maxAgeMs = ageMs;
+        }
+        if (!firstRunId) {
+          firstRunId = runId;
+        }
         console.warn(
           `[chat-run] Swept orphaned abort entry: ${runId} (age=${Math.round((now - ts) / 1000)}s)`,
         );
       }
+    }
+    if (swept > 0) {
+      recordRuntimeTelemetryEvent({
+        event: "gateway.chat_abort_orphan_swept",
+        subsystem: "gateway",
+        severity: "warning",
+        status: "degraded",
+        details: {
+          swept,
+          maxAgeMs,
+          sampleRunId: firstRunId,
+          ttlMs: ABORT_ORPHAN_TTL_MS,
+        },
+      });
     }
   }, ABORT_SWEEP_INTERVAL_MS);
   // Don't block process exit

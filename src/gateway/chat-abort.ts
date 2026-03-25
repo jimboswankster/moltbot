@@ -4,6 +4,7 @@ export type ChatAbortControllerEntry = {
   controller: AbortController;
   sessionId: string;
   sessionKey: string;
+  connId?: string;
   startedAtMs: number;
   expiresAtMs: number;
 };
@@ -112,4 +113,31 @@ export function abortChatRunsForSessionKey(
     }
   }
   return { aborted: runIds.length > 0, runIds };
+}
+
+export function abortChatRunsForConnection(
+  ops: ChatAbortOps,
+  params: {
+    connId: string;
+    stopReason?: string;
+  },
+): { aborted: boolean; runIds: string[]; sessionKeys: string[] } {
+  const { connId, stopReason } = params;
+  const runIds: string[] = [];
+  const sessionKeys = new Set<string>();
+  for (const [runId, active] of ops.chatAbortControllers) {
+    if (!active.connId || active.connId !== connId) {
+      continue;
+    }
+    const res = abortChatRunById(ops, {
+      runId,
+      sessionKey: active.sessionKey,
+      stopReason,
+    });
+    if (res.aborted) {
+      runIds.push(runId);
+      sessionKeys.add(active.sessionKey);
+    }
+  }
+  return { aborted: runIds.length > 0, runIds, sessionKeys: Array.from(sessionKeys) };
 }

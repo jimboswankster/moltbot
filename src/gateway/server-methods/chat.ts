@@ -10,6 +10,7 @@ import { dispatchInboundMessage } from "../../auto-reply/dispatch.js";
 import { createReplyDispatcher } from "../../auto-reply/reply/reply-dispatcher.js";
 import { createReplyPrefixOptions } from "../../channels/reply-prefix.js";
 import { clearAgentRunContext } from "../../infra/agent-events.js";
+import { recordRuntimeTelemetryEvent } from "../../infra/runtime-telemetry.js";
 import { resolveSendPolicy } from "../../sessions/send-policy.js";
 import { INTERNAL_MESSAGE_CHANNEL } from "../../utils/message-channel.js";
 import {
@@ -455,12 +456,28 @@ export const chatHandlers: GatewayRequestHandlers = {
 
     try {
       const abortController = new AbortController();
+      const connId = typeof client?.connId === "string" ? client.connId : undefined;
+      const dispatchStartedAtMs = Date.now();
       context.chatAbortControllers.set(clientRunId, {
         controller: abortController,
         sessionId: entry?.sessionId ?? clientRunId,
         sessionKey: rawSessionKey,
+        connId,
         startedAtMs: now,
         expiresAtMs: resolveChatRunExpiresAtMs({ now, timeoutMs }),
+      });
+      recordRuntimeTelemetryEvent({
+        event: "gateway.chat_dispatch_started",
+        subsystem: "gateway",
+        severity: "info",
+        status: "ok",
+        details: {
+          clientRunId,
+          sessionKey: rawSessionKey,
+          sessionId: entry?.sessionId ?? null,
+          connId: connId ?? null,
+          timeoutMs,
+        },
       });
       const ackPayload = {
         runId: clientRunId,
@@ -545,7 +562,6 @@ export const chatHandlers: GatewayRequestHandlers = {
               sessionKey,
               clientRunId: p.idempotencyKey,
             });
-            const connId = typeof client?.connId === "string" ? client.connId : undefined;
             const wantsToolEvents = hasGatewayClientCap(
               client?.connect?.caps,
               GATEWAY_CLIENT_CAPS.TOOL_EVENTS,
@@ -566,6 +582,20 @@ export const chatHandlers: GatewayRequestHandlers = {
         },
       })
         .then(() => {
+          const dispatchDurationMs = Date.now() - dispatchStartedAtMs;
+          recordRuntimeTelemetryEvent({
+            event: "gateway.chat_dispatch_completed",
+            subsystem: "gateway",
+            severity: "info",
+            status: "ok",
+            details: {
+              clientRunId,
+              agentRunId: agentRunId ?? null,
+              sessionKey: rawSessionKey,
+              connId: connId ?? null,
+              durationMs: dispatchDurationMs,
+            },
+          });
           if (!agentRunStarted) {
             const combinedReply = finalReplyParts
               .map((part) => part.trim())
@@ -608,6 +638,20 @@ export const chatHandlers: GatewayRequestHandlers = {
               sessionKey: rawSessionKey,
               message,
             });
+            recordRuntimeTelemetryEvent({
+              event: "gateway.chat_final_emitted",
+              subsystem: "gateway",
+              severity: "info",
+              status: "ok",
+              details: {
+                runId: clientRunId,
+                agentRunId: null,
+                sessionKey: rawSessionKey,
+                connId: connId ?? null,
+                mode: "dispatcher_final_parts",
+                hasMessage: Boolean(message),
+              },
+            });
           } else if (agentRunId) {
             // Agent run (including all model fallback retries) completed.
             // The lifecycle "end" handler always preserves the chatLink so that
@@ -631,6 +675,21 @@ export const chatHandlers: GatewayRequestHandlers = {
                     }
                   : undefined,
               });
+              recordRuntimeTelemetryEvent({
+                event: "gateway.chat_final_emitted",
+                subsystem: "gateway",
+                severity: "info",
+                status: "ok",
+                details: {
+                  runId: clientRunId,
+                  agentRunId,
+                  sessionKey: rawSessionKey,
+                  connId: connId ?? null,
+                  mode: "agent_lifecycle_buffered",
+                  hasBufferedText: Boolean(bufferedText),
+                  bufferedChars: bufferedText.length,
+                },
+              });
             }
             // Clean up the agent run context now that the full dispatch is done.
             // This was deferred from the lifecycle handler to keep sessionKey
@@ -644,6 +703,7 @@ export const chatHandlers: GatewayRequestHandlers = {
           });
         })
         .catch((err) => {
+          const dispatchDurationMs = Date.now() - dispatchStartedAtMs;
           const error = errorShape(ErrorCodes.UNAVAILABLE, String(err));
           context.dedupe.set(`chat:${clientRunId}`, {
             ts: Date.now(),
@@ -670,9 +730,37 @@ export const chatHandlers: GatewayRequestHandlers = {
             sessionKey: rawSessionKey,
             errorMessage: String(err),
           });
+          recordRuntimeTelemetryEvent({
+            event: "gateway.chat_error_emitted",
+            subsystem: "gateway",
+            severity: "warning",
+            status: "degraded",
+            details: {
+              runId: clientRunId,
+              agentRunId: agentRunId ?? null,
+              sessionKey: rawSessionKey,
+              connId: connId ?? null,
+              errorMessage: String(err),
+              durationMs: dispatchDurationMs,
+            },
+          });
         })
         .finally(() => {
+          const existed = context.chatAbortControllers.has(clientRunId);
           context.chatAbortControllers.delete(clientRunId);
+          recordRuntimeTelemetryEvent({
+            event: "gateway.chat_dispatch_cleanup",
+            subsystem: "gateway",
+            severity: "info",
+            status: "ok",
+            details: {
+              clientRunId,
+              sessionKey: rawSessionKey,
+              connId: connId ?? null,
+              removedAbortController: existed,
+              hadAgentRunId: Boolean(agentRunId),
+            },
+          });
         });
     } catch (err) {
       const error = errorShape(ErrorCodes.UNAVAILABLE, String(err));

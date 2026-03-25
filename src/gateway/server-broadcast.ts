@@ -1,4 +1,5 @@
 import type { GatewayWsClient } from "./server/ws-types.js";
+import { recordRuntimeTelemetryEvent } from "../infra/runtime-telemetry.js";
 import { MAX_BUFFERED_BYTES } from "./server-constants.js";
 import { logWs, summarizeAgentEventForWsLog } from "./ws-log.js";
 
@@ -66,6 +67,17 @@ export function createGatewayBroadcaster(params: { clients: Set<GatewayWsClient>
       logMeta.sessionKey = p.sessionKey;
       logMeta.state = p.state;
     }
+    const chatDetails =
+      event === "chat" && payload && typeof payload === "object"
+        ? (() => {
+            const p = payload as Record<string, unknown>;
+            return {
+              chatRunId: typeof p.runId === "string" ? p.runId : null,
+              chatSessionKey: typeof p.sessionKey === "string" ? p.sessionKey : null,
+              chatState: typeof p.state === "string" ? p.state : null,
+            };
+          })()
+        : null;
     logWs("out", "event", logMeta);
     for (const c of params.clients) {
       if (!hasEventScope(c, event)) {
@@ -80,6 +92,20 @@ export function createGatewayBroadcaster(params: { clients: Set<GatewayWsClient>
           buffered: c.socket.bufferedAmount,
           limit: MAX_BUFFERED_BYTES,
         });
+        recordRuntimeTelemetryEvent({
+          event: "gateway.ws_drop_slow",
+          subsystem: "gateway",
+          severity: "warning",
+          status: "degraded",
+          details: {
+            connId: c.connId,
+            event,
+            seq: eventSeq,
+            buffered: c.socket.bufferedAmount,
+            limit: MAX_BUFFERED_BYTES,
+            ...(chatDetails ?? {}),
+          },
+        });
         continue;
       }
       if (slow) {
@@ -90,6 +116,20 @@ export function createGatewayBroadcaster(params: { clients: Set<GatewayWsClient>
           buffered: c.socket.bufferedAmount,
           limit: MAX_BUFFERED_BYTES,
         });
+        recordRuntimeTelemetryEvent({
+          event: "gateway.ws_close_slow",
+          subsystem: "gateway",
+          severity: "warning",
+          status: "degraded",
+          details: {
+            connId: c.connId,
+            event,
+            seq: eventSeq,
+            buffered: c.socket.bufferedAmount,
+            limit: MAX_BUFFERED_BYTES,
+            ...(chatDetails ?? {}),
+          },
+        });
         try {
           c.socket.close(1008, "slow consumer");
         } catch {
@@ -99,8 +139,20 @@ export function createGatewayBroadcaster(params: { clients: Set<GatewayWsClient>
       }
       try {
         c.socket.send(frame);
-      } catch {
-        /* ignore */
+      } catch (err) {
+        recordRuntimeTelemetryEvent({
+          event: "gateway.ws_send_error",
+          subsystem: "gateway",
+          severity: "warning",
+          status: "degraded",
+          details: {
+            connId: c.connId,
+            event,
+            seq: eventSeq,
+            message: err instanceof Error ? err.message : String(err),
+            ...(chatDetails ?? {}),
+          },
+        });
       }
     }
   };

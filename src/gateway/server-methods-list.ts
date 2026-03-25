@@ -77,6 +77,7 @@ const BASE_METHODS = [
   "cron.refresh",
   "system-presence",
   "system-event",
+  "telemetry.client_ws_event",
   "send",
   "agent",
   "agent.identity.get",

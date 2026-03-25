@@ -74,6 +74,13 @@ type QueuedRequest = {
 
 const QUEUE_TIMEOUT_MS = 15_000;
 const MAX_QUEUED = 20;
+const KEEPALIVE_INTERVAL_MS = 20_000;
+const KEEPALIVE_TIMEOUT_MS = 15_000;
+const MAX_KEEPALIVE_TIMEOUTS_BEFORE_CLOSE = 4;
+const KEEPALIVE_MIN_SILENCE_BEFORE_CLOSE_MS = 120_000;
+const CLIENT_WS_TELEMETRY_ENDPOINT = "/api/telemetry/client-ws-event";
+
+type ClientWsLifecycleEvent = "visibilitychange" | "online" | "offline" | "pagehide" | "freeze";
 
 export class GatewayBrowserClient {
   private ws: WebSocket | null = null;
@@ -85,16 +92,32 @@ export class GatewayBrowserClient {
   private connectSent = false;
   private connectTimer: number | null = null;
   private backoffMs = 800;
+  private keepaliveTimer: number | null = null;
+  private keepaliveInFlight = false;
+  private consecutiveKeepaliveTimeouts = 0;
+  private readonly clientConnId = generateUUID();
+  private lastMessageAtMs: number | null = null;
+  private wsOpenedAtMs: number | null = null;
+  private reconnectAttempts = 0;
+  private lifecycleHandlersInstalled = false;
+  private readonly onVisibilityChange = () => this.emitLifecycleTelemetry("visibilitychange");
+  private readonly onOnline = () => this.emitLifecycleTelemetry("online");
+  private readonly onOffline = () => this.emitLifecycleTelemetry("offline");
+  private readonly onPageHide = () => this.emitLifecycleTelemetry("pagehide");
+  private readonly onFreeze = () => this.emitLifecycleTelemetry("freeze");
 
   constructor(private opts: GatewayBrowserClientOptions) {}
 
   start() {
     this.closed = false;
+    this.installLifecycleHandlers();
     this.connect();
   }
 
   stop() {
     this.closed = true;
+    this.removeLifecycleHandlers();
+    this.stopKeepalive();
     this.ws?.close();
     this.ws = null;
     this.flushPending(new Error("gateway client stopped"));
@@ -113,12 +136,36 @@ export class GatewayBrowserClient {
     if (this.closed) {
       return;
     }
-    this.ws = new WebSocket(this.opts.url);
-    this.ws.addEventListener("open", () => this.queueConnect());
+    const wsUrl = this.resolveWsUrl();
+    this.ws = new WebSocket(wsUrl);
+    this.ws.addEventListener("open", () => {
+      this.wsOpenedAtMs = Date.now();
+      this.emitClientWsTelemetry("ui.ws_open", {
+        wsUrl,
+        clientConnId: this.clientConnId,
+        reconnectAttempts: this.reconnectAttempts,
+      });
+      this.queueConnect();
+    });
     this.ws.addEventListener("message", (ev) => this.handleMessage(String(ev.data ?? "")));
     this.ws.addEventListener("close", (ev) => {
       const reason = String(ev.reason ?? "");
+      const now = Date.now();
+      this.stopKeepalive();
       this.ws = null;
+      this.emitClientWsTelemetry("ui.ws_close", {
+        clientConnId: this.clientConnId,
+        code: ev.code,
+        reason,
+        wasClean: ev.wasClean,
+        sessionAgeMs: this.wsOpenedAtMs != null ? Math.max(0, now - this.wsOpenedAtMs) : null,
+        online: typeof navigator !== "undefined" ? navigator.onLine : null,
+        visibilityState:
+          typeof document !== "undefined" ? document.visibilityState : null,
+        sinceLastMessageMs:
+          this.lastMessageAtMs != null ? Math.max(0, now - this.lastMessageAtMs) : null,
+        appClosed: this.closed,
+      });
       this.flushPending(new Error(`gateway closed (${ev.code}): ${reason}`));
       this.opts.onClose?.({ code: ev.code, reason });
       this.scheduleReconnect();
@@ -132,9 +179,93 @@ export class GatewayBrowserClient {
     if (this.closed) {
       return;
     }
+    this.reconnectAttempts += 1;
     const delay = this.backoffMs;
     this.backoffMs = Math.min(this.backoffMs * 1.7, 15_000);
+    this.emitClientWsTelemetry("ui.ws_reconnect_scheduled", {
+      clientConnId: this.clientConnId,
+      delayMs: delay,
+      reconnectAttempts: this.reconnectAttempts,
+    });
     window.setTimeout(() => this.connect(), delay);
+  }
+
+  private resolveWsUrl() {
+    try {
+      const parsed = new URL(this.opts.url);
+      parsed.searchParams.set("clientConnId", this.clientConnId);
+      return parsed.toString();
+    } catch {
+      const sep = this.opts.url.includes("?") ? "&" : "?";
+      return `${this.opts.url}${sep}clientConnId=${encodeURIComponent(this.clientConnId)}`;
+    }
+  }
+
+  private emitClientWsTelemetry(event: string, details: Record<string, unknown>) {
+    const payload = {
+      event,
+      subsystem: "second-brain-ui-ws",
+      severity: "info",
+      status: "ok",
+      details: {
+        ...details,
+        tsMs: Date.now(),
+      },
+    };
+    // Preferred path: send telemetry over the already-established gateway socket.
+    // Keep HTTP as best-effort fallback for pre-connect / post-close lifecycle events.
+    if (this.ws && this.ws.readyState === WebSocket.OPEN && !this.closed) {
+      void this.request("telemetry.client_ws_event", payload).catch(() => {
+        // Fall through to HTTP fallback.
+      });
+    }
+    try {
+      void fetch(CLIENT_WS_TELEMETRY_ENDPOINT, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+        keepalive: true,
+      });
+    } catch {
+      // Best-effort telemetry only.
+    }
+  }
+
+  private emitLifecycleTelemetry(kind: ClientWsLifecycleEvent) {
+    this.emitClientWsTelemetry("ui.ws_lifecycle", {
+      clientConnId: this.clientConnId,
+      kind,
+      online: typeof navigator !== "undefined" ? navigator.onLine : null,
+      visibilityState: typeof document !== "undefined" ? document.visibilityState : null,
+    });
+  }
+
+  private installLifecycleHandlers() {
+    if (this.lifecycleHandlersInstalled || typeof window === "undefined") {
+      return;
+    }
+    this.lifecycleHandlersInstalled = true;
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", this.onVisibilityChange);
+      document.addEventListener("freeze", this.onFreeze as EventListener);
+    }
+    window.addEventListener("online", this.onOnline);
+    window.addEventListener("offline", this.onOffline);
+    window.addEventListener("pagehide", this.onPageHide);
+  }
+
+  private removeLifecycleHandlers() {
+    if (!this.lifecycleHandlersInstalled || typeof window === "undefined") {
+      return;
+    }
+    this.lifecycleHandlersInstalled = false;
+    if (typeof document !== "undefined") {
+      document.removeEventListener("visibilitychange", this.onVisibilityChange);
+      document.removeEventListener("freeze", this.onFreeze as EventListener);
+    }
+    window.removeEventListener("online", this.onOnline);
+    window.removeEventListener("offline", this.onOffline);
+    window.removeEventListener("pagehide", this.onPageHide);
   }
 
   private flushPending(err: Error) {
@@ -244,6 +375,8 @@ export class GatewayBrowserClient {
           });
         }
         this.backoffMs = 800;
+        this.reconnectAttempts = 0;
+        this.startKeepalive();
         this.flushQueued();
         this.opts.onHello?.(hello);
       })
@@ -262,6 +395,7 @@ export class GatewayBrowserClient {
     } catch {
       return;
     }
+    this.lastMessageAtMs = Date.now();
 
     const frame = parsed as { type?: unknown };
     if (frame.type === "event") {
@@ -368,5 +502,102 @@ export class GatewayBrowserClient {
     this.connectTimer = window.setTimeout(() => {
       void this.sendConnect();
     }, 750);
+  }
+
+  private startKeepalive() {
+    this.stopKeepalive();
+    this.keepaliveTimer = window.setInterval(() => {
+      if (this.keepaliveInFlight) {
+        return;
+      }
+      if (!this.ws || this.ws.readyState !== WebSocket.OPEN || this.closed) {
+        return;
+      }
+      this.keepaliveInFlight = true;
+      const startedAtMs = Date.now();
+      this.emitClientWsTelemetry("ui.ws_keepalive_sent", {
+        clientConnId: this.clientConnId,
+      });
+      const timeout = window.setTimeout(() => {
+        this.keepaliveInFlight = false;
+        this.consecutiveKeepaliveTimeouts += 1;
+        this.emitClientWsTelemetry("ui.ws_keepalive_timeout", {
+          clientConnId: this.clientConnId,
+          timeoutMs: KEEPALIVE_TIMEOUT_MS,
+          consecutiveTimeouts: this.consecutiveKeepaliveTimeouts,
+        });
+        if (
+          this.ws &&
+          this.ws.readyState === WebSocket.OPEN &&
+          this.consecutiveKeepaliveTimeouts >= MAX_KEEPALIVE_TIMEOUTS_BEFORE_CLOSE
+        ) {
+          const nowMs = Date.now();
+          const sinceLastMessageMs =
+            this.lastMessageAtMs != null ? Math.max(0, nowMs - this.lastMessageAtMs) : null;
+          if (
+            sinceLastMessageMs != null &&
+            sinceLastMessageMs < KEEPALIVE_MIN_SILENCE_BEFORE_CLOSE_MS
+          ) {
+            this.emitClientWsTelemetry("ui.ws_keepalive_close_suppressed_recent_activity", {
+              clientConnId: this.clientConnId,
+              consecutiveTimeouts: this.consecutiveKeepaliveTimeouts,
+              threshold: MAX_KEEPALIVE_TIMEOUTS_BEFORE_CLOSE,
+              sinceLastMessageMs,
+              minSilenceMs: KEEPALIVE_MIN_SILENCE_BEFORE_CLOSE_MS,
+            });
+            return;
+          }
+          const online = typeof navigator !== "undefined" ? navigator.onLine : true;
+          const visibilityState =
+            typeof document !== "undefined" ? document.visibilityState : "visible";
+          const shouldDeferClose = !online || visibilityState !== "visible";
+          if (shouldDeferClose) {
+            this.emitClientWsTelemetry("ui.ws_keepalive_close_deferred", {
+              clientConnId: this.clientConnId,
+              consecutiveTimeouts: this.consecutiveKeepaliveTimeouts,
+              threshold: MAX_KEEPALIVE_TIMEOUTS_BEFORE_CLOSE,
+              online,
+              visibilityState,
+            });
+            return;
+          }
+          this.emitClientWsTelemetry("ui.ws_keepalive_close_triggered", {
+            clientConnId: this.clientConnId,
+            consecutiveTimeouts: this.consecutiveKeepaliveTimeouts,
+            threshold: MAX_KEEPALIVE_TIMEOUTS_BEFORE_CLOSE,
+          });
+          this.ws.close(4000, "keepalive timeout");
+        }
+      }, KEEPALIVE_TIMEOUT_MS);
+
+      void this.request("agent.identity.get", {})
+        .then(() => {
+          window.clearTimeout(timeout);
+          this.keepaliveInFlight = false;
+          this.consecutiveKeepaliveTimeouts = 0;
+          this.emitClientWsTelemetry("ui.ws_keepalive_ok", {
+            clientConnId: this.clientConnId,
+            latencyMs: Math.max(0, Date.now() - startedAtMs),
+          });
+        })
+        .catch((err) => {
+          window.clearTimeout(timeout);
+          this.keepaliveInFlight = false;
+          this.emitClientWsTelemetry("ui.ws_keepalive_error", {
+            clientConnId: this.clientConnId,
+            latencyMs: Math.max(0, Date.now() - startedAtMs),
+            message: err instanceof Error ? err.message : String(err),
+          });
+        });
+    }, KEEPALIVE_INTERVAL_MS);
+  }
+
+  private stopKeepalive() {
+    if (this.keepaliveTimer !== null) {
+      window.clearInterval(this.keepaliveTimer);
+      this.keepaliveTimer = null;
+    }
+    this.keepaliveInFlight = false;
+    this.consecutiveKeepaliveTimeouts = 0;
   }
 }

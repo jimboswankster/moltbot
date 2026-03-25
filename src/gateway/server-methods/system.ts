@@ -2,6 +2,7 @@ import type { GatewayRequestHandlers } from "./types.js";
 import { resolveMainSessionKeyFromConfig } from "../../config/sessions.js";
 import { getLastHeartbeatEvent } from "../../infra/heartbeat-events.js";
 import { setHeartbeatsEnabled } from "../../infra/heartbeat-runner.js";
+import { recordRuntimeTelemetryEvent } from "../../infra/runtime-telemetry.js";
 import { enqueueSystemEvent, isSystemEventContextChanged } from "../../infra/system-events.js";
 import { listSystemPresence, updateSystemPresence } from "../../infra/system-presence.js";
 import { ErrorCodes, errorShape } from "../protocol/index.js";
@@ -135,6 +136,49 @@ export const systemHandlers: GatewayRequestHandlers = {
         },
       },
     );
+    respond(true, { ok: true }, undefined);
+  },
+  "telemetry.client_ws_event": ({ params, respond, client }) => {
+    const event = typeof params.event === "string" ? params.event.trim() : "";
+    const subsystem = typeof params.subsystem === "string" ? params.subsystem.trim() : "";
+    const details = params.details && typeof params.details === "object" ? params.details : {};
+    const severityRaw = typeof params.severity === "string" ? params.severity.trim() : "info";
+    const statusRaw = typeof params.status === "string" ? params.status.trim() : "ok";
+    const severity = severityRaw === "warning" || severityRaw === "error" ? severityRaw : "info";
+    const status = statusRaw === "degraded" || statusRaw === "failed" ? statusRaw : "ok";
+
+    if (!event.startsWith("ui.ws_")) {
+      respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "invalid telemetry event"));
+      return;
+    }
+    if (subsystem !== "second-brain-ui-ws") {
+      respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.INVALID_REQUEST, "invalid telemetry subsystem"),
+      );
+      return;
+    }
+    if (client?.connect?.id !== "openclaw-control-ui") {
+      respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.INVALID_REQUEST, "telemetry client not allowed"),
+      );
+      return;
+    }
+
+    recordRuntimeTelemetryEvent({
+      event,
+      subsystem,
+      severity,
+      status,
+      details: {
+        ...(details as Record<string, unknown>),
+        telemetryPath: "gateway_ws_method",
+        gatewayConnId: client?.connId ?? null,
+      },
+    });
     respond(true, { ok: true }, undefined);
   },
 };
