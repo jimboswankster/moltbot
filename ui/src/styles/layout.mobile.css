@@ -414,3 +414,49 @@
     font-size: 12px;
   }
 }
+
+/* Mobile: Make app container use available height */
+.app, #app {
+  height: 100vh;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Main content takes remaining space */
+.view-chats {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0; /* Important: allows flex shrinking */
+}
+
+/* Compose stays at bottom, not fixed */
+.view-compose {
+  flex-shrink: 0;
+  position: relative;
+}
+
+/* Mobile compose layout */
+.chat-compose {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+}
+
+.chat-compose__field textarea {
+  min-height: 70px;
+  max-height: 100px;
+  width: 100%;
+}
+
+.chat-compose__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.chat-compose__actions .btn {
+  min-width: 70px;
+  height: 34px;
+}

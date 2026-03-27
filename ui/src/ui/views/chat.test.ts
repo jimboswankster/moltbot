@@ -134,4 +134,71 @@ describe("chat view", () => {
 
     expect(onSend).toHaveBeenCalledTimes(0);
   });
+
+  it("keeps compose enabled during transient reconnects", () => {
+    const container = document.createElement("div");
+    render(
+      renderChat(
+        createProps({
+          connected: false,
+          disabledReason: null,
+        }),
+      ),
+      container,
+    );
+
+    const textarea = container.querySelector("textarea");
+    expect(textarea).not.toBeNull();
+    expect(textarea?.hasAttribute("disabled")).toBe(false);
+  });
+
+  it("emits compose blur callback details", () => {
+    const container = document.createElement("div");
+    const onComposeBlur = vi.fn();
+    render(
+      renderChat(
+        createProps({
+          connected: false,
+          draft: "hello world",
+          onComposeBlur,
+        }),
+      ),
+      container,
+    );
+
+    const textarea = container.querySelector("textarea");
+    expect(textarea).not.toBeNull();
+    textarea?.dispatchEvent(new FocusEvent("blur", { bubbles: true }));
+    expect(onComposeBlur).toHaveBeenCalledTimes(1);
+    expect(onComposeBlur).toHaveBeenCalledWith(
+      expect.objectContaining({
+        draftLength: 11,
+        connected: false,
+      }),
+    );
+  });
+
+  it("restores compose focus on reconnect blur when draft is non-empty", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    render(
+      renderChat(
+        createProps({
+          connected: false,
+          draft: "typing through reconnect",
+          disabledReason: null,
+        }),
+      ),
+      container,
+    );
+
+    const textarea = container.querySelector("textarea") as HTMLTextAreaElement | null;
+    expect(textarea).not.toBeNull();
+    textarea?.focus();
+    textarea?.dispatchEvent(new FocusEvent("blur", { bubbles: true }));
+    await Promise.resolve();
+
+    expect(document.activeElement).toBe(textarea);
+    container.remove();
+  });
 });

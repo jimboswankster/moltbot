@@ -77,6 +77,12 @@ export type ChatProps = {
   onCloseSidebar?: () => void;
   onSplitRatioChange?: (ratio: number) => void;
   onChatScroll?: (event: Event) => void;
+  onComposeBlur?: (details: {
+    draftLength: number;
+    connected: boolean;
+    sending: boolean;
+    hasStream: boolean;
+  }) => void;
   slashCommands?: SlashCommand[];
   slashHighlightIndex?: number | null;
   slashMode?: boolean;
@@ -232,7 +238,8 @@ function renderAttachmentPreview(props: ChatProps) {
 }
 
 export function renderChat(props: ChatProps) {
-  const canCompose = props.connected;
+  // Keep compose active through transient reconnects so typing is not interrupted.
+  const canCompose = !props.disabledReason;
   const isBusy = props.sending || props.stream !== null;
   const canAbort = Boolean(props.canAbort && props.onAbort);
   const activeSession = props.sessions?.sessions?.find((row) => row.key === props.sessionKey);
@@ -276,7 +283,7 @@ export function renderChat(props: ChatProps) {
       : isBusy
         ? "Message (↩/Tab to queue, Shift+↩ for line breaks, paste images)"
         : "Message (↩ to send, Shift+↩ for line breaks, paste images)"
-    : "Connect to the gateway to start chatting…";
+    : "Reconnecting… keep typing; send will resume when connected.";
 
   const splitRatio = props.splitRatio ?? 0.6;
   const sidebarOpen = Boolean(props.sidebarOpen && props.onCloseSidebar);
@@ -483,7 +490,7 @@ export function renderChat(props: ChatProps) {
                 }
               })}
               .value=${props.draft}
-              ?disabled=${!props.connected}
+              ?disabled=${!canCompose}
               @keydown=${(e: KeyboardEvent) => {
                 if (slash.active && slash.items.length > 0) {
                   const max = slash.items.length;
@@ -544,7 +551,7 @@ export function renderChat(props: ChatProps) {
                   ) {
                     const hasQueuedContent =
                       props.draft.trim().length > 0 || (props.attachments?.length ?? 0) > 0;
-                    if (!hasQueuedContent || !props.connected) {
+                    if (!hasQueuedContent || !canCompose) {
                       return;
                     }
                     e.preventDefault();
@@ -558,9 +565,6 @@ export function renderChat(props: ChatProps) {
                 if (e.shiftKey) {
                   return;
                 } // Allow Shift+Enter for line breaks
-                if (!props.connected) {
-                  return;
-                }
                 e.preventDefault();
                 if (canCompose) {
                   props.onSend();
@@ -570,6 +574,33 @@ export function renderChat(props: ChatProps) {
                 const target = e.target as HTMLTextAreaElement;
                 adjustTextareaHeight(target);
                 props.onDraftChange(target.value);
+              }}
+              @blur=${(event: FocusEvent) => {
+                props.onComposeBlur?.({
+                  draftLength: props.draft.length,
+                  connected: props.connected,
+                  sending: props.sending,
+                  hasStream: props.stream !== null,
+                });
+                // During transient reconnect churn, preserve typing continuity by
+                // restoring focus when blur did not move to another interactive target.
+                if (!props.connected && canCompose && props.draft.length > 0) {
+                  const target = event.target as HTMLTextAreaElement | null;
+                  if (!target) {
+                    return;
+                  }
+                  queueMicrotask(() => {
+                    const active = document.activeElement as HTMLElement | null;
+                    const focusMoved =
+                      active !== null && active !== document.body && active !== target;
+                    if (focusMoved) {
+                      return;
+                    }
+                    target.focus({ preventScroll: true });
+                    const end = target.value.length;
+                    target.setSelectionRange(end, end);
+                  });
+                }
               }}
               @paste=${(e: ClipboardEvent) => handlePaste(e, props)}
               placeholder=${composePlaceholder}
@@ -585,7 +616,7 @@ export function renderChat(props: ChatProps) {
             </button>
             <button
               class="btn primary"
-              ?disabled=${!props.connected}
+              ?disabled=${!canCompose}
               @click=${props.onSend}
             >
               ${isBusy ? "Queue" : "Send"}<kbd class="btn-kbd">↵</kbd>

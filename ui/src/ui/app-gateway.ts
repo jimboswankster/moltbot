@@ -69,6 +69,36 @@ type SessionDefaultsSnapshot = {
 };
 
 const CHAT_DEBUG_FLAG = "openclaw:chat:debug";
+const CLIENT_WS_TELEMETRY_ENDPOINT = "/api/telemetry/client-ws-event";
+
+function postClientWsTelemetry(
+  event: string,
+  details: Record<string, unknown>,
+  status: "ok" | "degraded" = "ok",
+  severity: "info" | "warning" = "info",
+) {
+  const payload = {
+    event,
+    subsystem: "second-brain-ui-ws",
+    severity,
+    status,
+    details: {
+      ...details,
+      tsMs: Date.now(),
+    },
+  };
+  try {
+    void fetch(CLIENT_WS_TELEMETRY_ENDPOINT, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+      keepalive: true,
+    });
+  } catch {
+    // Best-effort telemetry only.
+  }
+}
+
 const shouldDebugChat = () => {
   if (typeof window === "undefined") return false;
   const fromStorage = typeof localStorage !== "undefined" && localStorage.getItem(CHAT_DEBUG_FLAG) === "1";
@@ -199,8 +229,21 @@ export function connectGateway(host: GatewayHost) {
     onClose: ({ code, reason }) => {
       host.connected = false;
       // Code 1012 = Service Restart (expected during config saves, don't show as error)
-      if (code !== 1012) {
+      // Code 1006 is typically transient transport churn; keep it non-blocking.
+      if (code !== 1012 && code !== 1006) {
         host.lastError = `disconnected (${code}): ${reason || "no reason"}`;
+      }
+      if (code === 1006) {
+        postClientWsTelemetry(
+          "ui.transient_disconnect_observed",
+          {
+            sessionKey: host.sessionKey,
+            code,
+            reason: reason || "no reason",
+          },
+          "degraded",
+          "warning",
+        );
       }
       if (host.chatRunId || (host as unknown as { chatStream: string | null }).chatStream) {
         host.pendingChatResync = true;
@@ -208,7 +251,19 @@ export function connectGateway(host: GatewayHost) {
     },
     onEvent: (evt) => handleGatewayEvent(host, evt),
     onGap: ({ expected, received }) => {
-      host.lastError = `event gap detected (expected seq ${expected}, got ${received}); refresh recommended`;
+      // Sequence gaps are expected during reconnect windows; recover silently.
+      // Avoid turning this into a blocking UI error banner that interrupts compose focus.
+      console.warn("[gateway] event gap detected", { expected, received });
+      postClientWsTelemetry(
+        "ui.event_gap_resync_scheduled",
+        {
+          sessionKey: host.sessionKey,
+          expected,
+          received,
+        },
+        "degraded",
+        "warning",
+      );
       host.pendingChatResync = true;
       scheduleChatResync(host);
     },
@@ -221,6 +276,17 @@ export function handleGatewayEvent(host: GatewayHost, evt: GatewayEventFrame) {
     handleGatewayEventUnsafe(host, evt);
   } catch (err) {
     console.error("[gateway] handleGatewayEvent error:", evt.event, err);
+    const message = err instanceof Error ? err.message : String(err);
+    postClientWsTelemetry(
+      "ui.gateway_event_dispatch_error",
+      {
+        sessionKey: host.sessionKey,
+        event: evt.event,
+        message: message.slice(0, 280),
+      },
+      "degraded",
+      "warning",
+    );
   }
 }
 

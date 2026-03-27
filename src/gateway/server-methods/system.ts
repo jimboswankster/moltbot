@@ -147,24 +147,18 @@ export const systemHandlers: GatewayRequestHandlers = {
     const severity = severityRaw === "warning" || severityRaw === "error" ? severityRaw : "info";
     const status = statusRaw === "degraded" || statusRaw === "failed" ? statusRaw : "ok";
 
+    // Treat malformed/legacy telemetry calls as best-effort no-ops so they never
+    // propagate user-visible errors in the web UI.
     if (!event.startsWith("ui.ws_")) {
-      respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "invalid telemetry event"));
+      respond(true, { ok: true, ignored: "invalid_event" }, undefined);
       return;
     }
     if (subsystem !== "second-brain-ui-ws") {
-      respond(
-        false,
-        undefined,
-        errorShape(ErrorCodes.INVALID_REQUEST, "invalid telemetry subsystem"),
-      );
+      respond(true, { ok: true, ignored: "invalid_subsystem" }, undefined);
       return;
     }
     if (client?.connect?.id !== "openclaw-control-ui") {
-      respond(
-        false,
-        undefined,
-        errorShape(ErrorCodes.INVALID_REQUEST, "telemetry client not allowed"),
-      );
+      respond(true, { ok: true, ignored: "client_not_allowed" }, undefined);
       return;
     }
 

@@ -90,6 +90,7 @@ export class GatewayBrowserClient {
   private lastSeq: number | null = null;
   private connectNonce: string | null = null;
   private connectSent = false;
+  private handshakeReady = false;
   private connectTimer: number | null = null;
   private backoffMs = 800;
   private keepaliveTimer: number | null = null;
@@ -136,6 +137,7 @@ export class GatewayBrowserClient {
     if (this.closed) {
       return;
     }
+    this.handshakeReady = false;
     const wsUrl = this.resolveWsUrl();
     this.ws = new WebSocket(wsUrl);
     this.ws.addEventListener("open", () => {
@@ -153,6 +155,7 @@ export class GatewayBrowserClient {
       const now = Date.now();
       this.stopKeepalive();
       this.ws = null;
+      this.handshakeReady = false;
       this.emitClientWsTelemetry("ui.ws_close", {
         clientConnId: this.clientConnId,
         code: ev.code,
@@ -212,13 +215,7 @@ export class GatewayBrowserClient {
         tsMs: Date.now(),
       },
     };
-    // Preferred path: send telemetry over the already-established gateway socket.
-    // Keep HTTP as best-effort fallback for pre-connect / post-close lifecycle events.
-    if (this.ws && this.ws.readyState === WebSocket.OPEN && !this.closed) {
-      void this.request("telemetry.client_ws_event", payload).catch(() => {
-        // Fall through to HTTP fallback.
-      });
-    }
+    // Emit via HTTP endpoint to avoid protocol-role collisions on WS method surfaces.
     try {
       void fetch(CLIENT_WS_TELEMETRY_ENDPOINT, {
         method: "POST",
@@ -366,6 +363,7 @@ export class GatewayBrowserClient {
 
     void this.request<GatewayHelloOk>("connect", params)
       .then((hello) => {
+        this.handshakeReady = true;
         if (hello?.auth?.deviceToken && deviceIdentity) {
           storeDeviceAuthToken({
             deviceId: deviceIdentity.deviceId,
@@ -420,6 +418,12 @@ export class GatewayBrowserClient {
         this.opts.onEvent?.(evt);
       } catch (err) {
         console.error("[gateway] event handler error:", err);
+        const message = err instanceof Error ? err.message : String(err);
+        this.emitClientWsTelemetry("ui.ws_event_handler_error", {
+          clientConnId: this.clientConnId,
+          event: evt.event,
+          message: message.slice(0, 280),
+        });
       }
       return;
     }
@@ -445,13 +449,15 @@ export class GatewayBrowserClient {
     const frameObj = { type: "req", id, method, params };
     const frameStr = JSON.stringify(frameObj);
 
-    // If connected, send immediately
+    // If connected and handshake finished (or this is the handshake frame), send immediately.
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      const p = new Promise<T>((resolve, reject) => {
-        this.pending.set(id, { resolve: (v) => resolve(v as T), reject });
-      });
-      this.ws.send(frameStr);
-      return p;
+      if (this.handshakeReady || method === "connect") {
+        const p = new Promise<T>((resolve, reject) => {
+          this.pending.set(id, { resolve: (v) => resolve(v as T), reject });
+        });
+        this.ws.send(frameStr);
+        return p;
+      }
     }
 
     // If closed permanently, reject
@@ -496,6 +502,7 @@ export class GatewayBrowserClient {
   private queueConnect() {
     this.connectNonce = null;
     this.connectSent = false;
+    this.handshakeReady = false;
     if (this.connectTimer !== null) {
       window.clearTimeout(this.connectTimer);
     }
