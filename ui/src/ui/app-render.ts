@@ -73,6 +73,36 @@ const AVATAR_HTTP_RE = /^https?:\/\//i;
 const CONTROL_UI_BASE = (import.meta as { env?: { BASE_URL?: string } }).env?.BASE_URL ?? "/";
 const PRISMSCAPE_GLOBE_SRC = `${CONTROL_UI_BASE}branding/ps-globe.png`;
 const PRISMSCAPE_WORDMARK_SRC = `${CONTROL_UI_BASE}branding/ps-logo-wht-sm.png`;
+const CLIENT_WS_TELEMETRY_ENDPOINT = "/api/telemetry/client-ws-event";
+let lastObservedUiErrorBanner: string | null = null;
+
+function postClientWsTelemetry(
+  event: string,
+  details: Record<string, unknown>,
+  status: "ok" | "degraded" = "ok",
+  severity: "info" | "warning" = "info",
+) {
+  const payload = {
+    event,
+    subsystem: "second-brain-ui-ws",
+    severity,
+    status,
+    details: {
+      ...details,
+      tsMs: Date.now(),
+    },
+  };
+  try {
+    void fetch(CLIENT_WS_TELEMETRY_ENDPOINT, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+      keepalive: true,
+    });
+  } catch {
+    // Best-effort telemetry only.
+  }
+}
 
 function resolveAssistantAvatarUrl(state: AppViewState): string | undefined {
   const list = state.agentsList?.agents ?? [];
@@ -188,7 +218,24 @@ export function renderApp(state: AppViewState) {
   const presenceCount = state.presenceEntries.length;
   const sessionsCount = state.sessionsResult?.count ?? null;
   const cronNext = state.cronStatus?.nextWakeAtMs ?? null;
-  const chatDisabledReason = state.connected ? null : "Disconnected from gateway.";
+  // Keep compose enabled during transient reconnects so typing continuity is preserved.
+  const chatDisabledReason = null;
+
+  if (state.lastError !== lastObservedUiErrorBanner) {
+    if (state.lastError) {
+      postClientWsTelemetry(
+        "ui.error_banner_changed",
+        {
+          sessionKey: state.sessionKey,
+          connected: state.connected,
+          error: state.lastError.slice(0, 280),
+        },
+        "degraded",
+        "warning",
+      );
+    }
+    lastObservedUiErrorBanner = state.lastError;
+  }
   const isChat = state.tab === "chat";
   const chatFocus = isChat && (state.settings.chatFocusMode || state.onboarding);
   const showThinking = state.onboarding ? false : state.settings.chatShowThinking;
@@ -986,8 +1033,8 @@ export function renderApp(state: AppViewState) {
                 onChatScroll: (event) => state.handleChatScroll(event),
                 onDraftChange: (next) => {
                   state.chatMessage = next;
-                  const raw = next.startsWith("/") ? next.slice(1) : "";
-                  const enableSlash = next.startsWith("/") && !/\s/.test(raw);
+                  const raw = next.startsWith(">>") ? next.slice(2) : "";
+                  const enableSlash = next.startsWith(">>") && !/\s/.test(raw);
                   state.chatSlashMode = enableSlash;
                   state.chatSlashHighlight = enableSlash ? 0 : null;
                 },
@@ -1015,6 +1062,22 @@ export function renderApp(state: AppViewState) {
                 onSplitRatioChange: (ratio: number) => state.handleSplitRatioChange(ratio),
                 assistantName: state.assistantName,
                 assistantAvatar: state.assistantAvatar,
+                onComposeBlur: (details) => {
+                  const reconnecting = !details.connected || !state.connected;
+                  postClientWsTelemetry(
+                    "ui.compose_blur_during_reconnect",
+                    {
+                      sessionKey: state.sessionKey,
+                      detailsConnected: details.connected,
+                      stateConnected: state.connected,
+                      draftLength: details.draftLength,
+                      sending: details.sending,
+                      hasStream: details.hasStream,
+                    },
+                    reconnecting ? "degraded" : "ok",
+                    reconnecting ? "warning" : "info",
+                  );
+                },
               })
             : nothing
         }
