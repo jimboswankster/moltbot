@@ -269,6 +269,10 @@ export async function loadWorkspaceBootstrapFiles(dir: string): Promise<Workspac
       name: DEFAULT_BOOTSTRAP_FILENAME,
       filePath: path.join(resolvedDir, DEFAULT_BOOTSTRAP_FILENAME),
     },
+    {
+      name: "BOOT_SEQUENCE.md",
+      filePath: path.join(resolvedDir, "BOOT_SEQUENCE.md"),
+    },
   ];
 
   entries.push(...(await resolveMemoryBootstrapEntries(resolvedDir)));
@@ -276,7 +280,17 @@ export async function loadWorkspaceBootstrapFiles(dir: string): Promise<Workspac
   const result: WorkspaceBootstrapFile[] = [];
   for (const entry of entries) {
     try {
-      const content = await fs.readFile(entry.filePath, "utf-8");
+      let content = await fs.readFile(entry.filePath, "utf-8");
+
+      // Truncate SOUL.md at <!-- BOOT CONTEXT END --> marker
+      if (entry.name === DEFAULT_SOUL_FILENAME) {
+        const marker = "<!-- BOOT CONTEXT END -->";
+        const markerIndex = content.indexOf(marker);
+        if (markerIndex !== -1) {
+          content = content.substring(0, markerIndex + marker.length);
+        }
+      }
+
       result.push({
         name: entry.name,
         path: entry.filePath,
