@@ -580,6 +580,21 @@ export function buildAgentSystemPrompt(params: {
       `✅ Right: ${SILENT_REPLY_TOKEN}`,
       "",
     );
+
+    // Contextual Triggering for kernel context
+    if (!isMinimal) {
+      lines.push(
+        "## Contextual Triggering",
+        "When your task involves spawning/managing subagents, orchestrating multiple agents, switchboard operations, model routing, or governance decisions:",
+        "- Use kernel_context_loader tool to load relevant kernel context",
+        "- Recall GOAL/PROBLEMS/CONSTRAINTS from relevant audit docs",
+        "- Apply first-principles before defaulting to tools",
+        "",
+        "For simple conversational tasks (weather, casual chat, basic questions):",
+        "- No kernel context needed, proceed normally",
+        "",
+      );
+    }
   }
 
   // Skip heartbeats for subagent/none modes
