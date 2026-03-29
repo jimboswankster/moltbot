@@ -26,12 +26,18 @@ import { logInboundDrop } from "../channels/logging.js";
 import { resolveMentionGatingWithBypass } from "../channels/mention-gating.js";
 import { recordInboundSession } from "../channels/session.js";
 import { formatCliCommand } from "../cli/command-format.js";
-import { readSessionUpdatedAt, resolveStorePath } from "../config/sessions.js";
+import {
+  loadSessionStore,
+  readSessionUpdatedAt,
+  resolveStorePath,
+  updateSessionStore,
+} from "../config/sessions.js";
 import { logVerbose, shouldLogVerbose } from "../globals.js";
 import { recordChannelActivity } from "../infra/channel-activity.js";
 import { upsertChannelPairingRequest } from "../pairing/pairing-store.js";
 import { resolveAgentRoute } from "../routing/resolve-route.js";
 import { resolveThreadSessionKeys } from "../routing/session-key.js";
+import { applyModelOverrideToSessionEntry } from "../sessions/model-overrides.js";
 import { withTelegramApiErrorLogging } from "./api-logging.js";
 import {
   firstDefined,
@@ -88,6 +94,53 @@ type ResolveGroupActivation = (params: {
 }) => boolean | undefined;
 
 type ResolveGroupRequireMention = (chatId: string | number) => boolean;
+
+function normalizePolicyRole(value?: string): string | undefined {
+  const trimmed = value?.trim().toLowerCase();
+  return trimmed || undefined;
+}
+
+function resolveTelegramModelPolicyAgentId(params: {
+  cfg: OpenClawConfig;
+  accountId: string;
+  groupConfig?: TelegramGroupConfig;
+  topicConfig?: TelegramTopicConfig;
+}): { agentId: string; source: string } | null {
+  const topicAgent = params.topicConfig?.modelPolicyAgentId?.trim();
+  if (topicAgent) {
+    return { agentId: topicAgent, source: "topic.modelPolicyAgentId" };
+  }
+  const groupAgent = params.groupConfig?.modelPolicyAgentId?.trim();
+  if (groupAgent) {
+    return { agentId: groupAgent, source: "group.modelPolicyAgentId" };
+  }
+
+  const telegramCfg = params.cfg.channels?.telegram;
+  if (!telegramCfg) {
+    return null;
+  }
+  const accountRoles = telegramCfg.accounts?.[params.accountId]?.modelPolicyRoles;
+  const baseRoles = telegramCfg.modelPolicyRoles;
+  const roleMap = { ...(baseRoles ?? {}), ...(accountRoles ?? {}) };
+
+  const topicRole = normalizePolicyRole(params.topicConfig?.modelPolicyRole);
+  if (topicRole) {
+    const mapped = roleMap[topicRole]?.trim();
+    if (mapped) {
+      return { agentId: mapped, source: `topic.modelPolicyRole:${topicRole}` };
+    }
+  }
+
+  const groupRole = normalizePolicyRole(params.groupConfig?.modelPolicyRole);
+  if (groupRole) {
+    const mapped = roleMap[groupRole]?.trim();
+    if (mapped) {
+      return { agentId: mapped, source: `group.modelPolicyRole:${groupRole}` };
+    }
+  }
+
+  return null;
+}
 
 export type BuildTelegramMessageContextParams = {
   primaryCtx: TelegramContext;
@@ -184,6 +237,65 @@ export const buildTelegramMessageContext = async ({
       ? resolveThreadSessionKeys({ baseSessionKey, threadId: String(dmThreadId) })
       : null;
   const sessionKey = threadKeys?.sessionKey ?? baseSessionKey;
+  const storePath = resolveStorePath(cfg.session?.store, {
+    agentId: route.agentId,
+  });
+  const modelPolicyTarget = resolveTelegramModelPolicyAgentId({
+    cfg,
+    accountId: account.accountId,
+    groupConfig,
+    topicConfig,
+  });
+  if (modelPolicyTarget) {
+    try {
+      const initialStore = loadSessionStore(storePath);
+      const current = initialStore[sessionKey];
+      if (current) {
+        const policyDefault = resolveDefaultModelForAgent({
+          cfg,
+          agentId: modelPolicyTarget.agentId,
+        });
+        const currentProvider = current.providerOverride?.trim();
+        const currentModel = current.modelOverride?.trim();
+        if (currentProvider !== policyDefault.provider || currentModel !== policyDefault.model) {
+          await updateSessionStore(storePath, (store) => {
+            const entry = store[sessionKey];
+            if (!entry) {
+              return;
+            }
+            const entryProvider = entry.providerOverride?.trim();
+            const entryModel = entry.modelOverride?.trim();
+            if (entryProvider === policyDefault.provider && entryModel === policyDefault.model) {
+              return;
+            }
+            const { updated } = applyModelOverrideToSessionEntry({
+              entry,
+              selection: {
+                provider: policyDefault.provider,
+                model: policyDefault.model,
+              },
+            });
+            if (!updated) {
+              return;
+            }
+            store[sessionKey] = entry;
+            logger.info(
+              {
+                sessionKey,
+                modelPolicyAgentId: modelPolicyTarget.agentId,
+                source: modelPolicyTarget.source,
+                previous: `${entryProvider ?? "none"}/${entryModel ?? "none"}`,
+                next: `${policyDefault.provider}/${policyDefault.model}`,
+              },
+              "telegram model policy override applied",
+            );
+          });
+        }
+      }
+    } catch (err) {
+      logVerbose(`telegram model policy enforcement failed for ${sessionKey}: ${String(err)}`);
+    }
+  }
   const mentionRegexes = buildMentionRegexes(cfg, route.agentId);
   const effectiveDmAllow = normalizeAllowFromWithStore({ allowFrom, storeAllowFrom });
   const groupAllowOverride = firstDefined(topicConfig?.allowFrom, groupConfig?.allowFrom);
@@ -520,9 +632,6 @@ export const buildTelegramMessageContext = async ({
   const conversationLabel = isGroup
     ? (groupLabel ?? `group:${chatId}`)
     : buildSenderLabel(msg, senderId || chatId);
-  const storePath = resolveStorePath(cfg.session?.store, {
-    agentId: route.agentId,
-  });
   const envelopeOptions = resolveEnvelopeFormatOptions(cfg);
   const previousTimestamp = readSessionUpdatedAt({
     storePath,

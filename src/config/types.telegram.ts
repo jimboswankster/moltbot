@@ -55,6 +55,11 @@ export type TelegramAccountConfig = {
   /** Allow channel-initiated config writes (default: true). */
   configWrites?: boolean;
   /**
+   * Optional role -> agent mapping used by Telegram topic/group model policy.
+   * Example: { coo: "main" } to force COO-labeled lanes onto main-agent model defaults.
+   */
+  modelPolicyRoles?: Record<string, string>;
+  /**
    * Controls how Telegram direct chats (DMs) are handled:
    * - "pairing" (default): unknown senders get a pairing code; owner must approve
    * - "allowlist": only allow senders in allowFrom (or paired allow store)
@@ -152,6 +157,10 @@ export type TelegramTopicConfig = {
   allowFrom?: Array<string | number>;
   /** Optional system prompt snippet for this topic. */
   systemPrompt?: string;
+  /** Optional policy role used to resolve model inheritance (via channels.telegram.modelPolicyRoles). */
+  modelPolicyRole?: string;
+  /** Optional direct model-policy agent id override for this topic. */
+  modelPolicyAgentId?: string;
 };
 
 export type TelegramGroupConfig = {
@@ -171,6 +180,10 @@ export type TelegramGroupConfig = {
   allowFrom?: Array<string | number>;
   /** Optional system prompt snippet for this group. */
   systemPrompt?: string;
+  /** Optional policy role used to resolve model inheritance (via channels.telegram.modelPolicyRoles). */
+  modelPolicyRole?: string;
+  /** Optional direct model-policy agent id override for this group. */
+  modelPolicyAgentId?: string;
 };
 
 export type TelegramConfig = {

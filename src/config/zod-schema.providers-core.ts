@@ -42,6 +42,8 @@ export const TelegramTopicSchema = z
     enabled: z.boolean().optional(),
     allowFrom: z.array(z.union([z.string(), z.number()])).optional(),
     systemPrompt: z.string().optional(),
+    modelPolicyRole: z.string().optional(),
+    modelPolicyAgentId: z.string().optional(),
   })
   .strict();
 
@@ -55,6 +57,8 @@ export const TelegramGroupSchema = z
     enabled: z.boolean().optional(),
     allowFrom: z.array(z.union([z.string(), z.number()])).optional(),
     systemPrompt: z.string().optional(),
+    modelPolicyRole: z.string().optional(),
+    modelPolicyAgentId: z.string().optional(),
     topics: z.record(z.string(), TelegramTopicSchema.optional()).optional(),
   })
   .strict();
@@ -93,6 +97,7 @@ export const TelegramAccountSchemaBase = z
     capabilities: TelegramCapabilitiesSchema.optional(),
     markdown: MarkdownConfigSchema,
     enabled: z.boolean().optional(),
+    modelPolicyRoles: z.record(z.string(), z.string()).optional(),
     commands: ProviderCommandsSchema,
     customCommands: z.array(TelegramCustomCommandSchema).optional(),
     configWrites: z.boolean().optional(),
