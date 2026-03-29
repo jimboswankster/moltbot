@@ -5,6 +5,7 @@ import {
   modelsAliasesListCommand,
   modelsAliasesRemoveCommand,
   modelsAuthAddCommand,
+  modelsAuthCooldownClearCommand,
   modelsAuthLoginCommand,
   modelsAuthOrderClearCommand,
   modelsAuthOrderGetCommand,
@@ -355,6 +356,35 @@ export function registerModelsCli(program: Command) {
             provider: opts.provider as string | undefined,
             profileId: opts.profileId as string | undefined,
             expiresIn: opts.expiresIn as string | undefined,
+          },
+          defaultRuntime,
+        );
+      });
+    });
+
+  const cooldown = auth
+    .command("cooldown")
+    .description("Manage auth profile cooldown/disabled restrictions");
+
+  cooldown
+    .command("clear")
+    .description("Clear cooldown/disabled restrictions after billing/quota recovery")
+    .option("--provider <name>", "Provider id (e.g. openrouter)")
+    .option("--profile-id <id>", "Auth profile id (e.g. openrouter:default)")
+    .option("--all", "Clear restrictions for all profiles in the selected agent", false)
+    .option("--agent <id>", "Agent id (default: configured default agent)")
+    .option("--json", "Output JSON", false)
+    .action(async (opts, command) => {
+      const agent =
+        resolveOptionFromCommand<string>(command, "agent") ?? (opts.agent as string | undefined);
+      await runModelsCommand(async () => {
+        await modelsAuthCooldownClearCommand(
+          {
+            provider: opts.provider as string | undefined,
+            profileId: opts.profileId as string | undefined,
+            all: Boolean(opts.all),
+            agent,
+            json: Boolean(opts.json),
           },
           defaultRuntime,
         );

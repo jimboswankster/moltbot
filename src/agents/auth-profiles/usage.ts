@@ -345,3 +345,52 @@ export async function clearAuthProfileCooldown(params: {
   };
   saveAuthProfileStore(store, agentDir);
 }
+
+/**
+ * Clear all temporary profile-unavailability gates (cooldown + disabled/billing)
+ * and reset the associated backoff counters so newly-funded providers can
+ * re-enter routing immediately.
+ */
+export async function clearAuthProfileUnavailability(params: {
+  store: AuthProfileStore;
+  profileId: string;
+  agentDir?: string;
+}): Promise<void> {
+  const { store, profileId, agentDir } = params;
+  const updated = await updateAuthProfileStoreWithLock({
+    agentDir,
+    updater: (freshStore) => {
+      if (!freshStore.usageStats?.[profileId]) {
+        return false;
+      }
+      freshStore.usageStats[profileId] = {
+        ...freshStore.usageStats[profileId],
+        errorCount: 0,
+        failureCounts: undefined,
+        lastFailureAt: undefined,
+        cooldownUntil: undefined,
+        disabledUntil: undefined,
+        disabledReason: undefined,
+      };
+      return true;
+    },
+  });
+  if (updated) {
+    store.usageStats = updated.usageStats;
+    return;
+  }
+  if (!store.usageStats?.[profileId]) {
+    return;
+  }
+
+  store.usageStats[profileId] = {
+    ...store.usageStats[profileId],
+    errorCount: 0,
+    failureCounts: undefined,
+    lastFailureAt: undefined,
+    cooldownUntil: undefined,
+    disabledUntil: undefined,
+    disabledReason: undefined,
+  };
+  saveAuthProfileStore(store, agentDir);
+}

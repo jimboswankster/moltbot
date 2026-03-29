@@ -38,6 +38,7 @@ export type {
 } from "./auth-profiles/types.js";
 export {
   calculateAuthProfileCooldownMs,
+  clearAuthProfileUnavailability,
   clearAuthProfileCooldown,
   isProfileInCooldown,
   markAuthProfileCooldown,

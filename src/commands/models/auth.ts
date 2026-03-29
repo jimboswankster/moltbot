@@ -11,7 +11,11 @@ import {
   resolveAgentWorkspaceDir,
   resolveDefaultAgentId,
 } from "../../agents/agent-scope.js";
-import { upsertAuthProfile } from "../../agents/auth-profiles.js";
+import {
+  clearAuthProfileUnavailability,
+  ensureAuthProfileStore,
+  upsertAuthProfile,
+} from "../../agents/auth-profiles.js";
 import { normalizeProviderId } from "../../agents/model-selection.js";
 import { resolveDefaultAgentWorkspaceDir } from "../../agents/workspace.js";
 import { formatCliCommand } from "../../cli/command-format.js";
@@ -231,6 +235,86 @@ export async function modelsAuthAddCommand(_opts: Record<string, never>, runtime
     : undefined;
 
   await modelsAuthPasteTokenCommand({ provider: providerId, profileId, expiresIn }, runtime);
+}
+
+type CooldownClearOptions = {
+  provider?: string;
+  profileId?: string;
+  all?: boolean;
+  agent?: string;
+  json?: boolean;
+};
+
+export async function modelsAuthCooldownClearCommand(
+  opts: CooldownClearOptions,
+  runtime: RuntimeEnv,
+) {
+  const snapshot = await readConfigFileSnapshot();
+  if (!snapshot.valid) {
+    const issues = snapshot.issues.map((issue) => `- ${issue.path}: ${issue.message}`).join("\n");
+    throw new Error(`Invalid config at ${snapshot.path}\n${issues}`);
+  }
+
+  const cfg = snapshot.config;
+  const agentId = opts.agent?.trim() || resolveDefaultAgentId(cfg);
+  const agentDir = resolveAgentDir(cfg, agentId);
+  const store = ensureAuthProfileStore(agentDir);
+  const usageStats = store.usageStats ?? {};
+  const allProfileIds = Object.keys(usageStats);
+
+  const normalizedProvider = opts.provider?.trim()
+    ? normalizeProviderId(String(opts.provider))
+    : undefined;
+  const profileId = opts.profileId?.trim();
+
+  if (!opts.all && !normalizedProvider && !profileId) {
+    throw new Error("Provide one of: --all, --provider <id>, or --profile-id <id>.");
+  }
+
+  const targetProfileIds = allProfileIds.filter((id) => {
+    if (profileId && id !== profileId) {
+      return false;
+    }
+    if (!normalizedProvider) {
+      return true;
+    }
+    const profile = store.profiles[id];
+    return normalizeProviderId(profile?.provider ?? "") === normalizedProvider;
+  });
+
+  const cleared: string[] = [];
+  for (const id of targetProfileIds) {
+    await clearAuthProfileUnavailability({
+      store,
+      profileId: id,
+      agentDir,
+    });
+    cleared.push(id);
+  }
+
+  const payload = {
+    agent: agentId,
+    clearedCount: cleared.length,
+    clearedProfiles: cleared,
+    filter: {
+      all: Boolean(opts.all),
+      provider: normalizedProvider ?? null,
+      profileId: profileId ?? null,
+    },
+  };
+  if (opts.json) {
+    runtime.log(JSON.stringify(payload, null, 2));
+    return;
+  }
+  if (cleared.length === 0) {
+    runtime.log("No matching auth profile restrictions found.");
+    return;
+  }
+
+  runtime.log(`Cleared auth restrictions for ${cleared.length} profile(s) on agent "${agentId}".`);
+  for (const id of cleared) {
+    runtime.log(`- ${id}`);
+  }
 }
 
 type LoginOptions = {
