@@ -7,6 +7,7 @@ export type DoctorOptions = {
   workspaceSuggestions?: boolean;
   yes?: boolean;
   nonInteractive?: boolean;
+  dryRun?: boolean;
   deep?: boolean;
   repair?: boolean;
   force?: boolean;
@@ -27,6 +28,7 @@ export function createDoctorPrompter(params: {
   runtime: RuntimeEnv;
   options: DoctorOptions;
 }): DoctorPrompter {
+  const dryRun = params.options.dryRun === true;
   const yes = params.options.yes === true;
   const requestedNonInteractive = params.options.nonInteractive === true;
   const shouldRepair = params.options.repair === true || yes;
@@ -36,6 +38,9 @@ export function createDoctorPrompter(params: {
 
   const canPrompt = isTty && !yes && !nonInteractive;
   const confirmDefault = async (p: Parameters<typeof confirm>[0]) => {
+    if (dryRun) {
+      return false;
+    }
     if (nonInteractive) {
       return false;
     }
@@ -57,12 +62,18 @@ export function createDoctorPrompter(params: {
   return {
     confirm: confirmDefault,
     confirmRepair: async (p) => {
+      if (dryRun) {
+        return false;
+      }
       if (nonInteractive) {
         return false;
       }
       return confirmDefault(p);
     },
     confirmAggressive: async (p) => {
+      if (dryRun) {
+        return false;
+      }
       if (nonInteractive) {
         return false;
       }
@@ -84,6 +95,9 @@ export function createDoctorPrompter(params: {
       );
     },
     confirmSkipInNonInteractive: async (p) => {
+      if (dryRun) {
+        return false;
+      }
       if (nonInteractive) {
         return false;
       }

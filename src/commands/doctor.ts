@@ -65,9 +65,13 @@ export async function doctorCommand(
   runtime: RuntimeEnv = defaultRuntime,
   options: DoctorOptions = {},
 ) {
+  const dryRun = options.dryRun === true;
   const prompter = createDoctorPrompter({ runtime, options });
   printWizardHeader(runtime);
   intro("OpenClaw doctor");
+  if (dryRun) {
+    note("Dry-run mode: checks and planned changes only. No mutations will be applied.", "Doctor");
+  }
 
   const root = await resolveOpenClawPackageRoot({
     moduleUrl: import.meta.url,
@@ -161,8 +165,9 @@ export async function doctorCommand(
   const legacyState = await detectLegacyStateMigrations({ cfg });
   if (legacyState.preview.length > 0) {
     note(legacyState.preview.join("\n"), "Legacy state detected");
-    const migrate =
-      options.nonInteractive === true
+    const migrate = dryRun
+      ? false
+      : options.nonInteractive === true
         ? true
         : await prompter.confirm({
             message: "Migrate legacy state (sessions/agent/WhatsApp auth) now?",
@@ -273,7 +278,7 @@ export async function doctorCommand(
     healthOk,
   });
 
-  const shouldWriteConfig = prompter.shouldRepair || configResult.shouldWriteConfig;
+  const shouldWriteConfig = !dryRun && (prompter.shouldRepair || configResult.shouldWriteConfig);
   if (shouldWriteConfig) {
     cfg = applyWizardMetadata(cfg, { command: "doctor", mode: resolveMode(cfg) });
     await writeConfigFile(cfg);

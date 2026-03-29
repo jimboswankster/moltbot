@@ -20,6 +20,7 @@ Docs: https://docs.openclaw.ai
 ### Fixes
 
 - CLI: prefer local Hydra for `gateway restart` command hints/execution when available, with explicit daemon-path fallback and opt-out (`OPENCLAW_PREFER_HYDRA_RESTART=0`) to keep backward compatibility.
+- Doctor: add `--dry-run` mode that reports planned repairs without mutating config/state/services, even when `--fix` is also provided.
 - Control UI: resolve assets from entry script path (dist/entry.js) so Control UI loads when running from fork or dist.
 - Docs: finish renaming the QMD memory docs to reference the OpenClaw state dir.
 - Onboarding: keep TUI flow exclusive (skip completion prompt + background Web UI seed).

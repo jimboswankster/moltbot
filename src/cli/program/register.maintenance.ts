@@ -21,6 +21,7 @@ export function registerMaintenanceCommands(program: Command) {
     .option("--yes", "Accept defaults without prompting", false)
     .option("--repair", "Apply recommended repairs without prompting", false)
     .option("--fix", "Apply recommended repairs (alias for --repair)", false)
+    .option("--dry-run", "Show planned repairs only; do not mutate config/state/services", false)
     .option("--force", "Apply aggressive repairs (overwrites custom service config)", false)
     .option("--non-interactive", "Run without prompts (safe migrations only)", false)
     .option("--generate-gateway-token", "Generate and configure a gateway token", false)
@@ -31,6 +32,7 @@ export function registerMaintenanceCommands(program: Command) {
           workspaceSuggestions: opts.workspaceSuggestions,
           yes: Boolean(opts.yes),
           repair: Boolean(opts.repair) || Boolean(opts.fix),
+          dryRun: Boolean(opts.dryRun),
           force: Boolean(opts.force),
           nonInteractive: Boolean(opts.nonInteractive),
           generateGatewayToken: Boolean(opts.generateGatewayToken),

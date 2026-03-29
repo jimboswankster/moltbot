@@ -207,24 +207,35 @@ export async function loadAndMaybeMigrateDoctorConfig(params: {
   options: DoctorOptions;
   confirm: (p: { message: string; initialValue: boolean }) => Promise<boolean>;
 }) {
+  const dryRun = params.options.dryRun === true;
   const autoYes = params.options.yes === true;
   const wantsRepair = params.options.repair === true;
   // --yes auto-applies without prompting. --fix shows changes and prompts for confirmation.
   const shouldRepair = autoYes || wantsRepair;
-  const trigger = autoYes ? "doctor --yes" : wantsRepair ? "doctor --fix" : "doctor (interactive)";
+  const trigger = dryRun
+    ? "doctor --dry-run"
+    : autoYes
+      ? "doctor --yes"
+      : wantsRepair
+        ? "doctor --fix"
+        : "doctor (interactive)";
   const version = VERSION;
 
-  const stateDirResult = await autoMigrateLegacyStateDir({ env: process.env });
-  if (stateDirResult.changes.length > 0) {
-    note(stateDirResult.changes.map((entry) => `- ${entry}`).join("\n"), "Doctor changes");
-  }
-  if (stateDirResult.warnings.length > 0) {
-    note(stateDirResult.warnings.map((entry) => `- ${entry}`).join("\n"), "Doctor warnings");
+  if (!dryRun) {
+    const stateDirResult = await autoMigrateLegacyStateDir({ env: process.env });
+    if (stateDirResult.changes.length > 0) {
+      note(stateDirResult.changes.map((entry) => `- ${entry}`).join("\n"), "Doctor changes");
+    }
+    if (stateDirResult.warnings.length > 0) {
+      note(stateDirResult.warnings.map((entry) => `- ${entry}`).join("\n"), "Doctor warnings");
+    }
   }
 
-  const legacyConfigChanges = await maybeMigrateLegacyConfig();
-  if (legacyConfigChanges.length > 0) {
-    note(legacyConfigChanges.map((entry) => `- ${entry}`).join("\n"), "Doctor changes");
+  if (!dryRun) {
+    const legacyConfigChanges = await maybeMigrateLegacyConfig();
+    if (legacyConfigChanges.length > 0) {
+      note(legacyConfigChanges.map((entry) => `- ${entry}`).join("\n"), "Doctor changes");
+    }
   }
 
   let snapshot = await readConfigFileSnapshot();
@@ -317,7 +328,9 @@ export async function loadAndMaybeMigrateDoctorConfig(params: {
       "Warning",
     );
 
-    if (autoYes) {
+    if (dryRun) {
+      // Dry-run is analyze-only: report planned removals without applying.
+    } else if (autoYes) {
       // --yes: auto-apply but still log
       cfg = unknown.config;
     } else if (wantsRepair) {
@@ -341,7 +354,7 @@ export async function loadAndMaybeMigrateDoctorConfig(params: {
     }
   }
 
-  if (!shouldRepair && pendingChanges) {
+  if (!dryRun && !shouldRepair && pendingChanges) {
     const shouldApply = await params.confirm({
       message: "Apply recommended config repairs now?",
       initialValue: true,
@@ -356,7 +369,7 @@ export async function loadAndMaybeMigrateDoctorConfig(params: {
 
   // === CHANGELOG: log what was actually applied ===
   const configWasModified = cfg !== baseCfg;
-  if (configWasModified) {
+  if (!dryRun && configWasModified) {
     // Log stripped keys with full old values for recovery
     if (unknown.removed.length > 0 && cfg === unknown.config) {
       appendDoctorChangelog(
