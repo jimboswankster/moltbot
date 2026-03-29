@@ -6,6 +6,7 @@ import { formatHealthChannelLines, type HealthSummary } from "../../commands/hea
 import { loadConfig } from "../../config/config.js";
 import { discoverGatewayBeacons } from "../../infra/bonjour-discovery.js";
 import { resolveWideAreaDiscoveryDomain } from "../../infra/widearea-dns.js";
+import { runCommandWithTimeout } from "../../process/exec.js";
 import { defaultRuntime } from "../../runtime.js";
 import { formatDocsLink } from "../../terminal/links.js";
 import { colorize, isRich, theme } from "../../terminal/theme.js";
@@ -19,6 +20,7 @@ import {
   runDaemonStop,
   runDaemonUninstall,
 } from "../daemon-cli.js";
+import { resolveHydraGatewayRestartInvocation } from "../gateway-restart-preference.js";
 import { withProgress } from "../progress.js";
 import { callGatewayCli, gatewayCallOpts } from "./call.js";
 import {
@@ -77,6 +79,36 @@ function runGatewayCommand(action: () => Promise<void>, label?: string) {
     defaultRuntime.error(label ? `${label}: ${message}` : message);
     defaultRuntime.exit(1);
   });
+}
+
+async function runGatewayRestartWithHydraPreference(opts: Record<string, unknown>): Promise<void> {
+  const hydraInvocation = resolveHydraGatewayRestartInvocation(process.env);
+  if (!hydraInvocation) {
+    await runDaemonRestart(opts);
+    return;
+  }
+
+  // Prefer Hydra in private workspace installs because it rebuilds/restarts
+  // the managed stack consistently with local operational policy. If this path
+  // fails, retain the legacy daemon restart as a compatibility fallback.
+  const result = await runCommandWithTimeout([hydraInvocation.command, ...hydraInvocation.args], {
+    timeoutMs: 20 * 60_000,
+    env: process.env,
+  });
+  if (result.stdout.trim()) {
+    defaultRuntime.log(result.stdout.trim());
+  }
+  if (result.stderr.trim()) {
+    defaultRuntime.error(result.stderr.trim());
+  }
+  if (result.code === 0) {
+    return;
+  }
+
+  defaultRuntime.error(
+    `Hydra restart failed (code ${String(result.code)}${result.signal ? `, signal ${result.signal}` : ""}); falling back to daemon restart.`,
+  );
+  await runDaemonRestart(opts);
 }
 
 function parseDaysOption(raw: unknown, fallback = 30): number {
@@ -194,7 +226,12 @@ export function registerGatewayCli(program: Command) {
     .description("Restart the Gateway service (launchd/systemd/schtasks)")
     .option("--json", "Output JSON", false)
     .action(async (opts) => {
-      await runDaemonRestart(opts);
+      // Keep JSON mode on legacy daemon path for machine compatibility.
+      if (Boolean(opts?.json)) {
+        await runDaemonRestart(opts);
+        return;
+      }
+      await runGatewayRestartWithHydraPreference(opts);
     });
 
   gatewayCallOpts(

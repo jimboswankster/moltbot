@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { formatCliCommand } from "./command-format.js";
@@ -141,5 +143,17 @@ describe("formatCliCommand", () => {
     expect(formatCliCommand("pnpm openclaw doctor", { OPENCLAW_PROFILE: "work" })).toBe(
       "pnpm openclaw --profile work doctor",
     );
+  });
+
+  it("rewrites gateway restart hints to hydra when local workspace hydra exists", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-format-hydra-"));
+    const hydraScript = path.join(stateDir, "workspace", "scripts", "hydra");
+    fs.mkdirSync(path.dirname(hydraScript), { recursive: true });
+    fs.writeFileSync(hydraScript, "#!/usr/bin/env node\n");
+    expect(
+      formatCliCommand("openclaw gateway restart", {
+        OPENCLAW_STATE_DIR: stateDir,
+      }),
+    ).toBe("hydra gateway restart");
   });
 });
