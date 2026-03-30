@@ -149,6 +149,13 @@ export async function runEmbeddedPiAgent(
       });
       const provider = (route.provider ?? requestedProvider).trim() || requestedProvider;
       const modelId = (route.model ?? requestedModelId).trim() || requestedModelId;
+      const intendedModel = `${requestedProvider}/${requestedModelId}`;
+      const selectedModel = `${provider}/${modelId}`;
+      const policyVersion =
+        routingPolicy.policy &&
+        typeof (routingPolicy.policy as { version?: unknown }).version === "number"
+          ? Number((routingPolicy.policy as { version?: unknown }).version)
+          : null;
       recordRuntimeTelemetryEvent({
         event: "agent.model_route_selected",
         subsystem: "agent-embedded",
@@ -161,6 +168,13 @@ export async function runEmbeddedPiAgent(
           requestedModel: requestedModelId,
           selectedProvider: provider,
           selectedModel: modelId,
+          intended_model: intendedModel,
+          selected_model: selectedModel,
+          effective_model: selectedModel,
+          policy_authority: route.policyPath ?? "none",
+          policy_version: policyVersion,
+          override_chain: route.applied ? ["requested", "deterministic_route"] : ["requested"],
+          mismatch_reason: route.applied ? "deterministic_route_applied" : null,
           applied: route.applied,
           ruleId: route.ruleId,
           source: route.source,

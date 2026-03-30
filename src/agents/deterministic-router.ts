@@ -152,7 +152,31 @@ export function extractRoutingHints(params: {
   prompt: string;
   extraSystemPrompt?: string;
   lane?: string;
+  ignoreTextHints?: boolean;
+  trustedTaskClass?: string;
+  trustedLane?: string;
 }): RoutingHints {
+  const trustedTaskClass = normalize(params.trustedTaskClass);
+  const trustedLane = normalize(params.trustedLane);
+  if (trustedTaskClass || trustedLane) {
+    return {
+      taskClass: trustedTaskClass || undefined,
+      lane: trustedLane || undefined,
+      source: "envelope",
+    };
+  }
+
+  if (params.ignoreTextHints === true) {
+    const lane = params.lane ? normalize(params.lane) : undefined;
+    if (lane) {
+      return {
+        lane,
+        source: "default",
+      };
+    }
+    return { source: "default" };
+  }
+
   const envelopePrompt = parseRoutingEnvelope(params.prompt);
   const envelopeSystem = parseRoutingEnvelope(params.extraSystemPrompt ?? "");
   const taskClass = envelopePrompt.taskClass || envelopeSystem.taskClass;

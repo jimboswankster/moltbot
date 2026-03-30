@@ -44,6 +44,11 @@ export async function resolveDeterministicFallbackConstraints(params: {
   telemetryContext?: RouteTelemetryContext;
 }): Promise<DeterministicFallbackConstraints> {
   const routingPolicy = await loadRoutingPolicy();
+  const policyVersion =
+    routingPolicy.policy &&
+    typeof (routingPolicy.policy as { version?: unknown }).version === "number"
+      ? Number((routingPolicy.policy as { version?: unknown }).version)
+      : null;
   const routingHints = extractRoutingHints({
     prompt: params.prompt,
     extraSystemPrompt: params.extraSystemPrompt,
@@ -58,6 +63,9 @@ export async function resolveDeterministicFallbackConstraints(params: {
   });
   const provider = (route.provider ?? params.provider).trim() || params.provider;
   const model = (route.model ?? params.model).trim() || params.model;
+  const intendedModel = `${params.provider}/${params.model}`;
+  const selectedModel = `${provider}/${model}`;
+  const overrideChain = route.applied ? ["requested", "deterministic_route"] : ["requested"];
   recordRuntimeTelemetryEvent({
     event: "agent.model_route_constraints",
     subsystem: "agent-routing",
@@ -72,6 +80,13 @@ export async function resolveDeterministicFallbackConstraints(params: {
       requestedModel: params.model,
       selectedProvider: provider,
       selectedModel: model,
+      intended_model: intendedModel,
+      selected_model: selectedModel,
+      effective_model: selectedModel,
+      policy_authority: route.policyPath ?? "none",
+      policy_version: policyVersion,
+      override_chain: overrideChain,
+      mismatch_reason: route.applied ? "deterministic_route_applied" : null,
       applied: route.applied,
       ruleId: route.ruleId,
       reason: route.reason,

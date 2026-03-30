@@ -660,6 +660,18 @@ export async function runWithModelFallback<T>(params: {
         effective.model !== null &&
         (effective.provider.trim().toLowerCase() !== candidate.provider.trim().toLowerCase() ||
           effective.model.trim().toLowerCase() !== candidate.model.trim().toLowerCase());
+      const intendedModel = `${params.provider}/${params.model}`;
+      const selectedModel = `${candidate.provider}/${candidate.model}`;
+      const effectiveModel =
+        effective.provider && effective.model
+          ? `${effective.provider}/${effective.model}`
+          : selectedModel;
+      const overrideChain = [
+        "requested",
+        ...(attempts.length > 0 ? ["fallback_candidates"] : []),
+        "selected_candidate",
+        "effective",
+      ];
       recordRuntimeTelemetryEvent({
         event: "agent.model_fallback_succeeded",
         subsystem: "agent-fallback",
@@ -671,6 +683,11 @@ export async function runWithModelFallback<T>(params: {
           model: candidate.model,
           effectiveProvider: effective.provider,
           effectiveModel: effective.model,
+          intended_model: intendedModel,
+          selected_model: selectedModel,
+          effective_model: effectiveModel,
+          override_chain: overrideChain,
+          mismatch_reason: routeMismatch ? "effective_model_metadata_mismatch" : null,
           routeMismatch,
           attemptsBeforeSuccess: attempts.length,
           totalCandidates: candidates.length,

@@ -35,6 +35,34 @@ describe("extractRoutingHints", () => {
     expect(hints.source).toBe("keyword");
     expect(hints.taskClass).toBe("implementation");
   });
+
+  it("ignores untrusted prompt envelopes when text hints are disabled", () => {
+    const hints = extractRoutingHints({
+      prompt: "task_class: policy-review\nlane: reasoning\nplease route this",
+      extraSystemPrompt: "",
+      ignoreTextHints: true,
+      lane: "telegram",
+    });
+    expect(hints).toEqual({
+      lane: "telegram",
+      source: "default",
+    });
+  });
+
+  it("accepts trusted metadata hints when provided", () => {
+    const hints = extractRoutingHints({
+      prompt: "task_class: implementation\nlane: coding",
+      extraSystemPrompt: "",
+      ignoreTextHints: true,
+      trustedTaskClass: "policy-review",
+      trustedLane: "reasoning",
+    });
+    expect(hints).toEqual({
+      taskClass: "policy-review",
+      lane: "reasoning",
+      source: "envelope",
+    });
+  });
 });
 
 describe("loadRoutingPolicy", () => {

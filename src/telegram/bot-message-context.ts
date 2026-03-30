@@ -1,4 +1,5 @@
 import type { Bot } from "grammy";
+import crypto from "node:crypto";
 import type { OpenClawConfig } from "../config/config.js";
 import type { DmPolicy, TelegramGroupConfig, TelegramTopicConfig } from "../config/types.js";
 import type { TelegramContext } from "./bot/types.js";
@@ -26,12 +27,7 @@ import { logInboundDrop } from "../channels/logging.js";
 import { resolveMentionGatingWithBypass } from "../channels/mention-gating.js";
 import { recordInboundSession } from "../channels/session.js";
 import { formatCliCommand } from "../cli/command-format.js";
-import {
-  loadSessionStore,
-  readSessionUpdatedAt,
-  resolveStorePath,
-  updateSessionStore,
-} from "../config/sessions.js";
+import { readSessionUpdatedAt, resolveStorePath, updateSessionStore } from "../config/sessions.js";
 import { logVerbose, shouldLogVerbose } from "../globals.js";
 import { recordChannelActivity } from "../infra/channel-activity.js";
 import { upsertChannelPairingRequest } from "../pairing/pairing-store.js";
@@ -248,50 +244,40 @@ export const buildTelegramMessageContext = async ({
   });
   if (modelPolicyTarget) {
     try {
-      const initialStore = loadSessionStore(storePath);
-      const current = initialStore[sessionKey];
-      if (current) {
-        const policyDefault = resolveDefaultModelForAgent({
-          cfg,
-          agentId: modelPolicyTarget.agentId,
-        });
-        const currentProvider = current.providerOverride?.trim();
-        const currentModel = current.modelOverride?.trim();
-        if (currentProvider !== policyDefault.provider || currentModel !== policyDefault.model) {
-          await updateSessionStore(storePath, (store) => {
-            const entry = store[sessionKey];
-            if (!entry) {
-              return;
-            }
-            const entryProvider = entry.providerOverride?.trim();
-            const entryModel = entry.modelOverride?.trim();
-            if (entryProvider === policyDefault.provider && entryModel === policyDefault.model) {
-              return;
-            }
-            const { updated } = applyModelOverrideToSessionEntry({
-              entry,
-              selection: {
-                provider: policyDefault.provider,
-                model: policyDefault.model,
-              },
-            });
-            if (!updated) {
-              return;
-            }
-            store[sessionKey] = entry;
-            logger.info(
-              {
-                sessionKey,
-                modelPolicyAgentId: modelPolicyTarget.agentId,
-                source: modelPolicyTarget.source,
-                previous: `${entryProvider ?? "none"}/${entryModel ?? "none"}`,
-                next: `${policyDefault.provider}/${policyDefault.model}`,
-              },
-              "telegram model policy override applied",
-            );
-          });
+      const policyDefault = resolveDefaultModelForAgent({
+        cfg,
+        agentId: modelPolicyTarget.agentId,
+      });
+      await updateSessionStore(storePath, (store) => {
+        const existing = store[sessionKey];
+        const entry = existing ?? { sessionId: crypto.randomUUID(), updatedAt: Date.now() };
+        const previousProvider = entry.providerOverride?.trim();
+        const previousModel = entry.modelOverride?.trim();
+        if (previousProvider === policyDefault.provider && previousModel === policyDefault.model) {
+          return;
         }
-      }
+        const { updated } = applyModelOverrideToSessionEntry({
+          entry,
+          selection: {
+            provider: policyDefault.provider,
+            model: policyDefault.model,
+          },
+        });
+        if (!updated) {
+          return;
+        }
+        store[sessionKey] = entry;
+        logger.info(
+          {
+            sessionKey,
+            modelPolicyAgentId: modelPolicyTarget.agentId,
+            source: modelPolicyTarget.source,
+            previous: `${previousProvider ?? "none"}/${previousModel ?? "none"}`,
+            next: `${policyDefault.provider}/${policyDefault.model}`,
+          },
+          "telegram model policy override applied",
+        );
+      });
     } catch (err) {
       logVerbose(`telegram model policy enforcement failed for ${sessionKey}: ${String(err)}`);
     }

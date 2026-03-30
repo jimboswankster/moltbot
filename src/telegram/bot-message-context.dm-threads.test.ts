@@ -413,7 +413,7 @@ describe("buildTelegramMessageContext telegram model policy role enforcement", (
     }
   });
 
-  it("does not create/update session entry when target session does not exist (mutation guard)", async () => {
+  it("creates session entry and applies policy override on first turn when target session is missing", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-telegram-model-policy-"));
     try {
       const storePath = path.join(root, "sessions.json");
@@ -423,7 +423,9 @@ describe("buildTelegramMessageContext telegram model policy role enforcement", (
       expect(ctx).not.toBeNull();
 
       const store = loadSessionStore(storePath, { skipCache: true });
-      expect(store[sessionKey]).toBeUndefined();
+      expect(store[sessionKey]).toBeDefined();
+      expect(store[sessionKey]?.providerOverride).toBe("anthropic");
+      expect(store[sessionKey]?.modelOverride).toBe("claude-opus-4-5");
     } finally {
       await cleanupTempDir(root);
     }
