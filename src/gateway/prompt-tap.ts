@@ -92,6 +92,12 @@ export async function runPromptSnapshot(
 
   const modelRef = resolveDefaultModelForAgent({ cfg, agentId });
   const modelLabel = `${modelRef.provider}/${modelRef.model}`;
+  console.log(
+    `[DEBUG modelLabel] resolveDefaultModelForAgent => modelRef:`,
+    JSON.stringify(modelRef),
+    "| modelLabel:",
+    modelLabel,
+  );
   const sessionId = `prompt-tap-${Date.now()}`;
   const userMessage = opts.mode === "query" ? String(opts.message).trim() : "";
 
