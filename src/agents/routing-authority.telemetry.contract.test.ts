@@ -8,6 +8,7 @@ import { runWithModelFallback } from "./model-fallback.js";
 const originalTelemetryFile = process.env.OPENCLAW_RUNTIME_TELEMETRY_FILE;
 const originalLegacyMirror = process.env.OPENCLAW_RUNTIME_TELEMETRY_WRITE_LEGACY;
 const originalRoutingPolicyPath = process.env.OPENCLAW_ROUTING_POLICY_PATH;
+const originalRoutingPolicyOverride = process.env.OPENCLAW_ROUTING_POLICY_ALLOW_ENV_OVERRIDE;
 
 afterEach(() => {
   if (originalTelemetryFile === undefined) delete process.env.OPENCLAW_RUNTIME_TELEMETRY_FILE;
@@ -17,6 +18,9 @@ afterEach(() => {
   else process.env.OPENCLAW_RUNTIME_TELEMETRY_WRITE_LEGACY = originalLegacyMirror;
   if (originalRoutingPolicyPath === undefined) delete process.env.OPENCLAW_ROUTING_POLICY_PATH;
   else process.env.OPENCLAW_ROUTING_POLICY_PATH = originalRoutingPolicyPath;
+  if (originalRoutingPolicyOverride === undefined)
+    delete process.env.OPENCLAW_ROUTING_POLICY_ALLOW_ENV_OVERRIDE;
+  else process.env.OPENCLAW_ROUTING_POLICY_ALLOW_ENV_OVERRIDE = originalRoutingPolicyOverride;
 });
 
 function readTelemetryRows(
@@ -48,6 +52,7 @@ describe("routing authority telemetry contract", () => {
     process.env.OPENCLAW_RUNTIME_TELEMETRY_FILE = telemetryPath;
     process.env.OPENCLAW_RUNTIME_TELEMETRY_WRITE_LEGACY = "0";
     process.env.OPENCLAW_ROUTING_POLICY_PATH = policyPath;
+    process.env.OPENCLAW_ROUTING_POLICY_ALLOW_ENV_OVERRIDE = "1";
 
     await resolveDeterministicFallbackConstraints({
       prompt: "hello",
@@ -76,6 +81,10 @@ describe("routing authority telemetry contract", () => {
     await runWithModelFallback({
       provider: "openrouter",
       model: "z-ai/glm-5",
+      telemetryContext: {
+        policyAuthority: "routing-policy.v1.json#test",
+        policyVersion: 1,
+      },
       run: async () => ({
         payloads: [],
         meta: {
@@ -93,6 +102,8 @@ describe("routing authority telemetry contract", () => {
     expect(row?.details?.intended_model).toBe("openrouter/z-ai/glm-5");
     expect(row?.details?.selected_model).toBe("openrouter/z-ai/glm-5");
     expect(row?.details?.effective_model).toBe("openrouter/z-ai/glm-5");
+    expect(row?.details?.policy_authority).toBe("routing-policy.v1.json#test");
+    expect(row?.details?.policy_version).toBe(1);
     expect(Array.isArray(row?.details?.override_chain)).toBe(true);
     expect(row?.details?.override_chain).toEqual(["requested", "selected_candidate", "effective"]);
     expect(row?.details?.mismatch_reason).toBeNull();
@@ -107,6 +118,10 @@ describe("routing authority telemetry contract", () => {
     await runWithModelFallback({
       provider: "openrouter",
       model: "z-ai/glm-5",
+      telemetryContext: {
+        policyAuthority: "routing-policy.v1.json#test",
+        policyVersion: 1,
+      },
       run: async () => ({
         payloads: [],
         meta: {
@@ -121,6 +136,8 @@ describe("routing authority telemetry contract", () => {
     const rows = readTelemetryRows(telemetryPath);
     const row = rows.find((entry) => entry.event === "agent.model_fallback_succeeded");
     expect(row).toBeDefined();
+    expect(row?.details?.policy_authority).toBe("routing-policy.v1.json#test");
+    expect(row?.details?.policy_version).toBe(1);
     expect(row?.details?.mismatch_reason).toBe("effective_model_metadata_mismatch");
   });
 });

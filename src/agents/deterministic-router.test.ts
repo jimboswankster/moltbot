@@ -9,9 +9,11 @@ import {
 } from "./deterministic-router.js";
 
 const ROUTING_POLICY_ENV = "OPENCLAW_ROUTING_POLICY_PATH";
+const ROUTING_POLICY_ENV_OVERRIDE = "OPENCLAW_ROUTING_POLICY_ALLOW_ENV_OVERRIDE";
 
 afterEach(async () => {
   delete process.env[ROUTING_POLICY_ENV];
+  delete process.env[ROUTING_POLICY_ENV_OVERRIDE];
 });
 
 describe("extractRoutingHints", () => {
@@ -66,8 +68,27 @@ describe("extractRoutingHints", () => {
 });
 
 describe("loadRoutingPolicy", () => {
-  it("loads enabled policy from env path", async () => {
+  it("loads enabled policy from env path only when override break-glass is enabled", async () => {
     const tmpPath = path.join(os.tmpdir(), `routing-policy-test-${Date.now()}.json`);
+    await fs.writeFile(
+      tmpPath,
+      JSON.stringify({
+        enabled: true,
+        defaults: { workerModel: "minimax/MiniMax-M2.5" },
+        laneRules: [],
+      }),
+      "utf8",
+    );
+    process.env[ROUTING_POLICY_ENV] = tmpPath;
+    process.env[ROUTING_POLICY_ENV_OVERRIDE] = "1";
+
+    const loaded = await loadRoutingPolicy();
+    expect(loaded.policyPath).toBe(tmpPath);
+    expect(loaded.policy?.enabled).toBe(true);
+  });
+
+  it("ignores env path override by default and keeps canonical policy path", async () => {
+    const tmpPath = path.join(os.tmpdir(), `routing-policy-test-${Date.now()}-ignored.json`);
     await fs.writeFile(
       tmpPath,
       JSON.stringify({
@@ -80,8 +101,7 @@ describe("loadRoutingPolicy", () => {
     process.env[ROUTING_POLICY_ENV] = tmpPath;
 
     const loaded = await loadRoutingPolicy();
-    expect(loaded.policyPath).toBe(tmpPath);
-    expect(loaded.policy?.enabled).toBe(true);
+    expect(loaded.policyPath).not.toBe(tmpPath);
   });
 
   it("returns null policy when disabled", async () => {

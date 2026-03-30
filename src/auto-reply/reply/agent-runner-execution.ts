@@ -170,6 +170,8 @@ export async function runAgentTurnWithFallback(params: {
           runId,
           sessionId: params.followupRun.run.sessionId,
           sessionKey: params.sessionKey,
+          policyAuthority: deterministic.route.policyPath ?? "none",
+          policyVersion: deterministic.policyVersion,
         },
         providerAllowlist: deterministic.providerAllowlist,
         fallbacksOverride: resolveAgentModelFallbacksOverride(

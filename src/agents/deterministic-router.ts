@@ -55,8 +55,10 @@ export type RoutingDecision = {
 };
 
 const ROUTING_POLICY_ENV = "OPENCLAW_ROUTING_POLICY_PATH";
+const ROUTING_POLICY_ENV_OVERRIDE = "OPENCLAW_ROUTING_POLICY_ALLOW_ENV_OVERRIDE";
 const ROUTING_POLICY_ERROR_COOLDOWN_MS = 10 * 60 * 1000;
 let lastRoutingPolicyLoadErrorAt: number | null = null;
+let lastRoutingPolicyOverrideIgnoredAt: number | null = null;
 
 function defaultRoutingPolicyPath(): string {
   return path.join(
@@ -207,7 +209,32 @@ export async function loadRoutingPolicy(): Promise<{
   policy: RoutingPolicy | null;
   policyPath: string | null;
 }> {
-  const policyPath = process.env[ROUTING_POLICY_ENV]?.trim() || defaultRoutingPolicyPath();
+  const envPolicyPath = process.env[ROUTING_POLICY_ENV]?.trim() || "";
+  const allowEnvOverride = String(process.env[ROUTING_POLICY_ENV_OVERRIDE] ?? "").trim() === "1";
+  const policyPath = allowEnvOverride && envPolicyPath ? envPolicyPath : defaultRoutingPolicyPath();
+  if (envPolicyPath && !allowEnvOverride) {
+    const now = Date.now();
+    const shouldWarn =
+      !lastRoutingPolicyOverrideIgnoredAt ||
+      now - lastRoutingPolicyOverrideIgnoredAt >= ROUTING_POLICY_ERROR_COOLDOWN_MS;
+    if (shouldWarn) {
+      lastRoutingPolicyOverrideIgnoredAt = now;
+      logWarn(
+        `deterministic routing ignored env override (${ROUTING_POLICY_ENV}); set ${ROUTING_POLICY_ENV_OVERRIDE}=1 for break-glass`,
+      );
+      recordRuntimeTelemetryEvent({
+        event: "agent.model_route_policy_env_override_ignored",
+        subsystem: "agent-routing",
+        severity: "warning",
+        status: "degraded",
+        details: {
+          envPath: envPolicyPath,
+          activePolicyPath: policyPath,
+          breakGlassEnv: ROUTING_POLICY_ENV_OVERRIDE,
+        },
+      });
+    }
+  }
   try {
     const raw = await fs.readFile(policyPath, "utf8");
     const parsed = JSON.parse(raw) as RoutingPolicy;

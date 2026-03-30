@@ -149,6 +149,8 @@ export function createFollowupRunner(params: {
             runId,
             sessionId: queued.run.sessionId,
             sessionKey: queued.run.sessionKey,
+            policyAuthority: deterministic.route.policyPath ?? "none",
+            policyVersion: deterministic.policyVersion,
           },
           providerAllowlist: deterministic.providerAllowlist,
           fallbacksOverride: resolveAgentModelFallbacksOverride(

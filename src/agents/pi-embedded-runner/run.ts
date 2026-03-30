@@ -49,6 +49,7 @@ import {
   pickFallbackThinkingLevel,
   type FailoverReason,
 } from "../pi-embedded-helpers.js";
+import { buildRoutingAuthorityChainDetails } from "../routing-authority-chain.js";
 import { normalizeUsage, type UsageLike } from "../usage.js";
 import { compactEmbeddedPiSessionDirect } from "./compact.js";
 import { resolveGlobalLane, resolveSessionLane } from "./lanes.js";
@@ -169,6 +170,15 @@ export async function runEmbeddedPiAgent(
         typeof (routingPolicy.policy as { version?: unknown }).version === "number"
           ? Number((routingPolicy.policy as { version?: unknown }).version)
           : null;
+      const authorityChain = buildRoutingAuthorityChainDetails({
+        intendedModel,
+        selectedModel,
+        effectiveModel: selectedModel,
+        policyAuthority: route.policyPath ?? "none",
+        policyVersion,
+        overrideChain: route.applied ? ["requested", "deterministic_route"] : ["requested"],
+        mismatchReason: route.applied ? "deterministic_route_applied" : null,
+      });
       recordRuntimeTelemetryEvent({
         event: "agent.model_route_selected",
         subsystem: "agent-embedded",
@@ -181,13 +191,7 @@ export async function runEmbeddedPiAgent(
           requestedModel: requestedModelId,
           selectedProvider: provider,
           selectedModel: modelId,
-          intended_model: intendedModel,
-          selected_model: selectedModel,
-          effective_model: selectedModel,
-          policy_authority: route.policyPath ?? "none",
-          policy_version: policyVersion,
-          override_chain: route.applied ? ["requested", "deterministic_route"] : ["requested"],
-          mismatch_reason: route.applied ? "deterministic_route_applied" : null,
+          ...authorityChain,
           applied: route.applied,
           ruleId: route.ruleId,
           source: route.source,

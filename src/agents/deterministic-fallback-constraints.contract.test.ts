@@ -5,13 +5,20 @@ import { afterEach, describe, expect, it } from "vitest";
 import { resolveDeterministicFallbackConstraints } from "./deterministic-fallback-constraints.js";
 
 const ROUTING_POLICY_ENV = "OPENCLAW_ROUTING_POLICY_PATH";
+const ROUTING_POLICY_ENV_OVERRIDE = "OPENCLAW_ROUTING_POLICY_ALLOW_ENV_OVERRIDE";
 const originalRoutingPolicyPath = process.env[ROUTING_POLICY_ENV];
+const originalRoutingPolicyOverride = process.env[ROUTING_POLICY_ENV_OVERRIDE];
 
 afterEach(() => {
   if (originalRoutingPolicyPath === undefined) {
     delete process.env[ROUTING_POLICY_ENV];
   } else {
     process.env[ROUTING_POLICY_ENV] = originalRoutingPolicyPath;
+  }
+  if (originalRoutingPolicyOverride === undefined) {
+    delete process.env[ROUTING_POLICY_ENV_OVERRIDE];
+  } else {
+    process.env[ROUTING_POLICY_ENV_OVERRIDE] = originalRoutingPolicyOverride;
   }
 });
 
@@ -28,6 +35,7 @@ describe("resolveDeterministicFallbackConstraints contract", () => {
       "utf8",
     );
     process.env[ROUTING_POLICY_ENV] = policyPath;
+    process.env[ROUTING_POLICY_ENV_OVERRIDE] = "1";
 
     const routed = await resolveDeterministicFallbackConstraints({
       prompt: "hello",
@@ -64,6 +72,7 @@ describe("resolveDeterministicFallbackConstraints contract", () => {
       "utf8",
     );
     process.env[ROUTING_POLICY_ENV] = policyPath;
+    process.env[ROUTING_POLICY_ENV_OVERRIDE] = "1";
 
     const routed = await resolveDeterministicFallbackConstraints({
       prompt: "task_class: policy-review\nlane: reasoning",
@@ -101,6 +110,7 @@ describe("resolveDeterministicFallbackConstraints contract", () => {
       "utf8",
     );
     process.env[ROUTING_POLICY_ENV] = policyPath;
+    process.env[ROUTING_POLICY_ENV_OVERRIDE] = "1";
 
     const routed = await resolveDeterministicFallbackConstraints({
       prompt: "task_class: implementation",

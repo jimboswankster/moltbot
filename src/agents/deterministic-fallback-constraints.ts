@@ -6,11 +6,13 @@ import {
   type RoutingDecision,
 } from "./deterministic-router.js";
 import { normalizeProviderId } from "./model-selection.js";
+import { buildRoutingAuthorityChainDetails } from "./routing-authority-chain.js";
 
 export type DeterministicFallbackConstraints = {
   provider: string;
   model: string;
   providerAllowlist?: string[];
+  policyVersion: number | null;
   route: RoutingDecision;
 };
 
@@ -83,6 +85,15 @@ export async function resolveDeterministicFallbackConstraints(params: {
   const intendedModel = `${params.provider}/${params.model}`;
   const selectedModel = `${provider}/${model}`;
   const overrideChain = route.applied ? ["requested", "deterministic_route"] : ["requested"];
+  const authorityChain = buildRoutingAuthorityChainDetails({
+    intendedModel,
+    selectedModel,
+    effectiveModel: selectedModel,
+    policyAuthority: route.policyPath ?? "none",
+    policyVersion,
+    overrideChain,
+    mismatchReason: route.applied ? "deterministic_route_applied" : null,
+  });
   recordRuntimeTelemetryEvent({
     event: "agent.model_route_constraints",
     subsystem: "agent-routing",
@@ -97,13 +108,7 @@ export async function resolveDeterministicFallbackConstraints(params: {
       requestedModel: params.model,
       selectedProvider: provider,
       selectedModel: model,
-      intended_model: intendedModel,
-      selected_model: selectedModel,
-      effective_model: selectedModel,
-      policy_authority: route.policyPath ?? "none",
-      policy_version: policyVersion,
-      override_chain: overrideChain,
-      mismatch_reason: route.applied ? "deterministic_route_applied" : null,
+      ...authorityChain,
       applied: route.applied,
       ruleId: route.ruleId,
       reason: route.reason,
@@ -122,7 +127,7 @@ export async function resolveDeterministicFallbackConstraints(params: {
   });
 
   if (!route.strictFallbackProviderFamily) {
-    return { provider, model, route };
+    return { provider, model, policyVersion, route };
   }
 
   const providerAllowlist = dedupeProviders([provider, ...route.allowedFallbackProviders]);
@@ -146,5 +151,5 @@ export async function resolveDeterministicFallbackConstraints(params: {
       },
     });
   }
-  return { provider, model, providerAllowlist, route };
+  return { provider, model, providerAllowlist, policyVersion, route };
 }

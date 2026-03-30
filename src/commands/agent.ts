@@ -415,6 +415,8 @@ export async function agentCommand(
           runId,
           sessionId,
           sessionKey,
+          policyAuthority: deterministic.route.policyPath ?? "none",
+          policyVersion: deterministic.policyVersion,
         },
         providerAllowlist: deterministic.providerAllowlist,
         fallbacksOverride: resolveAgentModelFallbacksOverride(cfg, sessionAgentId),

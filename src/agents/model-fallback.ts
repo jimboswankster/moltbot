@@ -27,6 +27,7 @@ import {
   resolveConfiguredModelRef,
   resolveModelRefFromString,
 } from "./model-selection.js";
+import { buildRoutingAuthorityChainDetails } from "./routing-authority-chain.js";
 
 type ModelCandidate = {
   provider: string;
@@ -47,6 +48,8 @@ type FallbackTelemetryContext = {
   sessionId?: string;
   sessionKey?: string;
   clientRunId?: string;
+  policyAuthority?: string;
+  policyVersion?: number | null;
 };
 
 const candidateCooldownUntil = new Map<string, number>();
@@ -425,6 +428,11 @@ export async function runWithModelFallback<T>(params: {
     sessionId: params.telemetryContext?.sessionId ?? null,
     sessionKey: params.telemetryContext?.sessionKey ?? null,
     clientRunId: params.telemetryContext?.clientRunId ?? null,
+    policyAuthority: params.telemetryContext?.policyAuthority ?? "none",
+    policyVersion:
+      typeof params.telemetryContext?.policyVersion === "number"
+        ? params.telemetryContext.policyVersion
+        : null,
   };
   const unscopedCandidates = params.providerAllowlist?.length
     ? resolveFallbackCandidates({
@@ -672,6 +680,15 @@ export async function runWithModelFallback<T>(params: {
         "selected_candidate",
         "effective",
       ];
+      const authorityChain = buildRoutingAuthorityChainDetails({
+        intendedModel,
+        selectedModel,
+        effectiveModel,
+        policyAuthority: telemetryContext.policyAuthority,
+        policyVersion: telemetryContext.policyVersion,
+        overrideChain,
+        mismatchReason: routeMismatch ? "effective_model_metadata_mismatch" : null,
+      });
       recordRuntimeTelemetryEvent({
         event: "agent.model_fallback_succeeded",
         subsystem: "agent-fallback",
@@ -683,11 +700,7 @@ export async function runWithModelFallback<T>(params: {
           model: candidate.model,
           effectiveProvider: effective.provider,
           effectiveModel: effective.model,
-          intended_model: intendedModel,
-          selected_model: selectedModel,
-          effective_model: effectiveModel,
-          override_chain: overrideChain,
-          mismatch_reason: routeMismatch ? "effective_model_metadata_mismatch" : null,
+          ...authorityChain,
           routeMismatch,
           attemptsBeforeSuccess: attempts.length,
           totalCandidates: candidates.length,
