@@ -399,6 +399,9 @@ export async function runPreparedReply(
         defaultLevel: resolvedElevatedLevel ?? "off",
       },
       timeoutMs,
+      preserveRequestedModel:
+        sessionCtx.Provider?.trim().toLowerCase() === "telegram" &&
+        modelState.storedOverrideSource === "session",
       blockReplyBreak: resolvedBlockStreamingBreak,
       ownerNumbers: command.ownerList.length > 0 ? command.ownerList : undefined,
       extraSystemPrompt: extraSystemPrompt || undefined,

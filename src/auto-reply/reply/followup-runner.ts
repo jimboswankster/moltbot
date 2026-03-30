@@ -133,6 +133,9 @@ export function createFollowupRunner(params: {
           lane: queued.run.lane,
           provider: queued.run.provider,
           model: queued.run.model,
+          preserveRequestedModel: queued.run.preserveRequestedModel,
+          trustedHintsOnly: true,
+          trustedLane: queued.run.lane,
         });
         const routedProvider = deterministic.provider;
         const routedModel = deterministic.model;
@@ -195,6 +198,7 @@ export function createFollowupRunner(params: {
               bashElevated: queued.run.bashElevated,
               timeoutMs: queued.run.timeoutMs,
               lane,
+              preserveRequestedModel: queued.run.preserveRequestedModel,
               runId,
               blockReplyBreak: queued.run.blockReplyBreak,
               onAgentEvent: (evt) => {

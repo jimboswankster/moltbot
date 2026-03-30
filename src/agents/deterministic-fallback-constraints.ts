@@ -41,6 +41,10 @@ export async function resolveDeterministicFallbackConstraints(params: {
   lane?: string;
   provider: string;
   model: string;
+  preserveRequestedModel?: boolean;
+  trustedHintsOnly?: boolean;
+  trustedTaskClass?: string;
+  trustedLane?: string;
   telemetryContext?: RouteTelemetryContext;
 }): Promise<DeterministicFallbackConstraints> {
   const routingPolicy = await loadRoutingPolicy();
@@ -53,14 +57,27 @@ export async function resolveDeterministicFallbackConstraints(params: {
     prompt: params.prompt,
     extraSystemPrompt: params.extraSystemPrompt,
     lane: params.lane,
+    ignoreTextHints: params.trustedHintsOnly === true || Boolean(params.lane?.trim()),
+    trustedTaskClass: params.trustedTaskClass,
+    trustedLane: params.trustedLane,
   });
-  const route = decideDeterministicRoute({
+  const routeRaw = decideDeterministicRoute({
     policy: routingPolicy.policy,
     policyPath: routingPolicy.policyPath,
     hints: routingHints,
     provider: params.provider,
     model: params.model,
   });
+  const route =
+    params.preserveRequestedModel && routeRaw.applied
+      ? {
+          ...routeRaw,
+          applied: false,
+          provider: params.provider,
+          model: params.model,
+          reason: "preserve requested model due to explicit session override",
+        }
+      : routeRaw;
   const provider = (route.provider ?? params.provider).trim() || params.provider;
   const model = (route.model ?? params.model).trim() || params.model;
   const intendedModel = `${params.provider}/${params.model}`;

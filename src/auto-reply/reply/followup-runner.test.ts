@@ -282,4 +282,30 @@ describe("createFollowupRunner messaging tool dedupe", () => {
     const call = runEmbeddedPiAgentMock.mock.calls.at(-1)?.[0] as { lane?: string };
     expect(call.lane).toBe("custom-lane");
   });
+
+  it("passes preserveRequestedModel through to embedded runner", async () => {
+    const onBlockReply = vi.fn(async () => {});
+    runEmbeddedPiAgentMock.mockReset();
+    runEmbeddedPiAgentMock.mockResolvedValueOnce({
+      payloads: [{ text: "hello world!" }],
+      meta: {},
+    });
+
+    const runner = createFollowupRunner({
+      opts: { onBlockReply },
+      typing: createMockTypingController(),
+      typingMode: "instant",
+      defaultModel: "anthropic/claude-opus-4-5",
+    });
+
+    const queued = baseQueuedRun("telegram");
+    queued.run.preserveRequestedModel = true;
+
+    await runner(queued);
+
+    const call = runEmbeddedPiAgentMock.mock.calls.at(-1)?.[0] as {
+      preserveRequestedModel?: boolean;
+    };
+    expect(call.preserveRequestedModel).toBe(true);
+  });
 });

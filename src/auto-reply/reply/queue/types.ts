@@ -75,6 +75,7 @@ export type FollowupRun = {
     };
     timeoutMs: number;
     lane?: string;
+    preserveRequestedModel?: boolean;
     blockReplyBreak: "text_end" | "message_end";
     ownerNumbers?: string[];
     extraSystemPrompt?: string;

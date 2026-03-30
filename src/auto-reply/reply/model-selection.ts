@@ -28,6 +28,7 @@ type ModelCatalog = Awaited<ReturnType<typeof loadModelCatalog>>;
 type ModelSelectionState = {
   provider: string;
   model: string;
+  storedOverrideSource: "session" | "parent" | null;
   allowedModelKeys: Set<string>;
   allowedModelCatalog: ModelCatalog;
   resetModelOverride: boolean;
@@ -393,6 +394,7 @@ export async function createModelSelectionState(params: {
   return {
     provider,
     model,
+    storedOverrideSource: storedOverride?.source ?? null,
     allowedModelKeys,
     allowedModelCatalog,
     resetModelOverride,

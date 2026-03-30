@@ -306,6 +306,7 @@ export async function agentCommand(
 
     const storedProviderOverride = sessionEntry?.providerOverride?.trim();
     const storedModelOverride = sessionEntry?.modelOverride?.trim();
+    const hasExplicitSessionModelOverride = Boolean(storedModelOverride);
     if (storedModelOverride) {
       const candidateProvider = storedProviderOverride || defaultProvider;
       const key = modelKey(candidateProvider, storedModelOverride);
@@ -378,6 +379,13 @@ export async function agentCommand(
       lane: opts.lane,
       provider,
       model,
+      preserveRequestedModel:
+        hasExplicitSessionModelOverride &&
+        String(opts.lane ?? "")
+          .trim()
+          .toLowerCase() === "telegram",
+      trustedHintsOnly: Boolean(opts.lane?.trim()),
+      trustedLane: opts.lane,
       telemetryContext: {
         runId,
         sessionId,
@@ -472,6 +480,11 @@ export async function agentCommand(
               providerOverride === routedProvider && modelOverride === routedModel
                 ? opts.lane
                 : `fallback:${providerOverride}/${modelOverride}`,
+            preserveRequestedModel:
+              hasExplicitSessionModelOverride &&
+              String(opts.lane ?? "")
+                .trim()
+                .toLowerCase() === "telegram",
             abortSignal: opts.abortSignal,
             extraSystemPrompt: opts.extraSystemPrompt,
             streamParams: opts.streamParams,

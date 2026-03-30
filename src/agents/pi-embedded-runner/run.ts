@@ -139,14 +139,26 @@ export async function runEmbeddedPiAgent(
         prompt: params.prompt,
         extraSystemPrompt: params.extraSystemPrompt,
         lane: params.lane,
+        ignoreTextHints: Boolean(params.lane?.trim()),
+        trustedLane: params.lane,
       });
-      const route = decideDeterministicRoute({
+      const routeRaw = decideDeterministicRoute({
         policy: routingPolicy.policy,
         policyPath: routingPolicy.policyPath,
         hints: routingHints,
         provider: requestedProvider,
         model: requestedModelId,
       });
+      const route =
+        params.preserveRequestedModel && routeRaw.applied
+          ? {
+              ...routeRaw,
+              applied: false,
+              provider: requestedProvider,
+              model: requestedModelId,
+              reason: "preserve requested model due to explicit session override",
+            }
+          : routeRaw;
       const provider = (route.provider ?? requestedProvider).trim() || requestedProvider;
       const modelId = (route.model ?? requestedModelId).trim() || requestedModelId;
       const intendedModel = `${requestedProvider}/${requestedModelId}`;
