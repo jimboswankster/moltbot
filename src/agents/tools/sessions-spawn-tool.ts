@@ -28,6 +28,7 @@ import { optionalStringEnum } from "../schema/typebox.js";
 import { buildSubagentSystemPrompt } from "../subagent-announce.js";
 import { registerSubagentRun } from "../subagent-registry.js";
 import { jsonResult, readStringParam } from "./common.js";
+import { canSpawnInThread } from "./lane-permission.js";
 import {
   resolveDisplaySessionKey,
   resolveInternalSessionKey,
@@ -185,6 +186,15 @@ export function createSessionsSpawnTool(opts?: {
         return jsonResult({
           status: "forbidden",
           error: "sessions_spawn is not allowed from sub-agent sessions",
+        });
+      }
+      // Lane permission check - blocks spawning in low-permission lanes
+      const threadId = opts?.agentThreadId;
+      if (threadId && !canSpawnInThread(threadId)) {
+        return jsonResult({
+          status: "forbidden",
+          error:
+            "Sub-agent spawning not allowed in this lane. Lane permission_level is below operator.",
         });
       }
       const requesterInternalKey = requesterSessionKey
