@@ -288,6 +288,7 @@ export async function runMemoryFlushIfNeeded(params: {
           bashElevated: params.followupRun.run.bashElevated,
           timeoutMs: params.followupRun.run.timeoutMs,
           lane,
+          trustedTaskClass: params.followupRun.run.trustedTaskClass,
           preserveRequestedModel: params.followupRun.run.preserveRequestedModel,
           runId: flushRunId,
           onAgentEvent: (evt) => {

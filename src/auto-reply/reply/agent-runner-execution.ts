@@ -156,6 +156,7 @@ export async function runAgentTurnWithFallback(params: {
         model: params.followupRun.run.model,
         preserveRequestedModel: params.followupRun.run.preserveRequestedModel,
         trustedHintsOnly: true,
+        trustedTaskClass: params.followupRun.run.trustedTaskClass,
         trustedLane: params.followupRun.run.lane,
       });
       const routedProvider = deterministic.provider;
@@ -334,6 +335,7 @@ export async function runAgentTurnWithFallback(params: {
             bashElevated: params.followupRun.run.bashElevated,
             timeoutMs: params.followupRun.run.timeoutMs,
             lane,
+            trustedTaskClass: params.followupRun.run.trustedTaskClass,
             preserveRequestedModel: params.followupRun.run.preserveRequestedModel,
             runId,
             images: params.opts?.images,

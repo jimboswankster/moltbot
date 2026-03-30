@@ -300,12 +300,15 @@ describe("createFollowupRunner messaging tool dedupe", () => {
 
     const queued = baseQueuedRun("telegram");
     queued.run.preserveRequestedModel = true;
+    queued.run.trustedTaskClass = "policy-review";
 
     await runner(queued);
 
     const call = runEmbeddedPiAgentMock.mock.calls.at(-1)?.[0] as {
       preserveRequestedModel?: boolean;
+      trustedTaskClass?: string;
     };
     expect(call.preserveRequestedModel).toBe(true);
+    expect(call.trustedTaskClass).toBe("policy-review");
   });
 });

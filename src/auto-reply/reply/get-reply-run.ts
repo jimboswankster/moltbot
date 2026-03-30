@@ -399,6 +399,7 @@ export async function runPreparedReply(
         defaultLevel: resolvedElevatedLevel ?? "off",
       },
       timeoutMs,
+      trustedTaskClass: sessionCtx.RoutingTaskClass?.trim().toLowerCase() || undefined,
       preserveRequestedModel:
         sessionCtx.Provider?.trim().toLowerCase() === "telegram" &&
         modelState.storedOverrideSource === "session",

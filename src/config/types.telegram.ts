@@ -161,6 +161,8 @@ export type TelegramTopicConfig = {
   modelPolicyRole?: string;
   /** Optional direct model-policy agent id override for this topic. */
   modelPolicyAgentId?: string;
+  /** Optional trusted routing task class for deterministic router (metadata, not prompt text). */
+  routingTaskClass?: string;
 };
 
 export type TelegramGroupConfig = {
@@ -184,6 +186,8 @@ export type TelegramGroupConfig = {
   modelPolicyRole?: string;
   /** Optional direct model-policy agent id override for this group. */
   modelPolicyAgentId?: string;
+  /** Optional trusted routing task class fallback for deterministic router. */
+  routingTaskClass?: string;
 };
 
 export type TelegramConfig = {

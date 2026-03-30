@@ -140,6 +140,7 @@ export async function runEmbeddedPiAgent(
         extraSystemPrompt: params.extraSystemPrompt,
         lane: params.lane,
         ignoreTextHints: Boolean(params.lane?.trim()),
+        trustedTaskClass: params.trustedTaskClass,
         trustedLane: params.lane,
       });
       const routeRaw = decideDeterministicRoute({

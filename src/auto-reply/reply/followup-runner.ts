@@ -135,6 +135,7 @@ export function createFollowupRunner(params: {
           model: queued.run.model,
           preserveRequestedModel: queued.run.preserveRequestedModel,
           trustedHintsOnly: true,
+          trustedTaskClass: queued.run.trustedTaskClass,
           trustedLane: queued.run.lane,
         });
         const routedProvider = deterministic.provider;
@@ -198,6 +199,7 @@ export function createFollowupRunner(params: {
               bashElevated: queued.run.bashElevated,
               timeoutMs: queued.run.timeoutMs,
               lane,
+              trustedTaskClass: queued.run.trustedTaskClass,
               preserveRequestedModel: queued.run.preserveRequestedModel,
               runId,
               blockReplyBreak: queued.run.blockReplyBreak,

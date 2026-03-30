@@ -430,4 +430,42 @@ describe("buildTelegramMessageContext telegram model policy role enforcement", (
       await cleanupTempDir(root);
     }
   });
+
+  it("maps topic routingTaskClass into trusted inbound context metadata", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-telegram-routing-task-class-"));
+    try {
+      const storePath = path.join(root, "sessions.json");
+      await saveSessionStore(storePath, {});
+      const ctx = await buildPolicyContext({
+        storePath,
+        resolveTelegramGroupConfig: () => ({
+          groupConfig: { requireMention: false, routingTaskClass: "implementation" },
+          topicConfig: { modelPolicyRole: "coo", routingTaskClass: "policy-review" },
+        }),
+      });
+      expect(ctx).not.toBeNull();
+      expect(ctx?.ctxPayload?.RoutingTaskClass).toBe("policy-review");
+    } finally {
+      await cleanupTempDir(root);
+    }
+  });
+
+  it("falls back to group routingTaskClass when topic task class is absent", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-telegram-routing-task-class-"));
+    try {
+      const storePath = path.join(root, "sessions.json");
+      await saveSessionStore(storePath, {});
+      const ctx = await buildPolicyContext({
+        storePath,
+        resolveTelegramGroupConfig: () => ({
+          groupConfig: { requireMention: false, routingTaskClass: "implementation" },
+          topicConfig: { modelPolicyRole: "coo" },
+        }),
+      });
+      expect(ctx).not.toBeNull();
+      expect(ctx?.ctxPayload?.RoutingTaskClass).toBe("implementation");
+    } finally {
+      await cleanupTempDir(root);
+    }
+  });
 });

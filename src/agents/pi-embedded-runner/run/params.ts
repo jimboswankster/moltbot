@@ -96,6 +96,7 @@ export type RunEmbeddedPiAgentParams = {
   onToolResult?: (payload: { text?: string; mediaUrls?: string[] }) => void | Promise<void>;
   onAgentEvent?: (evt: { stream: string; data: Record<string, unknown> }) => void;
   lane?: string;
+  trustedTaskClass?: string;
   preserveRequestedModel?: boolean;
   enqueue?: typeof enqueueCommand;
   extraSystemPrompt?: string;

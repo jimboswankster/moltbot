@@ -109,6 +109,8 @@ export type MsgContext = {
   GatewayClientScopes?: string[];
   /** Thread identifier (Telegram topic id or Matrix thread event id). */
   MessageThreadId?: string | number;
+  /** Trusted routing task class metadata sourced from channel/topic policy. */
+  RoutingTaskClass?: string;
   /** Telegram forum supergroup marker. */
   IsForum?: boolean;
   /**

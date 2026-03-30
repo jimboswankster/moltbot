@@ -96,6 +96,11 @@ function normalizePolicyRole(value?: string): string | undefined {
   return trimmed || undefined;
 }
 
+function normalizeRoutingTaskClass(value?: string): string | undefined {
+  const trimmed = value?.trim().toLowerCase();
+  return trimmed || undefined;
+}
+
 function resolveTelegramModelPolicyAgentId(params: {
   cfg: OpenClawConfig;
   accountId: string;
@@ -242,6 +247,9 @@ export const buildTelegramMessageContext = async ({
     groupConfig,
     topicConfig,
   });
+  const routingTaskClass = normalizeRoutingTaskClass(
+    topicConfig?.routingTaskClass || groupConfig?.routingTaskClass,
+  );
   if (modelPolicyTarget) {
     try {
       const policyDefault = resolveDefaultModelForAgent({
@@ -722,6 +730,7 @@ export const buildTelegramMessageContext = async ({
     CommandAuthorized: commandAuthorized,
     // For groups: use resolved forum topic id; for DMs: use raw messageThreadId
     MessageThreadId: threadSpec.id,
+    RoutingTaskClass: routingTaskClass,
     IsForum: isForum,
     // Originating channel for reply routing.
     OriginatingChannel: "telegram" as const,

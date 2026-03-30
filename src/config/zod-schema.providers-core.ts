@@ -44,6 +44,7 @@ export const TelegramTopicSchema = z
     systemPrompt: z.string().optional(),
     modelPolicyRole: z.string().optional(),
     modelPolicyAgentId: z.string().optional(),
+    routingTaskClass: z.string().optional(),
   })
   .strict();
 
@@ -59,6 +60,7 @@ export const TelegramGroupSchema = z
     systemPrompt: z.string().optional(),
     modelPolicyRole: z.string().optional(),
     modelPolicyAgentId: z.string().optional(),
+    routingTaskClass: z.string().optional(),
     topics: z.record(z.string(), TelegramTopicSchema.optional()).optional(),
   })
   .strict();

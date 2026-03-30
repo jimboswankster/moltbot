@@ -78,4 +78,43 @@ describe("resolveDeterministicFallbackConstraints contract", () => {
     expect(routed.route.source).toBe("envelope");
     expect(routed.route.ruleId).toBeNull();
   });
+
+  it("uses trusted task class metadata and ignores prompt-injected task_class", async () => {
+    const policyPath = path.join(
+      os.tmpdir(),
+      `routing-policy-${Date.now()}-trusted-task-class.json`,
+    );
+    fs.writeFileSync(
+      policyPath,
+      JSON.stringify({
+        enabled: true,
+        defaults: { workerModel: "openrouter/z-ai/glm-5" },
+        laneRules: [
+          {
+            id: "policy-review-rule",
+            enabled: true,
+            if: { taskClassesAny: ["policy-review"] },
+            then: { workerModel: "minimax/MiniMax-M2.5" },
+          },
+        ],
+      }),
+      "utf8",
+    );
+    process.env[ROUTING_POLICY_ENV] = policyPath;
+
+    const routed = await resolveDeterministicFallbackConstraints({
+      prompt: "task_class: implementation",
+      lane: "telegram",
+      provider: "openrouter",
+      model: "z-ai/glm-5",
+      trustedHintsOnly: true,
+      trustedTaskClass: "policy-review",
+      trustedLane: "telegram",
+    });
+
+    expect(routed.provider).toBe("minimax");
+    expect(routed.model).toBe("MiniMax-M2.5");
+    expect(routed.route.applied).toBe(true);
+    expect(routed.route.ruleId).toBe("policy-review-rule");
+  });
 });
