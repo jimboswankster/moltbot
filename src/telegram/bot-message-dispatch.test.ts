@@ -99,4 +99,56 @@ describe("dispatchTelegramMessage draft streaming", () => {
       }),
     );
   });
+
+  it("sends fallback when a directly addressed group turn is silently skipped", async () => {
+    dispatchReplyWithBufferedBlockDispatcher.mockImplementation(async ({ dispatcherOptions }) => {
+      dispatcherOptions.onSkip?.({ text: "NO_REPLY" }, { kind: "final", reason: "silent" });
+      return { queuedFinal: false };
+    });
+    deliverReplies.mockResolvedValue({ delivered: true });
+
+    const context = {
+      ctxPayload: { WasMentioned: true },
+      primaryCtx: { message: { chat: { id: -100, type: "supergroup" } } },
+      msg: {
+        chat: { id: -100, type: "supergroup" },
+        message_id: 456,
+      },
+      chatId: -100,
+      isGroup: true,
+      resolvedThreadId: 237,
+      replyThreadId: 237,
+      threadSpec: { id: 237, scope: "forum" },
+      historyKey: undefined,
+      historyLimit: 0,
+      groupHistories: new Map(),
+      route: { agentId: "default", accountId: "default" },
+      skillFilter: undefined,
+      sendTyping: vi.fn(),
+      sendRecordVoice: vi.fn(),
+      ackReactionPromise: null,
+      reactionApi: null,
+      removeAckAfterReply: false,
+    };
+
+    await dispatchTelegramMessage({
+      context,
+      bot: { api: {} },
+      cfg: {},
+      runtime: {},
+      replyToMode: "first",
+      streamMode: "off",
+      textLimit: 4096,
+      telegramCfg: {},
+      opts: {},
+      resolveBotTopicsEnabled: vi.fn().mockResolvedValue(true),
+    });
+
+    expect(deliverReplies).toHaveBeenCalledWith(
+      expect.objectContaining({
+        replies: [{ text: "No response generated. Please try again." }],
+        thread: { id: 237, scope: "forum" },
+      }),
+    );
+  });
 });

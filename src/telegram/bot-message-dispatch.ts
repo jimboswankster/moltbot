@@ -250,6 +250,7 @@ export const dispatchTelegramMessage = async ({
   const deliveryState = {
     delivered: false,
     skippedNonSilent: 0,
+    skippedSilent: 0,
     errorCount: 0,
   };
 
@@ -285,9 +286,11 @@ export const dispatchTelegramMessage = async ({
           }
         },
         onSkip: (_payload, info) => {
-          if (info.reason !== "silent") {
-            deliveryState.skippedNonSilent += 1;
+          if (info.reason === "silent") {
+            deliveryState.skippedSilent += 1;
+            return;
           }
+          deliveryState.skippedNonSilent += 1;
         },
         onError: (err, info) => {
           runtime.error?.(danger(`telegram ${info.kind} reply failed: ${String(err)}`));
@@ -373,9 +376,12 @@ export const dispatchTelegramMessage = async ({
     draftStream?.stop();
   }
   let sentFallback = false;
+  const requiresVisibleReply = Boolean(ctxPayload.WasMentioned) || !isGroup;
   if (
     !deliveryState.delivered &&
-    (deliveryState.skippedNonSilent > 0 || deliveryState.errorCount > 0)
+    (deliveryState.skippedNonSilent > 0 ||
+      deliveryState.errorCount > 0 ||
+      (requiresVisibleReply && deliveryState.skippedSilent > 0))
   ) {
     const result = await deliverReplies({
       replies: [{ text: EMPTY_RESPONSE_FALLBACK }],
