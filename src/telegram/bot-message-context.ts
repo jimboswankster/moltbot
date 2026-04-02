@@ -55,6 +55,10 @@ import {
   hasBotMention,
   resolveTelegramThreadSpec,
 } from "./bot/helpers.js";
+import {
+  appendTelegramContextCompositionEvent,
+  buildTelegramContextCompositionEvent,
+} from "./context-composition-telemetry.js";
 
 export type TelegramMediaRef = {
   path: string;
@@ -646,6 +650,8 @@ export const buildTelegramMessageContext = async ({
     envelope: envelopeOptions,
   });
   let combinedBody = body;
+  const pendingHistoryEntries =
+    isGroup && historyKey && historyLimit > 0 ? (groupHistories.get(historyKey) ?? []) : [];
   if (isGroup && historyKey && historyLimit > 0) {
     combinedBody = buildPendingHistoryContextFromMap({
       historyMap: groupHistories,
@@ -663,6 +669,23 @@ export const buildTelegramMessageContext = async ({
           envelope: envelopeOptions,
         }),
     });
+  }
+  try {
+    appendTelegramContextCompositionEvent(
+      buildTelegramContextCompositionEvent({
+        sessionKey,
+        chatId,
+        topicId: resolvedThreadId,
+        isGroup,
+        historyLimit,
+        pendingHistoryEntryCount: pendingHistoryEntries.length,
+        rawBody,
+        envelopeBody: body,
+        combinedBody,
+      }),
+    );
+  } catch {
+    // Best-effort telemetry only. Telegram context assembly must remain non-fatal.
   }
 
   const skillFilter = firstDefined(topicConfig?.skills, groupConfig?.skills);
