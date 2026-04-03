@@ -5,6 +5,7 @@ import { recordFallbackAttempt } from "../infra/fallback-telemetry.js";
 import { recordRuntimeTelemetryEvent } from "../infra/runtime-telemetry.js";
 import { enqueueSystemEvent } from "../infra/system-events.js";
 import { logWarn } from "../logger.js";
+import { estimateUsageCost, resolveModelCostConfig } from "../utils/usage-format.js";
 import {
   ensureAuthProfileStore,
   isProfileBlockedByKloop,
@@ -28,6 +29,7 @@ import {
   resolveModelRefFromString,
 } from "./model-selection.js";
 import { buildRoutingAuthorityChainDetails } from "./routing-authority-chain.js";
+import { normalizeUsage } from "./usage.js";
 
 type ModelCandidate = {
   provider: string;
@@ -127,6 +129,37 @@ function extractEffectiveModelRef(result: unknown): {
     typeof providerRaw === "string" && providerRaw.trim() ? providerRaw.trim() : null;
   const model = typeof modelRaw === "string" && modelRaw.trim() ? modelRaw.trim() : null;
   return { provider, model };
+}
+
+function extractUsageAndCost(params: {
+  cfg: OpenClawConfig | undefined;
+  provider: string;
+  model: string;
+  result: unknown;
+}) {
+  if (!params.result || typeof params.result !== "object") {
+    return { usage: undefined, costUsd: undefined };
+  }
+  const meta = (params.result as { meta?: unknown }).meta;
+  if (!meta || typeof meta !== "object") {
+    return { usage: undefined, costUsd: undefined };
+  }
+  const agentMeta = (meta as { agentMeta?: unknown }).agentMeta;
+  if (!agentMeta || typeof agentMeta !== "object") {
+    return { usage: undefined, costUsd: undefined };
+  }
+  const usage = normalizeUsage(
+    ((agentMeta as { usage?: unknown }).usage as Record<string, unknown> | undefined) ?? undefined,
+  );
+  const cost = resolveModelCostConfig({
+    provider: params.provider,
+    model: params.model,
+    config: params.cfg,
+  });
+  return {
+    usage,
+    costUsd: estimateUsageCost({ usage, cost }),
+  };
 }
 
 export class AllModelsInCooldownError extends Error {
@@ -660,9 +693,32 @@ export async function runWithModelFallback<T>(params: {
         continue;
       }
     }
+    const invocationStartedAt = Date.now();
+    const invocationId = `${telemetryContext.runId ?? "no-run"}:${i + 1}:${candidate.provider}/${candidate.model}`;
+    recordRuntimeTelemetryEvent({
+      event: "agent.llm_invocation_started",
+      subsystem: "agent-ops",
+      severity: "info",
+      status: "ok",
+      details: {
+        ...telemetryContext,
+        invocationId,
+        attempt: i + 1,
+        totalCandidates: candidates.length,
+        provider: candidate.provider,
+        model: candidate.model,
+      },
+    });
     try {
       const result = await params.run(candidate.provider, candidate.model);
+      const durationMs = Date.now() - invocationStartedAt;
       const effective = extractEffectiveModelRef(result);
+      const { usage, costUsd } = extractUsageAndCost({
+        cfg: params.cfg,
+        provider: effective.provider ?? candidate.provider,
+        model: effective.model ?? candidate.model,
+        result,
+      });
       const routeMismatch =
         effective.provider !== null &&
         effective.model !== null &&
@@ -690,6 +746,26 @@ export async function runWithModelFallback<T>(params: {
         mismatchReason: routeMismatch ? "effective_model_metadata_mismatch" : null,
       });
       recordRuntimeTelemetryEvent({
+        event: "agent.llm_invocation_completed",
+        subsystem: "agent-ops",
+        severity: "info",
+        status: "ok",
+        details: {
+          ...telemetryContext,
+          invocationId,
+          attempt: i + 1,
+          totalCandidates: candidates.length,
+          provider: candidate.provider,
+          model: candidate.model,
+          effectiveProvider: effective.provider,
+          effectiveModel: effective.model,
+          durationMs,
+          usage: usage ?? null,
+          costUsd: typeof costUsd === "number" ? costUsd : null,
+          routeMismatch,
+        },
+      });
+      recordRuntimeTelemetryEvent({
         event: "agent.model_fallback_succeeded",
         subsystem: "agent-fallback",
         severity: "info",
@@ -714,6 +790,23 @@ export async function runWithModelFallback<T>(params: {
       };
     } catch (err) {
       if (shouldRethrowAbort(err)) {
+        recordRuntimeTelemetryEvent({
+          event: "agent.llm_invocation_failed",
+          subsystem: "agent-ops",
+          severity: "error",
+          status: "failed",
+          details: {
+            ...telemetryContext,
+            invocationId,
+            attempt: i + 1,
+            totalCandidates: candidates.length,
+            provider: candidate.provider,
+            model: candidate.model,
+            durationMs: Date.now() - invocationStartedAt,
+            error: String(err),
+            reason: "abort",
+          },
+        });
         throw err;
       }
       const normalized =
@@ -723,6 +816,23 @@ export async function runWithModelFallback<T>(params: {
         }) ?? err;
       if (!isFailoverError(normalized)) {
         const message = normalized instanceof Error ? normalized.message : String(normalized);
+        recordRuntimeTelemetryEvent({
+          event: "agent.llm_invocation_failed",
+          subsystem: "agent-ops",
+          severity: "error",
+          status: "failed",
+          details: {
+            ...telemetryContext,
+            invocationId,
+            attempt: i + 1,
+            totalCandidates: candidates.length,
+            provider: candidate.provider,
+            model: candidate.model,
+            durationMs: Date.now() - invocationStartedAt,
+            error: message,
+            reason: "non_failover_terminal",
+          },
+        });
         recordRuntimeTelemetryEvent({
           event: "agent.model_fallback_non_failover_terminal",
           subsystem: "agent-fallback",
@@ -744,6 +854,24 @@ export async function runWithModelFallback<T>(params: {
 
       lastError = normalized;
       const described = describeFailoverError(normalized);
+      recordRuntimeTelemetryEvent({
+        event: "agent.llm_invocation_failed",
+        subsystem: "agent-ops",
+        severity: "error",
+        status: "failed",
+        details: {
+          ...telemetryContext,
+          invocationId,
+          attempt: i + 1,
+          totalCandidates: candidates.length,
+          provider: candidate.provider,
+          model: candidate.model,
+          durationMs: Date.now() - invocationStartedAt,
+          error: described.message,
+          reason: described.reason ?? null,
+          statusCode: described.status ?? null,
+        },
+      });
       attempts.push({
         provider: candidate.provider,
         model: candidate.model,

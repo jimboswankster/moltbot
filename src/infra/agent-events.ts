@@ -1,4 +1,5 @@
 import type { VerboseLevel } from "../auto-reply/thinking.js";
+import { recordRuntimeTelemetryEvent } from "./runtime-telemetry.js";
 
 export type AgentEventStream = "lifecycle" | "tool" | "assistant" | "error" | (string & {});
 
@@ -21,6 +22,105 @@ export type AgentRunContext = {
 const seqByRun = new Map<string, number>();
 const listeners = new Set<(evt: AgentEventPayload) => void>();
 const runContextById = new Map<string, AgentRunContext>();
+const runStartById = new Map<string, number>();
+const toolStartById = new Map<string, number>();
+
+function buildToolEventKey(runId: string, toolCallId: string) {
+  return `${runId}:${toolCallId}`;
+}
+
+function recordMirroredRuntimeTelemetry(event: AgentEventPayload) {
+  if (event.stream === "lifecycle") {
+    const phase = typeof event.data?.phase === "string" ? event.data.phase : "";
+    if (phase === "start") {
+      runStartById.set(event.runId, event.ts);
+      recordRuntimeTelemetryEvent({
+        event: "agent.run_started",
+        subsystem: "agent-ops",
+        status: "ok",
+        details: {
+          runId: event.runId,
+          sessionKey: event.sessionKey ?? null,
+        },
+      });
+      return;
+    }
+    if (phase === "end" || phase === "error") {
+      const startedAt = runStartById.get(event.runId);
+      if (startedAt !== undefined) {
+        runStartById.delete(event.runId);
+      }
+      const durationMs =
+        typeof startedAt === "number" && Number.isFinite(startedAt) ? event.ts - startedAt : null;
+      recordRuntimeTelemetryEvent({
+        event: phase === "end" ? "agent.run_completed" : "agent.run_failed",
+        subsystem: "agent-ops",
+        severity: phase === "end" ? "info" : "error",
+        status: phase === "end" ? "ok" : "failed",
+        details: {
+          runId: event.runId,
+          sessionKey: event.sessionKey ?? null,
+          durationMs,
+          error:
+            phase === "error" && typeof event.data?.error === "string" ? event.data.error : null,
+        },
+      });
+      return;
+    }
+    return;
+  }
+
+  if (event.stream !== "tool") {
+    return;
+  }
+
+  const phase = typeof event.data?.phase === "string" ? event.data.phase : "";
+  const toolCallId = typeof event.data?.toolCallId === "string" ? event.data.toolCallId.trim() : "";
+  const name = typeof event.data?.name === "string" ? event.data.name : null;
+  if (!toolCallId) {
+    return;
+  }
+  const key = buildToolEventKey(event.runId, toolCallId);
+  if (phase === "start") {
+    toolStartById.set(key, event.ts);
+    recordRuntimeTelemetryEvent({
+      event: "agent.tool_call_started",
+      subsystem: "agent-ops",
+      status: "ok",
+      details: {
+        runId: event.runId,
+        sessionKey: event.sessionKey ?? null,
+        toolCallId,
+        toolName: name,
+      },
+    });
+    return;
+  }
+  if (phase !== "result") {
+    return;
+  }
+  const startedAt = toolStartById.get(key);
+  if (startedAt !== undefined) {
+    toolStartById.delete(key);
+  }
+  const durationMs =
+    typeof startedAt === "number" && Number.isFinite(startedAt) ? event.ts - startedAt : null;
+  const isError = event.data?.isError === true;
+  recordRuntimeTelemetryEvent({
+    event: isError ? "agent.tool_call_failed" : "agent.tool_call_completed",
+    subsystem: "agent-ops",
+    severity: isError ? "error" : "info",
+    status: isError ? "failed" : "ok",
+    details: {
+      runId: event.runId,
+      sessionKey: event.sessionKey ?? null,
+      toolCallId,
+      toolName: name,
+      durationMs,
+      meta: typeof event.data?.meta === "string" ? event.data.meta : null,
+    },
+  });
+}
 
 export function registerAgentRunContext(runId: string, context: AgentRunContext) {
   if (!runId) {
@@ -48,10 +148,13 @@ export function getAgentRunContext(runId: string) {
 
 export function clearAgentRunContext(runId: string) {
   runContextById.delete(runId);
+  runStartById.delete(runId);
 }
 
 export function resetAgentRunContextForTest() {
   runContextById.clear();
+  runStartById.clear();
+  toolStartById.clear();
 }
 
 export function emitAgentEvent(event: Omit<AgentEventPayload, "seq" | "ts">) {
@@ -84,6 +187,7 @@ export function emitAgentEvent(event: Omit<AgentEventPayload, "seq" | "ts">) {
       /* ignore */
     }
   }
+  recordMirroredRuntimeTelemetry(enriched);
 }
 
 export function onAgentEvent(listener: (evt: AgentEventPayload) => void) {

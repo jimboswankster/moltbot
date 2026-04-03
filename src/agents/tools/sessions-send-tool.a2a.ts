@@ -4,6 +4,7 @@ import { loadConfig } from "../../config/config.js";
 import { callGateway } from "../../gateway/call.js";
 import { emitAgentEvent } from "../../infra/agent-events.js";
 import { formatErrorMessage } from "../../infra/errors.js";
+import { recordRuntimeTelemetryEvent } from "../../infra/runtime-telemetry.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { recordA2AInboxEvent } from "../a2a-inbox.js";
 import { AGENT_LANE_NESTED } from "../lanes.js";
@@ -50,6 +51,28 @@ export async function runSessionsSendA2AFlow(params: {
   waitRunId?: string;
 }) {
   const runContextId = params.waitRunId ?? `a2a:${crypto.randomUUID()}`;
+  const startedAt = Date.now();
+  const emitA2ARuntimeTelemetry = (
+    event: string,
+    status: "ok" | "failed",
+    details?: Record<string, unknown>,
+  ) => {
+    recordRuntimeTelemetryEvent({
+      event,
+      subsystem: "agent-ops",
+      severity: status === "ok" ? "info" : "error",
+      status,
+      details: {
+        runId: runContextId,
+        requesterSessionKey: params.requesterSessionKey ?? null,
+        targetSessionKey: params.targetSessionKey,
+        deliveryMode: loadConfig().tools?.agentToAgent?.deliveryMode ?? "inject",
+        durationMs: Date.now() - startedAt,
+        ...details,
+      },
+    });
+  };
+  emitA2ARuntimeTelemetry("agent.a2a_handoff_started", "ok");
   try {
     const cfg = loadConfig();
     const deliveryMode = cfg.tools?.agentToAgent?.deliveryMode ?? "inject";
@@ -91,6 +114,9 @@ export async function runSessionsSendA2AFlow(params: {
           });
         }
       }
+      emitA2ARuntimeTelemetry("agent.a2a_handoff_completed", "ok", {
+        outcome: "inbox_recorded",
+      });
       return;
     }
 
@@ -155,6 +181,10 @@ export async function runSessionsSendA2AFlow(params: {
             error: formatErrorMessage(err),
           },
         });
+        emitA2ARuntimeTelemetry("agent.a2a_handoff_failed", "failed", {
+          outcome: "announce_delivery_failed",
+          error: formatErrorMessage(err),
+        });
       }
     }
 
@@ -173,6 +203,9 @@ export async function runSessionsSendA2AFlow(params: {
         });
       }
     }
+    emitA2ARuntimeTelemetry("agent.a2a_handoff_completed", "ok", {
+      outcome: announceText && !isAnnounceSkip(announceText) ? "announce_sent" : "announce_skipped",
+    });
   } catch (err) {
     log.warn("sessions_send announce flow failed", {
       runId: runContextId,
@@ -183,6 +216,10 @@ export async function runSessionsSendA2AFlow(params: {
       sessionKey: params.requesterSessionKey ?? params.targetSessionKey,
       kind: "a2a_announce_flow_failed",
       details: { error: formatErrorMessage(err) },
+    });
+    emitA2ARuntimeTelemetry("agent.a2a_handoff_failed", "failed", {
+      outcome: "flow_failed",
+      error: formatErrorMessage(err),
     });
   }
 }
