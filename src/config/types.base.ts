@@ -168,10 +168,18 @@ export type ContextObservabilityConfig = {
   adapterPath?: string;
 };
 
+export type TelegramContextPolicyConfig = {
+  /** Enable the workspace-owned Telegram context policy adapter. */
+  enabled?: boolean;
+  /** Adapter module path (workspace-owned extension). */
+  adapterPath?: string;
+};
+
 export type ExtensionsConfig = {
   streamBuffer?: StreamBufferConfig;
   memoryCompanion?: MemoryCompanionConfig;
   contextObservability?: ContextObservabilityConfig;
+  telegramContextPolicy?: TelegramContextPolicyConfig;
 };
 
 export type WebReconnectConfig = {

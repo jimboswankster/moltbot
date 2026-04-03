@@ -31,6 +31,7 @@ import { readSessionUpdatedAt, resolveStorePath, updateSessionStore } from "../c
 import { logVerbose, shouldLogVerbose } from "../globals.js";
 import { recordChannelActivity } from "../infra/channel-activity.js";
 import { loadContextObservabilityAdapter } from "../infra/context-observability-adapter.js";
+import { loadTelegramContextPolicyAdapter } from "../infra/telegram-context-policy-adapter.js";
 import { upsertChannelPairingRequest } from "../pairing/pairing-store.js";
 import { resolveAgentRoute } from "../routing/resolve-route.js";
 import { resolveThreadSessionKeys } from "../routing/session-key.js";
@@ -647,6 +648,7 @@ export const buildTelegramMessageContext = async ({
     envelope: envelopeOptions,
   });
   let combinedBody = body;
+  let untrustedContext: string[] | undefined;
   const pendingHistoryEntries =
     isGroup && historyKey && historyLimit > 0 ? (groupHistories.get(historyKey) ?? []) : [];
   if (isGroup && historyKey && historyLimit > 0) {
@@ -666,6 +668,25 @@ export const buildTelegramMessageContext = async ({
           envelope: envelopeOptions,
         }),
     });
+  }
+  try {
+    const telegramContextPolicyAdapter = await loadTelegramContextPolicyAdapter(cfg);
+    const shaped = await telegramContextPolicyAdapter?.shapeInboundContext?.({
+      sessionKey,
+      chatId,
+      topicId: resolvedThreadId,
+      historyLimit,
+      envelopeBody: body,
+      pendingHistoryEntries,
+    });
+    if (typeof shaped?.body === "string") {
+      combinedBody = shaped.body;
+    }
+    if (Array.isArray(shaped?.untrustedContext) && shaped.untrustedContext.length > 0) {
+      untrustedContext = shaped.untrustedContext;
+    }
+  } catch {
+    // Best-effort policy only. Telegram context assembly must remain non-fatal.
   }
   try {
     const contextObservabilityAdapter = await loadContextObservabilityAdapter(cfg);
@@ -704,6 +725,7 @@ export const buildTelegramMessageContext = async ({
     ConversationLabel: conversationLabel,
     GroupSubject: isGroup ? (msg.chat.title ?? undefined) : undefined,
     GroupSystemPrompt: isGroup ? groupSystemPrompt : undefined,
+    UntrustedContext: untrustedContext,
     SenderName: senderName,
     SenderId: senderId || undefined,
     SenderUsername: senderUsername || undefined,

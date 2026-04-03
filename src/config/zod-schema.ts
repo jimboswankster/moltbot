@@ -177,6 +177,13 @@ export const OpenClawSchema = z
           })
           .strict()
           .optional(),
+        telegramContextPolicy: z
+          .object({
+            enabled: z.boolean().optional(),
+            adapterPath: z.string().optional(),
+          })
+          .strict()
+          .optional(),
       })
       .strict()
       .optional(),

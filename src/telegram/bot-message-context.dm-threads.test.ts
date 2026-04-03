@@ -1,9 +1,21 @@
 import { promises as fs } from "node:fs";
+import nodeFs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadSessionStore, saveSessionStore } from "../config/sessions.js";
 import { buildTelegramMessageContext } from "./bot-message-context.js";
+
+const tempDirs: string[] = [];
+
+afterEach(() => {
+  while (tempDirs.length > 0) {
+    const dir = tempDirs.pop();
+    if (dir) {
+      nodeFs.rmSync(dir, { recursive: true, force: true });
+    }
+  }
+});
 
 async function cleanupTempDir(root: string) {
   for (let attempt = 0; attempt < 5; attempt += 1) {
@@ -467,5 +479,107 @@ describe("buildTelegramMessageContext telegram model policy role enforcement", (
     } finally {
       await cleanupTempDir(root);
     }
+  });
+});
+
+describe("buildTelegramMessageContext telegram context policy adapter", () => {
+  it("can replace inline pending history with bounded untrusted context", async () => {
+    const tempDir = nodeFs.mkdtempSync(path.join(os.tmpdir(), "telegram-context-policy-test-"));
+    tempDirs.push(tempDir);
+    const adapterPath = path.join(tempDir, "adapter.mjs");
+    nodeFs.writeFileSync(
+      adapterPath,
+      [
+        "export function createTelegramContextPolicyAdapter() {",
+        "  return {",
+        "    shapeInboundContext(input) {",
+        "      return {",
+        "        body: input.envelopeBody,",
+        "        untrustedContext: ['Recent activity: ' + input.pendingHistoryEntries.length],",
+        "      };",
+        "    },",
+        "  };",
+        "}",
+      ].join("\n"),
+    );
+
+    const groupHistories = new Map([
+      [
+        "-1001234567890:topic:99",
+        [
+          {
+            sender: "Alice",
+            body: "Earlier message",
+            timestamp: Date.now() - 1000,
+            messageId: "old-1",
+          },
+        ],
+      ],
+    ]);
+
+    const ctx = await buildTelegramMessageContext({
+      primaryCtx: {
+        me: { username: "bot" },
+        message: {
+          message_id: 12,
+          chat: {
+            id: -1001234567890,
+            type: "supergroup",
+            title: "Ops",
+            is_forum: true,
+          },
+          message_thread_id: 99,
+          text: "@bot current message",
+          entities: [{ offset: 0, length: 4, type: "mention" }],
+          from: {
+            id: 42,
+            first_name: "Tester",
+            username: "tester",
+          },
+        },
+      } as never,
+      allMedia: [],
+      storeAllowFrom: [],
+      bot: { api: {} } as never,
+      cfg: {
+        channels: {
+          telegram: {
+            enabled: true,
+            groups: {
+              "-1001234567890": {
+                topics: {
+                  "99": {},
+                },
+              },
+            },
+          },
+        },
+        extensions: {
+          telegramContextPolicy: {
+            enabled: true,
+            adapterPath,
+          },
+        },
+      } as never,
+      account: { accountId: "main" },
+      historyLimit: 5,
+      groupHistories,
+      dmPolicy: "pairing",
+      ackReactionScope: "off",
+      logger: { info: () => {} },
+      resolveGroupActivation: () => true,
+      resolveGroupRequireMention: () => true,
+      resolveTelegramGroupConfig: (chatId, messageThreadId) => ({
+        groupConfig: { topics: { [String(messageThreadId ?? "")]: {} } } as never,
+        topicConfig: {},
+      }),
+    });
+
+    expect(ctx?.ctxPayload?.SessionKey).toBe("agent:main:telegram:group:-1001234567890:topic:99");
+    expect(ctx?.ctxPayload?.Body).toContain("current message");
+    expect(ctx?.ctxPayload?.Body).not.toContain(
+      "[Chat messages since your last reply - for context]",
+    );
+    expect(ctx?.ctxPayload?.UntrustedContext).toEqual(["Recent activity: 1"]);
   });
 });
