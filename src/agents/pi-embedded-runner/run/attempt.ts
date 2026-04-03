@@ -69,6 +69,10 @@ import { resolveTranscriptPolicy } from "../../transcript-policy.js";
 import { DEFAULT_BOOTSTRAP_FILENAME } from "../../workspace.js";
 import { isAbortError } from "../abort.js";
 import { appendCacheTtlTimestamp, isCacheTtlEligibleProvider } from "../cache-ttl.js";
+import {
+  appendAgentContextShareEvent,
+  buildAgentContextShareEvent,
+} from "../context-share-telemetry.js";
 import { buildEmbeddedExtensionPaths } from "../extensions.js";
 import { applyExtraParamsToAgent } from "../extra-params.js";
 import {
@@ -894,6 +898,23 @@ export async function runEmbeddedAttempt(
           });
         } catch (err) {
           log.debug(`[token-budget] telemetry write failed: ${String(err)}`);
+        }
+        try {
+          appendAgentContextShareEvent(
+            buildAgentContextShareEvent({
+              runId: params.runId,
+              sessionId: params.sessionId,
+              sessionKey: params.sessionKey,
+              provider: params.provider,
+              modelId: params.modelId,
+              messageChannel: params.messageChannel ?? params.messageProvider ?? undefined,
+              systemPromptTokens,
+              historyMessages: effectiveBudgetResult.messages,
+              memoryCompanionChars: mcSessionMemory?.length ?? 0,
+            }),
+          );
+        } catch (err) {
+          log.debug(`[context-share] telemetry write failed: ${String(err)}`);
         }
 
         if (effectiveBudgetResult.actions.length > 0) {
