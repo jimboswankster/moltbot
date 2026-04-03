@@ -80,6 +80,7 @@ export const agentHandlers: GatewayRequestHandlers = {
       groupChannel?: string;
       groupSpace?: string;
       lane?: string;
+      trustedTaskClass?: string;
       extraSystemPrompt?: string;
       idempotencyKey: string;
       timeout?: number;
@@ -399,6 +400,7 @@ export const agentHandlers: GatewayRequestHandlers = {
         messageChannel: resolvedChannel,
         runId,
         lane: request.lane,
+        trustedTaskClass: request.trustedTaskClass,
         extraSystemPrompt: request.extraSystemPrompt,
       },
       defaultRuntime,

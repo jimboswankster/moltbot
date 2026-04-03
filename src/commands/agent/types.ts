@@ -78,6 +78,7 @@ export type AgentCommandOpts = {
   lane?: string;
   runId?: string;
   extraSystemPrompt?: string;
+  trustedTaskClass?: string;
   /** Per-call stream param overrides (best-effort). */
   streamParams?: AgentStreamParams;
   /** Optional metadata for tracing injected input sources (e.g. A2A). */

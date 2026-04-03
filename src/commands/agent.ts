@@ -385,6 +385,7 @@ export async function agentCommand(
           .trim()
           .toLowerCase() === "telegram",
       trustedHintsOnly: Boolean(opts.lane?.trim()),
+      trustedTaskClass: opts.trustedTaskClass,
       trustedLane: opts.lane,
       telemetryContext: {
         runId,
@@ -487,6 +488,10 @@ export async function agentCommand(
               String(opts.lane ?? "")
                 .trim()
                 .toLowerCase() === "telegram",
+            trustedTaskClass:
+              providerOverride === routedProvider && modelOverride === routedModel
+                ? opts.trustedTaskClass
+                : undefined,
             abortSignal: opts.abortSignal,
             extraSystemPrompt: opts.extraSystemPrompt,
             streamParams: opts.streamParams,

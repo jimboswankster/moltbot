@@ -63,6 +63,7 @@ export const AgentParamsSchema = Type.Object(
     groupSpace: Type.Optional(Type.String()),
     timeout: Type.Optional(Type.Integer({ minimum: 0 })),
     lane: Type.Optional(Type.String()),
+    trustedTaskClass: Type.Optional(Type.String()),
     extraSystemPrompt: Type.Optional(Type.String()),
     inputSource: Type.Optional(
       Type.Object(

@@ -728,4 +728,66 @@ describe("agentCommand", () => {
       }
     });
   });
+
+  it("trustedTaskClass overrides keyword routing and preserves telegram codex stabilization", async () => {
+    await withTempHome(async (home) => {
+      const store = path.join(home, "sessions.json");
+      const workspaceRoot = path.join(home, ".openclaw", "workspace", "os", "config");
+      fs.mkdirSync(workspaceRoot, { recursive: true });
+      fs.writeFileSync(
+        path.join(workspaceRoot, "routing-policy.v1.json"),
+        JSON.stringify(
+          {
+            version: 1,
+            enabled: true,
+            defaults: {
+              workerModel: "minimax/MiniMax-M2.5",
+            },
+            laneRules: [
+              {
+                id: "coding-default",
+                enabled: true,
+                if: { taskClassesAny: ["implementation"] },
+                then: { workerModel: "minimax/MiniMax-M2.5" },
+              },
+              {
+                id: "telegram-codex-stabilization",
+                enabled: true,
+                if: { taskClassesAny: ["telegram-codex-stabilization"] },
+                then: { workerModel: "openai-codex/gpt-5.3-codex" },
+              },
+            ],
+          },
+          null,
+          2,
+        ),
+      );
+
+      mockConfig(home, store, {
+        model: {
+          primary: "openai-codex/gpt-5.1",
+          fallbacks: ["minimax/MiniMax-M2.5"],
+        },
+        models: {
+          "openai-codex/gpt-5.1": {},
+          "openai-codex/gpt-5.3-codex": {},
+          "minimax/MiniMax-M2.5": {},
+        },
+      });
+
+      await agentCommand(
+        {
+          message: "implement the change and add tests",
+          to: "+1555",
+          trustedTaskClass: "telegram-codex-stabilization",
+        },
+        runtime,
+      );
+
+      const callArgs = vi.mocked(runEmbeddedPiAgent).mock.calls.at(-1)?.[0];
+      expect(callArgs?.provider).toBe("openai-codex");
+      expect(callArgs?.model).toBe("gpt-5.3-codex");
+      expect(callArgs?.trustedTaskClass).toBe("telegram-codex-stabilization");
+    });
+  });
 });
