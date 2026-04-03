@@ -28,10 +28,20 @@ export type TelegramContextPolicyOutput = {
   untrustedContext?: string[];
 };
 
+export type TelegramSessionHistoryPolicyInput = {
+  sessionKey: string;
+  chatId?: string | number;
+  topicId?: string | number;
+  historyLimit?: number;
+};
+
 export interface TelegramContextPolicyAdapter {
   shapeInboundContext?(
     input: TelegramContextPolicyInput,
   ): TelegramContextPolicyOutput | Promise<TelegramContextPolicyOutput>;
+  resolveSessionHistoryLimit?(
+    input: TelegramSessionHistoryPolicyInput,
+  ): number | undefined | Promise<number | undefined>;
 }
 
 type TelegramContextPolicyConfig = {

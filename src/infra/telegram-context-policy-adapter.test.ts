@@ -13,6 +13,9 @@ function writeAdapter(dir: string) {
     [
       "export function createTelegramContextPolicyAdapter() {",
       "  return {",
+      "    resolveSessionHistoryLimit(input) {",
+      "      return input.topicId ? 10 : undefined;",
+      "    },",
       "    shapeInboundContext(input) {",
       "      return { body: input.envelopeBody, untrustedContext: ['stub'] };",
       "    },",
@@ -60,5 +63,13 @@ describe("loadTelegramContextPolicyAdapter", () => {
       pendingHistoryEntries: [],
     });
     expect(output).toEqual({ body: "hello", untrustedContext: ["stub"] });
+    expect(
+      await adapter?.resolveSessionHistoryLimit?.({
+        sessionKey: "agent:main:telegram:group:-100:topic:237",
+        chatId: "-100",
+        topicId: "237",
+        historyLimit: 20,
+      }),
+    ).toBe(10);
   });
 });

@@ -13,6 +13,7 @@ import type { EmbeddedPiCompactResult } from "./types.js";
 import { resolveHeartbeatPrompt } from "../../auto-reply/heartbeat.js";
 import { resolveChannelCapabilities } from "../../config/channel-capabilities.js";
 import { getMachineDisplayName } from "../../infra/machine-name.js";
+import { loadTelegramContextPolicyAdapter } from "../../infra/telegram-context-policy-adapter.js";
 import { type enqueueCommand, enqueueCommandInLane } from "../../process/command-queue.js";
 import { isSubagentSessionKey } from "../../routing/session-key.js";
 import { resolveSignalReactionLevel } from "../../signal/reaction-level.js";
@@ -59,7 +60,7 @@ import {
   sanitizeSessionHistory,
   sanitizeToolsForGoogle,
 } from "./google.js";
-import { getDmHistoryLimitFromSessionKey, limitHistoryTurns } from "./history.js";
+import { getSessionHistoryLimitFromSessionKey, limitHistoryTurns } from "./history.js";
 import { resolveGlobalLane, resolveSessionLane } from "./lanes.js";
 import { log } from "./logger.js";
 import { buildModelAliasLines, resolveModel } from "./model.js";
@@ -104,6 +105,21 @@ export type CompactEmbeddedPiSessionParams = {
   extraSystemPrompt?: string;
   ownerNumbers?: string[];
 };
+
+function parseTelegramSessionTarget(sessionKey: string | undefined): {
+  chatId?: string;
+  topicId?: string;
+} {
+  if (!sessionKey || !sessionKey.includes(":telegram:")) {
+    return {};
+  }
+  const chatMatch = sessionKey.match(/:group:([^:]+)/i);
+  const topicMatch = sessionKey.match(/:topic:([^:]+)/i);
+  return {
+    chatId: chatMatch?.[1],
+    topicId: topicMatch?.[1],
+  };
+}
 
 /**
  * Core compaction logic without lane queueing.
@@ -424,10 +440,28 @@ export async function compactEmbeddedPiSessionDirect(
         const validated = transcriptPolicy.validateAnthropicTurns
           ? validateAnthropicTurns(validatedGemini)
           : validatedGemini;
-        const limited = limitHistoryTurns(
-          validated,
-          getDmHistoryLimitFromSessionKey(params.sessionKey, params.config),
-        );
+        let historyLimit = getSessionHistoryLimitFromSessionKey(params.sessionKey, params.config);
+        if (params.sessionKey?.includes(":telegram:")) {
+          const telegramContextPolicyAdapter = await loadTelegramContextPolicyAdapter(
+            params.config,
+            log,
+          );
+          const target = parseTelegramSessionTarget(params.sessionKey);
+          const policyHistoryLimit =
+            await telegramContextPolicyAdapter?.resolveSessionHistoryLimit?.({
+              sessionKey: params.sessionKey,
+              chatId: target.chatId,
+              topicId: target.topicId,
+              historyLimit,
+            });
+          if (typeof policyHistoryLimit === "number" && policyHistoryLimit >= 0) {
+            historyLimit =
+              historyLimit != null
+                ? Math.min(historyLimit, policyHistoryLimit)
+                : policyHistoryLimit;
+          }
+        }
+        const limited = limitHistoryTurns(validated, historyLimit);
         if (limited.length > 0) {
           session.agent.replaceMessages(limited);
         }

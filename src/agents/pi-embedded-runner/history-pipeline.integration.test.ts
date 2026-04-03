@@ -3,7 +3,7 @@
  *
  * Protocol: TEST-CONTRACT v1.0.0
  * QC: TEST-QA-PASSING-FAILURE v1.0.0
- * SUT: getDmHistoryLimitFromSessionKey(), limitHistoryTurns(), limitToolResults() from history.ts
+ * SUT: getSessionHistoryLimitFromSessionKey(), limitHistoryTurns(), limitToolResults() from history.ts
  * Contract source: attempt.ts pipeline (lines 574-582) — the same chain that runs before every prompt.
  *
  * Purpose: Verify the full history processing chain produces valid message formats.
@@ -14,7 +14,11 @@
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import { describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "../../config/config.js";
-import { getDmHistoryLimitFromSessionKey, limitHistoryTurns, limitToolResults } from "./history.js";
+import {
+  getSessionHistoryLimitFromSessionKey,
+  limitHistoryTurns,
+  limitToolResults,
+} from "./history.js";
 
 // --- Test helpers (construct valid AgentMessage shapes) ---
 
@@ -83,7 +87,7 @@ function runPipeline(
   config: OpenClawConfig = {} as OpenClawConfig,
   keepLastTools = 3,
 ): AgentMessage[] {
-  const historyLimit = getDmHistoryLimitFromSessionKey(sessionKey, config);
+  const historyLimit = getSessionHistoryLimitFromSessionKey(sessionKey, config);
   const limited = limitHistoryTurns(messages, historyLimit);
   return limitToolResults(limited, keepLastTools);
 }
@@ -114,11 +118,11 @@ describe("history pipeline contract", () => {
     expect(toolResults.length - intact.length).toBe(7);
   });
 
-  it("webchat sessions get history-limited (30 turns) then tool-limited", () => {
-    // Observable: getDmHistoryLimitFromSessionKey returns 30 for webchat;
+  it("webchat sessions get history-limited (80 turns) then tool-limited", () => {
+    // Observable: getSessionHistoryLimitFromSessionKey returns a webchat safety limit;
     //             limitHistoryTurns reduces user turns; pipeline output is valid
     const messages: AgentMessage[] = [];
-    for (let i = 0; i < 40; i++) {
+    for (let i = 0; i < 100; i++) {
       messages.push(makeUser(`turn ${i}`));
       messages.push(makeToolCall("exec", `tc-${i}`));
       messages.push(makeToolResult("exec", `output ${i}`, `tc-${i}`));
@@ -129,7 +133,7 @@ describe("history pipeline contract", () => {
 
     // History limit applied: user turns capped
     const userCount = result.filter((m) => m.role === "user").length;
-    expect(userCount).toBeLessThanOrEqual(30);
+    expect(userCount).toBeLessThanOrEqual(80);
     expect(userCount).toBeGreaterThan(0);
 
     // Format still valid after both limits applied
@@ -137,7 +141,7 @@ describe("history pipeline contract", () => {
   });
 
   it("non-webchat main sessions skip history limit but get tool-limited", () => {
-    // Observable: getDmHistoryLimitFromSessionKey returns undefined for agent:main:main;
+    // Observable: getSessionHistoryLimitFromSessionKey returns undefined for agent:main:main;
     //             all messages preserved; tool results truncated
     const messages: AgentMessage[] = [];
     for (let i = 0; i < 10; i++) {
@@ -160,6 +164,26 @@ describe("history pipeline contract", () => {
     expect(truncated).toHaveLength(7);
 
     // Format valid
+    expect(validateToolResultFormats(result)).toEqual([]);
+  });
+
+  it("telegram topic sessions inherit provider group historyLimit", () => {
+    const config = {
+      channels: {
+        telegram: {
+          historyLimit: 5,
+        },
+      },
+    } as OpenClawConfig;
+    const messages: AgentMessage[] = [];
+    for (let i = 0; i < 12; i++) {
+      messages.push(makeUser(`turn ${i}`));
+      messages.push(makeAssistant(`reply ${i}`));
+    }
+
+    const result = runPipeline(messages, "agent:main:telegram:group:-100123:topic:237", config);
+
+    expect(result.filter((m) => m.role === "user")).toHaveLength(5);
     expect(validateToolResultFormats(result)).toEqual([]);
   });
 

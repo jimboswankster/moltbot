@@ -2,7 +2,10 @@ import fs from "node:fs/promises";
 import { describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
 import { ensureOpenClawModelsJson } from "./models-config.js";
-import { getDmHistoryLimitFromSessionKey } from "./pi-embedded-runner.js";
+import {
+  getDmHistoryLimitFromSessionKey,
+  getSessionHistoryLimitFromSessionKey,
+} from "./pi-embedded-runner.js";
 
 vi.mock("@mariozechner/pi-ai", async () => {
   const actual = await vi.importActual<typeof import("@mariozechner/pi-ai")>("@mariozechner/pi-ai");
@@ -254,5 +257,42 @@ describe("getDmHistoryLimitFromSessionKey", () => {
     expect(
       getDmHistoryLimitFromSessionKey("agent:main:webchat:main:main", {} as OpenClawConfig),
     ).toBe(80);
+  });
+});
+
+describe("getSessionHistoryLimitFromSessionKey", () => {
+  it("returns telegram group historyLimit for topic sessions", () => {
+    const config = {
+      channels: {
+        telegram: {
+          historyLimit: 20,
+        },
+      },
+    } as OpenClawConfig;
+
+    expect(
+      getSessionHistoryLimitFromSessionKey(
+        "agent:main:telegram:group:-1001234567890:topic:237",
+        config,
+      ),
+    ).toBe(20);
+  });
+
+  it("falls back to dm handling for dm sessions", () => {
+    const config = {
+      channels: {
+        telegram: {
+          dmHistoryLimit: 7,
+        },
+      },
+    } as OpenClawConfig;
+
+    expect(getSessionHistoryLimitFromSessionKey("agent:main:telegram:dm:123", config)).toBe(7);
+  });
+
+  it("returns undefined for unrelated session kinds", () => {
+    expect(
+      getSessionHistoryLimitFromSessionKey("agent:main:main", {} as OpenClawConfig),
+    ).toBeUndefined();
   });
 });

@@ -16,6 +16,7 @@ import {
   loadMemoryCompanionAdapter,
   type MemoryCompanionAdapter,
 } from "../../../infra/memory-companion-adapter.js";
+import { loadTelegramContextPolicyAdapter } from "../../../infra/telegram-context-policy-adapter.js";
 import { MAX_IMAGE_BYTES } from "../../../media/constants.js";
 import { getGlobalHookRunner } from "../../../plugins/hook-runner-global.js";
 import { isSubagentSessionKey } from "../../../routing/session-key.js";
@@ -79,7 +80,7 @@ import {
 } from "../google.js";
 import {
   capToolResultSize,
-  getDmHistoryLimitFromSessionKey,
+  getSessionHistoryLimitFromSessionKey,
   limitHistoryTurns,
   limitToolResults,
   stripLegacySessionMemoryBlocks,
@@ -108,6 +109,21 @@ import {
 import { splitSdkTools } from "../tool-split.js";
 import { describeUnknownError, mapThinkingLevel } from "../utils.js";
 import { detectAndLoadPromptImages } from "./images.js";
+
+function parseTelegramSessionTarget(sessionKey: string | undefined): {
+  chatId?: string;
+  topicId?: string;
+} {
+  if (!sessionKey || !sessionKey.includes(":telegram:")) {
+    return {};
+  }
+  const chatMatch = sessionKey.match(/:group:([^:]+)/i);
+  const topicMatch = sessionKey.match(/:topic:([^:]+)/i);
+  return {
+    chatId: chatMatch?.[1],
+    topicId: topicMatch?.[1],
+  };
+}
 
 export function injectHistoryImagesIntoMessages(
   messages: AgentMessage[],
@@ -777,14 +793,34 @@ export async function runEmbeddedAttempt(
               noisyToolMaxChars: configuredToolCaps.noisyToolMaxChars,
             }
           : undefined;
-        const channelHistoryLimit = getDmHistoryLimitFromSessionKey(
+        const channelHistoryLimit = getSessionHistoryLimitFromSessionKey(
           params.sessionKey,
           params.config,
         );
-        const effectiveHistoryLimit =
+        let effectiveHistoryLimit =
           channelHistoryLimit != null
             ? Math.min(channelHistoryLimit, ctxLimits.historyTurns)
             : ctxLimits.historyTurns;
+        if (params.sessionKey?.includes(":telegram:")) {
+          const telegramContextPolicyAdapter = await loadTelegramContextPolicyAdapter(
+            params.config,
+            log,
+          );
+          const target = parseTelegramSessionTarget(params.sessionKey);
+          const policyHistoryLimit =
+            await telegramContextPolicyAdapter?.resolveSessionHistoryLimit?.({
+              sessionKey: params.sessionKey,
+              chatId: target.chatId,
+              topicId: target.topicId,
+              historyLimit: effectiveHistoryLimit,
+            });
+          if (typeof policyHistoryLimit === "number" && policyHistoryLimit >= 0) {
+            effectiveHistoryLimit =
+              effectiveHistoryLimit != null
+                ? Math.min(effectiveHistoryLimit, policyHistoryLimit)
+                : policyHistoryLimit;
+          }
+        }
 
         let limitedHistory: AgentMessage[];
         if (mcAdapter) {
