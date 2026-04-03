@@ -30,6 +30,7 @@ import { formatCliCommand } from "../cli/command-format.js";
 import { readSessionUpdatedAt, resolveStorePath, updateSessionStore } from "../config/sessions.js";
 import { logVerbose, shouldLogVerbose } from "../globals.js";
 import { recordChannelActivity } from "../infra/channel-activity.js";
+import { loadContextObservabilityAdapter } from "../infra/context-observability-adapter.js";
 import { upsertChannelPairingRequest } from "../pairing/pairing-store.js";
 import { resolveAgentRoute } from "../routing/resolve-route.js";
 import { resolveThreadSessionKeys } from "../routing/session-key.js";
@@ -55,10 +56,6 @@ import {
   hasBotMention,
   resolveTelegramThreadSpec,
 } from "./bot/helpers.js";
-import {
-  appendTelegramContextCompositionEvent,
-  buildTelegramContextCompositionEvent,
-} from "./context-composition-telemetry.js";
 
 export type TelegramMediaRef = {
   path: string;
@@ -671,19 +668,18 @@ export const buildTelegramMessageContext = async ({
     });
   }
   try {
-    appendTelegramContextCompositionEvent(
-      buildTelegramContextCompositionEvent({
-        sessionKey,
-        chatId,
-        topicId: resolvedThreadId,
-        isGroup,
-        historyLimit,
-        pendingHistoryEntryCount: pendingHistoryEntries.length,
-        rawBody,
-        envelopeBody: body,
-        combinedBody,
-      }),
-    );
+    const contextObservabilityAdapter = await loadContextObservabilityAdapter(cfg);
+    await contextObservabilityAdapter?.onTelegramContextComposed?.({
+      sessionKey,
+      chatId,
+      topicId: resolvedThreadId,
+      isGroup,
+      historyLimit,
+      pendingHistoryEntryCount: pendingHistoryEntries.length,
+      rawBody,
+      envelopeBody: body,
+      combinedBody,
+    });
   } catch {
     // Best-effort telemetry only. Telegram context assembly must remain non-fatal.
   }

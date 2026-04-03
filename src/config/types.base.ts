@@ -161,9 +161,17 @@ export type MemoryCompanionConfig = {
   epochCompactionThreshold?: number;
 };
 
+export type ContextObservabilityConfig = {
+  /** Enable the workspace-owned context observability adapter. */
+  enabled?: boolean;
+  /** Adapter module path (workspace-owned extension). */
+  adapterPath?: string;
+};
+
 export type ExtensionsConfig = {
   streamBuffer?: StreamBufferConfig;
   memoryCompanion?: MemoryCompanionConfig;
+  contextObservability?: ContextObservabilityConfig;
 };
 
 export type WebReconnectConfig = {
