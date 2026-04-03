@@ -1,9 +1,11 @@
 import type { AuthProfileCredential, AuthProfileStore, OAuthCredential } from "./types.js";
 import {
+  readCodexCliCredentialsCached,
   readQwenCliCredentialsCached,
   readMiniMaxCliCredentialsCached,
 } from "../cli-credentials.js";
 import {
+  CODEX_CLI_PROFILE_ID,
   EXTERNAL_CLI_NEAR_EXPIRY_MS,
   EXTERNAL_CLI_SYNC_TTL_MS,
   QWEN_CLI_PROFILE_ID,
@@ -159,6 +161,24 @@ function syncExternalCliCredentialsForProvider(
 export function syncExternalCliCredentials(store: AuthProfileStore): boolean {
   let mutated = false;
   const now = Date.now();
+
+  if (
+    syncExternalCliCredentialsForProvider(
+      store,
+      "openai-codex:default",
+      "openai-codex",
+      () => readCodexCliCredentialsCached({ ttlMs: EXTERNAL_CLI_SYNC_TTL_MS }),
+      now,
+    )
+  ) {
+    mutated = true;
+  }
+
+  // Remove deprecated Codex CLI profile ids once the canonical default profile is kept in sync.
+  if (store.profiles[CODEX_CLI_PROFILE_ID]) {
+    delete store.profiles[CODEX_CLI_PROFILE_ID];
+    mutated = true;
+  }
 
   // Sync from Qwen Code CLI
   const existingQwen = store.profiles[QWEN_CLI_PROFILE_ID];
