@@ -137,4 +137,68 @@ describe("immediate-memory-reuse plugin", () => {
 
     await expect(fs.readdir(path.join(workspaceDir, ".openclaw", "surface-3-memory"))).rejects.toThrow();
   });
+
+  it("only activates for explicitly allowed workspace prefixes when configured", async () => {
+    const allowedWorkspaceDir = await makeTempDir();
+    const blockedWorkspaceDir = await makeTempDir();
+    tempDirs.push(allowedWorkspaceDir, blockedWorkspaceDir);
+    const sessionKey = "agent:main:test-session";
+    const { api, hooks } = createMockApi({
+      workspaceAllowPrefixes: [allowedWorkspaceDir],
+    });
+
+    immediateMemoryReusePlugin.register(api);
+    const agentEnd = hooks.get("agent_end");
+    const beforeAgentStart = hooks.get("before_agent_start");
+
+    await agentEnd?.(
+      {
+        success: true,
+        messages: [
+          {
+            role: "tool",
+            content: [
+              {
+                type: "text",
+                text: "Inspection result: package.json exists and packageManager is pnpm.",
+              },
+            ],
+          },
+        ],
+      },
+      { workspaceDir: blockedWorkspaceDir, sessionKey },
+    );
+
+    await expect(
+      fs.readdir(path.join(blockedWorkspaceDir, ".openclaw", "surface-3-memory")),
+    ).rejects.toThrow();
+
+    await agentEnd?.(
+      {
+        success: true,
+        messages: [
+          {
+            role: "tool",
+            content: [
+              {
+                type: "text",
+                text: "Inspection result: package.json exists and packageManager is pnpm.",
+              },
+            ],
+          },
+        ],
+      },
+      { workspaceDir: allowedWorkspaceDir, sessionKey },
+    );
+
+    const firstInject = await beforeAgentStart?.({ prompt: "what should I do next?" }, {
+      workspaceDir: allowedWorkspaceDir,
+      sessionKey,
+    });
+    expect(firstInject).toEqual(
+      expect.objectContaining({
+        prependContext: expect.stringContaining("Immediate prior-turn harness fact"),
+      }),
+    );
+  });
 });

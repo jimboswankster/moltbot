@@ -6,6 +6,7 @@ type ImmediateMemoryReuseConfig = {
   storageSubdir: string;
   maxFactChars: number;
   maxAgeMs: number;
+  workspaceAllowPrefixes: string[];
 };
 
 type PluginApiLike = {
@@ -32,6 +33,7 @@ type FactSidecar = {
 const DEFAULT_STORAGE_SUBDIR = path.join(".openclaw", "surface-3-memory");
 const DEFAULT_MAX_FACT_CHARS = 160;
 const DEFAULT_MAX_AGE_MS = 5 * 60 * 1000;
+const DEFAULT_WORKSPACE_ALLOW_PREFIXES: string[] = [];
 
 const configSchema = {
   parse(value: unknown): ImmediateMemoryReuseConfig {
@@ -54,8 +56,14 @@ const configSchema = {
       typeof raw.maxAgeMs === "number" && Number.isInteger(raw.maxAgeMs) && raw.maxAgeMs > 0
         ? raw.maxAgeMs
         : DEFAULT_MAX_AGE_MS;
+    const workspaceAllowPrefixes = Array.isArray(raw.workspaceAllowPrefixes)
+      ? raw.workspaceAllowPrefixes
+          .filter((entry): entry is string => typeof entry === "string")
+          .map((entry) => entry.trim())
+          .filter(Boolean)
+      : DEFAULT_WORKSPACE_ALLOW_PREFIXES;
 
-    return { storageSubdir, maxFactChars, maxAgeMs };
+    return { storageSubdir, maxFactChars, maxAgeMs, workspaceAllowPrefixes };
   },
   uiHints: {
     storageSubdir: {
@@ -71,6 +79,11 @@ const configSchema = {
     maxAgeMs: {
       label: "Max Fact Age (ms)",
       help: "Expire pending immediate-memory facts after this many milliseconds.",
+      advanced: true,
+    },
+    workspaceAllowPrefixes: {
+      label: "Workspace Allow Prefixes",
+      help: "Only activate the plugin when workspaceDir starts with one of these prefixes.",
       advanced: true,
     },
   },
@@ -230,6 +243,13 @@ function buildPrependContext(fact: string): string {
   ].join("\n");
 }
 
+function isAllowedWorkspaceDir(workspaceDir: string, workspaceAllowPrefixes: string[]): boolean {
+  if (workspaceAllowPrefixes.length === 0) {
+    return true;
+  }
+  return workspaceAllowPrefixes.some((prefix) => workspaceDir.startsWith(prefix));
+}
+
 const immediateMemoryReusePlugin = {
   id: "immediate-memory-reuse",
   name: "Immediate Memory Reuse",
@@ -240,6 +260,9 @@ const immediateMemoryReusePlugin = {
 
     api.on("agent_end", async (event, ctx) => {
       if (!ctx.workspaceDir || !ctx.sessionKey) {
+        return;
+      }
+      if (!isAllowedWorkspaceDir(ctx.workspaceDir, config.workspaceAllowPrefixes)) {
         return;
       }
       if (!event || typeof event !== "object") {
@@ -272,6 +295,9 @@ const immediateMemoryReusePlugin = {
 
     api.on("before_agent_start", async (_event, ctx) => {
       if (!ctx.workspaceDir || !ctx.sessionKey) {
+        return;
+      }
+      if (!isAllowedWorkspaceDir(ctx.workspaceDir, config.workspaceAllowPrefixes)) {
         return;
       }
 
