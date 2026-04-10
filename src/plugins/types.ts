@@ -408,6 +408,7 @@ export type PluginHookAfterToolCallEvent = {
 export type PluginHookToolResultPersistContext = {
   agentId?: string;
   sessionKey?: string;
+  workspaceDir?: string;
   toolName?: string;
   toolCallId?: string;
 };

@@ -108,6 +108,7 @@ describe("tool_result_persist hook", () => {
     const sm = guardSessionManager(SessionManager.inMemory(), {
       agentId: "main",
       sessionKey: "main",
+      workspaceDir: tmp,
     });
 
     // Tool call (so the guard can infer tool name -> id mapping).
@@ -141,5 +142,59 @@ describe("tool_result_persist hook", () => {
     // Hook composition: priority 10 runs before priority 5.
     expect(toolResult.persistOrder).toEqual(["a", "b"]);
     expect(toolResult.agentSeen).toBe("main");
+  });
+
+  it("passes workspaceDir into tool_result_persist hook context", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-toolpersist-workspace-"));
+    process.env.OPENCLAW_BUNDLED_PLUGINS_DIR = "/nonexistent/bundled/plugins";
+
+    const plugin = writeTempPlugin({
+      dir: tmp,
+      id: "persist-workspace",
+      body: `export default { id: "persist-workspace", register(api) {
+  api.on("tool_result_persist", (event, ctx) => {
+    return { message: { ...event.message, workspaceSeen: ctx.workspaceDir ?? null } };
+  });
+} };`,
+    });
+
+    loadOpenClawPlugins({
+      cache: false,
+      workspaceDir: tmp,
+      config: {
+        plugins: {
+          load: { paths: [plugin] },
+          allow: ["persist-workspace"],
+        },
+      },
+    });
+
+    const sm = guardSessionManager(SessionManager.inMemory(), {
+      agentId: "main",
+      sessionKey: "main",
+      workspaceDir: tmp,
+    });
+
+    sm.appendMessage({
+      role: "assistant",
+      content: [{ type: "toolCall", id: "call_1", name: "read", arguments: {} }],
+    } as AgentMessage);
+
+    sm.appendMessage({
+      role: "toolResult",
+      toolCallId: "call_1",
+      isError: false,
+      content: [{ type: "text", text: "ok" }],
+      // oxlint-disable-next-line typescript/no-explicit-any
+    } as any);
+
+    const messages = sm
+      .getEntries()
+      .filter((e) => e.type === "message")
+      .map((e) => (e as { message: AgentMessage }).message);
+
+    // oxlint-disable-next-line typescript/no-explicit-any
+    const toolResult = messages.find((m) => (m as any).role === "toolResult") as any;
+    expect(toolResult.workspaceSeen).toBe(tmp);
   });
 });

@@ -25,21 +25,81 @@
  * @see E-004 audit: workspace/docs/development/debug/subagent-pipeline/audits/README.md
  */
 
-// ─── Configuration ───
+type TruncationVariantId = "incumbent" | "diagnostic-signal-tight-marker";
 
-/** Maximum total character length before truncation kicks in. */
-const MAX_CONTENT_CHARS = 4_000;
+type TruncationVariant = {
+  maxContentChars: number;
+  headChars: number;
+  tailChars: number;
+  marker: string;
+};
 
-/** Number of characters to keep from the start of oversized content. */
-const HEAD_CHARS = 2_000;
+type ToolResultTruncationConfig = {
+  variantId: TruncationVariantId;
+  allowedWorkspacePrefixes: string[];
+};
 
-/** Number of characters to keep from the end of oversized content. */
-const TAIL_CHARS = 500;
+type ToolResultPersistContext = {
+  workspaceDir?: string;
+};
 
-/** Marker inserted between head and tail portions. */
-const TRUNCATION_MARKER =
-  "\n\n[...truncated: content exceeded limit — showing first " +
-  `${HEAD_CHARS} and last ${TAIL_CHARS} chars...]\n\n`;
+const INCUMBENT_VARIANT: TruncationVariant = {
+  maxContentChars: 4_000,
+  headChars: 2_000,
+  tailChars: 500,
+  marker:
+    "\n\n[...truncated: content exceeded limit — showing first 2000 and last 500 chars...]\n\n",
+};
+
+const DIAGNOSTIC_SIGNAL_TIGHT_MARKER_VARIANT: TruncationVariant = {
+  maxContentChars: 2_200,
+  headChars: 1_000,
+  tailChars: 260,
+  marker: "\n\n[...trimmed...]\n\n",
+};
+
+const DEFAULT_CONFIG: ToolResultTruncationConfig = {
+  variantId: "incumbent",
+  allowedWorkspacePrefixes: [],
+};
+
+function parseConfig(raw: unknown): ToolResultTruncationConfig {
+  const value =
+    raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+  const variantId =
+    value.variantId === "diagnostic-signal-tight-marker" ? value.variantId : DEFAULT_CONFIG.variantId;
+  const allowedWorkspacePrefixes = Array.isArray(value.allowedWorkspacePrefixes)
+    ? value.allowedWorkspacePrefixes
+        .filter((entry): entry is string => typeof entry === "string")
+        .map((entry) => entry.trim())
+        .filter(Boolean)
+    : DEFAULT_CONFIG.allowedWorkspacePrefixes;
+
+  return {
+    variantId,
+    allowedWorkspacePrefixes,
+  };
+}
+
+function isAllowedWorkspaceDir(workspaceDir: string, allowPrefixes: string[]): boolean {
+  if (allowPrefixes.length === 0) {
+    return false;
+  }
+  return allowPrefixes.some((prefix) => workspaceDir.startsWith(prefix));
+}
+
+function resolveVariant(
+  config: ToolResultTruncationConfig,
+  ctx: ToolResultPersistContext,
+): TruncationVariant {
+  if (config.variantId !== "diagnostic-signal-tight-marker") {
+    return INCUMBENT_VARIANT;
+  }
+  if (!ctx.workspaceDir || !isAllowedWorkspaceDir(ctx.workspaceDir, config.allowedWorkspacePrefixes)) {
+    return INCUMBENT_VARIANT;
+  }
+  return DIAGNOSTIC_SIGNAL_TIGHT_MARKER_VARIANT;
+}
 
 // ─── Truncation logic ───
 
@@ -47,23 +107,23 @@ const TRUNCATION_MARKER =
  * Truncate a single text string using head+tail strategy.
  * Returns the original string if it's within the limit.
  */
-function truncateText(text: string): string {
-  if (text.length <= MAX_CONTENT_CHARS) {
+function truncateText(text: string, variant: TruncationVariant): string {
+  if (text.length <= variant.maxContentChars) {
     return text;
   }
-  const head = text.slice(0, HEAD_CHARS);
-  const tail = text.slice(-TAIL_CHARS);
-  return head + TRUNCATION_MARKER + tail;
+  const head = text.slice(0, variant.headChars);
+  const tail = text.slice(-variant.tailChars);
+  return head + variant.marker + tail;
 }
 
 /**
  * Process a message's content array, truncating any oversized text blocks.
  * Non-text blocks (images, etc.) are passed through unchanged.
  */
-function truncateMessageContent(content: any[]): any[] {
+function truncateMessageContent(content: any[], variant: TruncationVariant): any[] {
   return content.map((block: any) => {
     if (block.type === "text" && typeof block.text === "string") {
-      return { ...block, text: truncateText(block.text) };
+      return { ...block, text: truncateText(block.text, variant) };
     }
     return block;
   });
@@ -78,9 +138,15 @@ const toolResultTruncationPlugin = {
     "Truncates large tool results before session persistence to prevent context explosion",
 
   register(api: any) {
+    const config = parseConfig(api.pluginConfig);
+    if (config.variantId !== "incumbent" && config.allowedWorkspacePrefixes.length === 0) {
+      api.logger?.warn?.(
+        "tool-result-truncation: candidate variant configured without allowedWorkspacePrefixes; preserving incumbent behavior",
+      );
+    }
     api.on(
       "tool_result_persist",
-      (event: any, _ctx: any) => {
+      (event: any, ctx: ToolResultPersistContext) => {
         const message = event.message;
         if (!message) return;
 
@@ -88,12 +154,14 @@ const toolResultTruncationPlugin = {
         const content = message.content;
         if (!Array.isArray(content)) return;
 
+        const variant = resolveVariant(config, ctx ?? {});
+
         // Check if any text block exceeds the threshold
         const hasOversizedContent = content.some(
           (block: any) =>
             block.type === "text" &&
             typeof block.text === "string" &&
-            block.text.length > MAX_CONTENT_CHARS,
+            block.text.length > variant.maxContentChars,
         );
 
         if (!hasOversizedContent) {
@@ -105,7 +173,7 @@ const toolResultTruncationPlugin = {
         return {
           message: {
             ...message,
-            content: truncateMessageContent(content),
+            content: truncateMessageContent(content, variant),
           },
         };
       },

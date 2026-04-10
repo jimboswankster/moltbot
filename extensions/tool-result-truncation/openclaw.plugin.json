@@ -3,6 +3,18 @@
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
-    "properties": {}
+    "properties": {
+      "variantId": {
+        "type": "string",
+        "enum": ["incumbent", "diagnostic-signal-tight-marker"]
+      },
+      "allowedWorkspacePrefixes": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
   }
 }

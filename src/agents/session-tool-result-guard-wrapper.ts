@@ -16,6 +16,7 @@ export function guardSessionManager(
   opts?: {
     agentId?: string;
     sessionKey?: string;
+    workspaceDir?: string;
     allowSyntheticToolResults?: boolean;
   },
 ): GuardedSessionManager {
@@ -37,6 +38,7 @@ export function guardSessionManager(
           {
             agentId: opts?.agentId,
             sessionKey: opts?.sessionKey,
+            workspaceDir: opts?.workspaceDir,
             toolName: meta.toolName,
             toolCallId: meta.toolCallId,
           },
