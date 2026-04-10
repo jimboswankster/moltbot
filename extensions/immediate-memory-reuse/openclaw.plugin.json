@@ -1,0 +1,20 @@
+{
+  "id": "immediate-memory-reuse",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "storageSubdir": {
+        "type": "string"
+      },
+      "maxFactChars": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "maxAgeMs": {
+        "type": "integer",
+        "minimum": 1
+      }
+    }
+  }
+}

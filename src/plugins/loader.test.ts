@@ -168,6 +168,60 @@ describe("loadOpenClawPlugins", () => {
     expect(memory?.status).toBe("loaded");
   });
 
+  it("loads bundled immediate-memory-reuse plugin only when explicitly enabled", () => {
+    const bundledDir = makeTempDir();
+    const pluginDir = path.join(bundledDir, "immediate-memory-reuse");
+    fs.mkdirSync(pluginDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(pluginDir, "openclaw.plugin.json"),
+      JSON.stringify(
+        {
+          id: "immediate-memory-reuse",
+          configSchema: EMPTY_PLUGIN_SCHEMA,
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+    fs.writeFileSync(
+      path.join(pluginDir, "index.ts"),
+      `export default { id: "immediate-memory-reuse", register(api) { api.on("before_agent_start", async () => ({ prependContext: "fact" })); } };`,
+      "utf-8",
+    );
+    process.env.OPENCLAW_BUNDLED_PLUGINS_DIR = bundledDir;
+
+    const disabledRegistry = loadOpenClawPlugins({
+      cache: false,
+      config: {
+        plugins: {
+          allow: ["immediate-memory-reuse"],
+        },
+      },
+    });
+    const disabled = disabledRegistry.plugins.find(
+      (entry) => entry.id === "immediate-memory-reuse",
+    );
+    expect(disabled?.status).toBe("disabled");
+
+    const enabledRegistry = loadOpenClawPlugins({
+      cache: false,
+      config: {
+        plugins: {
+          allow: ["immediate-memory-reuse"],
+          entries: {
+            "immediate-memory-reuse": { enabled: true },
+          },
+        },
+      },
+    });
+    const enabled = enabledRegistry.plugins.find((entry) => entry.id === "immediate-memory-reuse");
+    expect(enabled?.status).toBe("loaded");
+    expect(
+      enabledRegistry.typedHooks.some((entry) => entry.pluginId === "immediate-memory-reuse"),
+    ).toBe(true);
+  });
+
   it("preserves package.json metadata for bundled memory plugins", () => {
     const bundledDir = makeTempDir();
     const pluginDir = path.join(bundledDir, "memory-core");
