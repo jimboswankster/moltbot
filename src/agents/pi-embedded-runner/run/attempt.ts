@@ -829,6 +829,7 @@ export async function runEmbeddedAttempt(
             sanitizedMemory,
             effectiveHistoryLimit,
             params.sessionFile,
+            params.workspaceDir,
           );
           limitedHistory = mcResult.messages;
           mcSessionMemory = mcResult.sessionMemory;

@@ -51,6 +51,7 @@ export interface MemoryCompanionAdapter {
     messages: AgentMessage[],
     limit: number | undefined,
     sessionFile: string,
+    workspaceDir?: string,
   ): HistoryLimitResult;
 
   onTurnComplete(sessionFile: string, messages: AgentMessage[]): Promise<void>;
@@ -69,6 +70,8 @@ export interface EngineDeps {
   limitHistoryTurns: (messages: AgentMessage[], limit: number | undefined) => AgentMessage[];
   callCompanionLlm?: CallCompanionLlmFn;
   companionConfig?: {
+    variantId?: string;
+    allowedWorkspacePrefixes?: string[];
     batchSize?: number;
     maxMemoryTokens?: number;
     epochCompactionThreshold?: number;
@@ -183,6 +186,8 @@ export async function loadMemoryCompanionAdapter(
     | {
         enabled?: boolean;
         adapterPath?: string;
+        variantId?: string;
+        allowedWorkspacePrefixes?: string[];
         batchSize?: number;
         maxMemoryTokens?: number;
         epochCompactionThreshold?: number;
@@ -241,6 +246,8 @@ export async function loadMemoryCompanionAdapter(
       limitHistoryTurns,
       callCompanionLlm,
       companionConfig: {
+        variantId: mcConfig.variantId,
+        allowedWorkspacePrefixes: mcConfig.allowedWorkspacePrefixes,
         batchSize: mcConfig.batchSize,
         maxMemoryTokens: mcConfig.maxMemoryTokens,
         epochCompactionThreshold: mcConfig.epochCompactionThreshold,

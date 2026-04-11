@@ -153,6 +153,10 @@ export type MemoryCompanionConfig = {
   enabled?: boolean;
   /** Adapter module path (workspace-owned extension). */
   adapterPath?: string;
+  /** Optional bounded rollout variant id for workspace-owned retrieval/render behavior. */
+  variantId?: string;
+  /** Workspace prefixes allowed to activate the bounded rollout variant. */
+  allowedWorkspacePrefixes?: string[];
   /** Number of user turns per summary batch (default: 5). */
   batchSize?: number;
   /** Max tokens for session memory before epoch compaction (default: 5000). */
