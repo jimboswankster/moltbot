@@ -413,6 +413,59 @@ describe("exec approvals policy helpers", () => {
       }),
     ).toBe(false);
   });
+
+  it("replays identical approval inputs deterministically", () => {
+    const file = {
+      version: 1,
+      defaults: {
+        security: "allowlist",
+        ask: "on-miss",
+        askFallback: "deny",
+      },
+      agents: {
+        main: {
+          allowlist: [{ pattern: "/usr/bin/echo" }],
+        },
+      },
+    } satisfies ExecApprovalsFile;
+
+    const resolvedA = resolveExecApprovalsFromFile({ file, agentId: "main" });
+    const resolvedB = resolveExecApprovalsFromFile({ file, agentId: "main" });
+
+    const evalA = evaluateShellAllowlist({
+      command: "/usr/bin/echo ok",
+      allowlist: resolvedA.allowlist,
+      safeBins: new Set(),
+      cwd: "/tmp",
+    });
+    const evalB = evaluateShellAllowlist({
+      command: "/usr/bin/echo ok",
+      allowlist: resolvedB.allowlist,
+      safeBins: new Set(),
+      cwd: "/tmp",
+    });
+
+    const decisionA = requiresExecApproval({
+      ask: resolvedA.agent.ask,
+      security: resolvedA.agent.security,
+      analysisOk: evalA.analysisOk,
+      allowlistSatisfied: evalA.allowlistSatisfied,
+    });
+    const decisionB = requiresExecApproval({
+      ask: resolvedB.agent.ask,
+      security: resolvedB.agent.security,
+      analysisOk: evalB.analysisOk,
+      allowlistSatisfied: evalB.allowlistSatisfied,
+    });
+
+    expect(evalA.allowlistSatisfied).toBe(true);
+    expect(evalB.allowlistSatisfied).toBe(true);
+    expect(evalA.allowlistMatches.map((entry) => entry.pattern)).toEqual(
+      evalB.allowlistMatches.map((entry) => entry.pattern),
+    );
+    expect(decisionA).toBe(decisionB);
+    expect(decisionA).toBe(false);
+  });
 });
 
 describe("exec approvals wildcard agent", () => {

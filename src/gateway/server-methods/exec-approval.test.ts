@@ -273,4 +273,70 @@ describe("exec approval handlers", () => {
 
     await requestPromise;
   });
+
+  it("times out pending approvals and rejects late resolve attempts", async () => {
+    vi.useFakeTimers();
+    try {
+      const manager = new ExecApprovalManager();
+      const handlers = createExecApprovalHandlers(manager);
+      const broadcasts: Array<{ event: string; payload: unknown }> = [];
+      const respond = vi.fn();
+      const resolveRespond = vi.fn();
+      const context = {
+        broadcast: (event: string, payload: unknown) => {
+          broadcasts.push({ event, payload });
+        },
+      };
+
+      const requestPromise = handlers["exec.approval.request"]({
+        params: {
+          id: "approval-timeout-1",
+          command: "echo slow",
+          cwd: "/tmp",
+          host: "node",
+          timeoutMs: 10,
+        },
+        respond,
+        context: context as unknown as Parameters<
+          (typeof handlers)["exec.approval.request"]
+        >[0]["context"],
+        client: null,
+        req: { id: "req-timeout", type: "req", method: "exec.approval.request" },
+        isWebchatConnect: noop,
+      });
+
+      await vi.advanceTimersByTimeAsync(20);
+      await requestPromise;
+
+      expect(respond).toHaveBeenCalledWith(
+        true,
+        expect.objectContaining({
+          id: "approval-timeout-1",
+          decision: null,
+        }),
+        undefined,
+      );
+      expect(manager.getSnapshot("approval-timeout-1")).toBeNull();
+
+      await handlers["exec.approval.resolve"]({
+        params: { id: "approval-timeout-1", decision: "allow-once" },
+        respond: resolveRespond,
+        context: context as unknown as Parameters<
+          (typeof handlers)["exec.approval.resolve"]
+        >[0]["context"],
+        client: { connect: { client: { id: "cli", displayName: "CLI" } } },
+        req: { id: "req-timeout-resolve", type: "req", method: "exec.approval.resolve" },
+        isWebchatConnect: noop,
+      });
+
+      expect(resolveRespond).toHaveBeenCalledWith(
+        false,
+        undefined,
+        expect.objectContaining({ message: "unknown approval id" }),
+      );
+      expect(broadcasts.some((entry) => entry.event === "exec.approval.resolved")).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

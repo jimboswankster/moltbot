@@ -39,6 +39,8 @@ describe("exec approvals", () => {
     } else {
       process.env.USERPROFILE = previousUserProfile;
     }
+    delete process.env.OPENCLAW_WORKSPACE_DIR;
+    delete process.env.OPENCLAW_TOOL_TELEMETRY_EVENTS_PATH;
   });
 
   it("reuses approval id as the node runId", async () => {
@@ -125,6 +127,15 @@ describe("exec approvals", () => {
       command: `"${exePath}" --help`,
     });
     expect(result.details.status).toBe("completed");
+    expect(result.details.policy?.approval).toMatchObject({
+      host: "node",
+      security: "allowlist",
+      ask: "on-miss",
+      requiresApproval: false,
+      policySource: "exec.approvals.node.get",
+      allowlistSatisfied: true,
+      allowlistMatchPatterns: [exePath],
+    });
     expect(calls).toContain("exec.approvals.node.get");
     expect(calls).toContain("node.invoke");
     expect(calls).not.toContain("exec.approval.request");
@@ -180,5 +191,72 @@ describe("exec approvals", () => {
     expect(result.details.status).toBe("approval-pending");
     await approvalSeen;
     expect(calls).toContain("exec.approval.request");
+  });
+
+  it("writes replayable deferred telemetry when approval is denied", async () => {
+    const { callGatewayTool } = await import("./tools/gateway.js");
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-approval-telemetry-"));
+    process.env.OPENCLAW_WORKSPACE_DIR = workspaceDir;
+
+    vi.mocked(callGatewayTool).mockImplementation(async (method) => {
+      if (method === "exec.approval.request") {
+        return { decision: "deny" };
+      }
+      if (method === "node.invoke") {
+        return { ok: true };
+      }
+      return { ok: true };
+    });
+
+    const { createExecTool } = await import("./bash-tools.exec.js");
+    const tool = createExecTool({
+      host: "node",
+      ask: "always",
+      approvalRunningNoticeMs: 0,
+      sessionKey: "agent:main:main",
+    });
+
+    const result = await tool.execute("call-deny-1", { command: "echo denied" });
+    expect(result.details.status).toBe("approval-pending");
+
+    const approvalId = (result.details as { approvalId: string }).approvalId;
+    const day = new Date().toISOString().slice(0, 10);
+    const telemetryPath = path.join(
+      workspaceDir,
+      "os",
+      "data-telemetry",
+      "audits",
+      "tool-telemetry",
+      "events",
+      `tool-telemetry-${day}.jsonl`,
+    );
+
+    let raw = "";
+    const deadline = Date.now() + 2000;
+    while (Date.now() < deadline) {
+      try {
+        raw = await fs.readFile(telemetryPath, "utf8");
+        if (raw.trim()) break;
+      } catch {}
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+
+    expect(raw.trim().length).toBeGreaterThan(0);
+    const rows = raw
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    const denied = rows.find((row) => row.approvalId === approvalId);
+    expect(denied).toBeDefined();
+    expect(denied).toMatchObject({
+      hook: "exec_deferred_outcome",
+      toolName: "exec",
+      host: "node",
+      status: "failed",
+      sessionKey: "agent:main:main",
+      approvalId,
+      reason: "user-denied",
+      errorClass: "other_exec",
+    });
   });
 });

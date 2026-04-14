@@ -232,6 +232,16 @@ type ExecPolicyDiagnostics = {
     waitMs: number;
     failureClass?: RetryBrakeFailureClass;
   };
+  approval?: {
+    host: ExecHost;
+    security: ExecSecurity;
+    ask: ExecAsk;
+    requiresApproval: boolean;
+    policySource: string;
+    analysisOk?: boolean;
+    allowlistSatisfied?: boolean;
+    allowlistMatchPatterns?: string[];
+  };
 };
 
 type PathRepairDecision = "rewrite" | "block" | "no-op";
@@ -1894,6 +1904,8 @@ export function createExecTool(
         });
         let analysisOk = baseAllowlistEval.analysisOk;
         let allowlistSatisfied = false;
+        let approvalPolicySource = "tool-defaults";
+        let allowlistMatchPatterns: string[] = [];
         if (hostAsk === "on-miss" && hostSecurity === "allowlist" && analysisOk) {
           try {
             const approvalsSnapshot = await callGatewayTool<{ file: string }>(
@@ -1921,6 +1933,8 @@ export function createExecTool(
               });
               allowlistSatisfied = allowlistEval.allowlistSatisfied;
               analysisOk = allowlistEval.analysisOk;
+              allowlistMatchPatterns = allowlistEval.allowlistMatches.map((entry) => entry.pattern);
+              approvalPolicySource = "exec.approvals.node.get";
             }
           } catch {
             // Fall back to requiring approval if node approvals cannot be fetched.
@@ -1932,6 +1946,16 @@ export function createExecTool(
           analysisOk,
           allowlistSatisfied,
         });
+        policyDiagnostics.approval = {
+          host: "node",
+          security: hostSecurity,
+          ask: hostAsk,
+          requiresApproval: requiresAsk,
+          policySource: approvalPolicySource,
+          analysisOk,
+          allowlistSatisfied,
+          allowlistMatchPatterns,
+        };
         const commandText = command;
         const invokeTimeoutMs = Math.max(
           10_000,
@@ -2182,6 +2206,16 @@ export function createExecTool(
           analysisOk,
           allowlistSatisfied,
         });
+        policyDiagnostics.approval = {
+          host: "gateway",
+          security: hostSecurity,
+          ask: hostAsk,
+          requiresApproval: requiresAsk,
+          policySource: approvals.path,
+          analysisOk,
+          allowlistSatisfied,
+          allowlistMatchPatterns: allowlistMatches.map((entry) => entry.pattern),
+        };
 
         if (requiresAsk) {
           const approvalId = crypto.randomUUID();

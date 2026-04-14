@@ -99,4 +99,39 @@ describe("agent-events runtime telemetry bridge", () => {
       }),
     );
   });
+
+  it("emits failed lifecycle telemetry with error details", () => {
+    vi.useFakeTimers();
+    try {
+      registerAgentRunContext("run-3", { sessionKey: "agent:main:test" });
+      emitAgentEvent({
+        runId: "run-3",
+        stream: "lifecycle",
+        data: { phase: "start" },
+      });
+      vi.advanceTimersByTime(15);
+      emitAgentEvent({
+        runId: "run-3",
+        stream: "lifecycle",
+        data: { phase: "error", error: "crash" },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(recordRuntimeTelemetryEventMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: "agent.run_failed",
+        subsystem: "agent-ops",
+        severity: "error",
+        status: "failed",
+        details: expect.objectContaining({
+          runId: "run-3",
+          sessionKey: "agent:main:test",
+          durationMs: 15,
+          error: "crash",
+        }),
+      }),
+    );
+  });
 });

@@ -141,6 +141,35 @@ describe("sessions_send - Async Mode Behavior", () => {
 
     expect(runSessionsSendA2AFlowMock).not.toHaveBeenCalled();
   });
+
+  it("does not fabricate completion when the agent call fails before execution starts", async () => {
+    const calls: string[] = [];
+    callGatewayMock.mockImplementation(async (opts: { method: string }) => {
+      calls.push(opts.method);
+      if (opts.method === "agent") {
+        throw new Error("agent crashed before execution started");
+      }
+      return {};
+    });
+
+    const tool = createSessionsSendTool({
+      agentSessionKey: "agent:main:main",
+      agentChannel: "telegram",
+    });
+
+    const result = await tool.execute("call-async-fail-1", {
+      sessionKey: "agent:main:subagent:sub-001",
+      message: "This should not be marked completed",
+      timeoutSeconds: 0,
+    });
+
+    expect(result.details).toMatchObject({
+      status: "error",
+      error: expect.stringContaining("agent crashed before execution started"),
+    });
+    expect(calls).toEqual(["agent"]);
+    expect(runSessionsSendA2AFlowMock).not.toHaveBeenCalled();
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

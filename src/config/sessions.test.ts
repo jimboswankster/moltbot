@@ -11,6 +11,7 @@ import {
   resolveSessionKey,
   resolveSessionTranscriptPath,
   resolveSessionTranscriptsDir,
+  saveSessionStore,
   updateLastRoute,
   updateSessionStore,
   updateSessionStoreEntry,
@@ -401,6 +402,47 @@ describe("sessions", () => {
     expect(entry.provider).toBeUndefined();
     expect(entry.lastChannel).toBe("telegram");
     expect(entry.lastProvider).toBeUndefined();
+  });
+
+  it("restores token and exec approval state from persisted session entries", async () => {
+    const sessionKey = "agent:main:main";
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-sessions-"));
+    const storePath = path.join(dir, "sessions.json");
+
+    await saveSessionStore(storePath, {
+      [sessionKey]: {
+        sessionId: "sess-restore",
+        updatedAt: 123,
+        inputTokens: 21,
+        outputTokens: 13,
+        totalTokens: 34,
+        elevatedLevel: "ask",
+        execHost: "node",
+        execSecurity: "allowlist",
+        execAsk: "on-miss",
+        responseUsage: "tokens",
+      },
+    });
+
+    const cached = loadSessionStore(storePath);
+    const restored = loadSessionStore(storePath, { skipCache: true });
+
+    expect(cached[sessionKey]).toMatchObject({
+      totalTokens: 34,
+      elevatedLevel: "ask",
+      execHost: "node",
+      execSecurity: "allowlist",
+      execAsk: "on-miss",
+      responseUsage: "tokens",
+    });
+    expect(restored[sessionKey]).toMatchObject({
+      totalTokens: 34,
+      elevatedLevel: "ask",
+      execHost: "node",
+      execSecurity: "allowlist",
+      execAsk: "on-miss",
+      responseUsage: "tokens",
+    });
   });
 
   it("derives session transcripts dir from OPENCLAW_STATE_DIR", () => {
