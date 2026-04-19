@@ -99,6 +99,8 @@ describe("buildAgentSystemPrompt", () => {
     });
 
     expect(prompt).toContain("## OpenClaw CLI Quick Reference");
+    expect(prompt).toContain("Hydra is the canonical control surface");
+    expect(prompt).toContain("hydra gateway restart");
     expect(prompt).toContain("openclaw gateway restart");
     expect(prompt).toContain("Do not invent commands");
   });
@@ -129,9 +131,9 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).toContain(
       "- If exactly one skill clearly applies: read its SKILL.md at <location> with `Read`, then follow it.",
     );
-    expect(prompt).toContain("OpenClaw docs: /tmp/openclaw/docs");
+    expect(prompt).toContain("Detailed OS/docs index: /tmp/openclaw/docs");
     expect(prompt).toContain(
-      "For OpenClaw behavior, commands, config, or architecture: consult local docs first.",
+      "For behavior, commands, config, and architecture in this setup, consult the workspace global README and OS/docs first, then the OpenClaw engine docs.",
     );
   });
 
@@ -142,9 +144,9 @@ describe("buildAgentSystemPrompt", () => {
     });
 
     expect(prompt).toContain("## Documentation");
-    expect(prompt).toContain("OpenClaw docs: /tmp/openclaw/docs");
+    expect(prompt).toContain("Detailed OS/docs index: /tmp/openclaw/docs");
     expect(prompt).toContain(
-      "For OpenClaw behavior, commands, config, or architecture: consult local docs first.",
+      "For behavior, commands, config, and architecture in this setup, consult the workspace global README and OS/docs first, then the OpenClaw engine docs.",
     );
   });
 

@@ -410,6 +410,7 @@ export function buildAgentSystemPrompt(params: {
     ...safetySection,
     "## OpenClaw CLI Quick Reference",
     "OpenClaw is controlled via subcommands. Do not invent commands.",
+    "In Hydra-managed private workspace installs, Hydra is the canonical control surface for gateway lifecycle operations. Prefer `hydra gateway stop`, `hydra gateway restart`, and `hydra up` over direct daemon restart paths.",
     "To manage the Gateway daemon service (start/stop/restart):",
     "- openclaw gateway status",
     "- openclaw gateway start",

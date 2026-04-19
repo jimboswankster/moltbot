@@ -64,4 +64,15 @@ describe("gateway restart hydra preference", () => {
       }),
     ).toBeNull();
   });
+
+  it("keeps Hydra as the only restart authority in managed workspaces", () => {
+    const registerPath = path.join(
+      path.dirname(new URL(import.meta.url).pathname),
+      "gateway-cli",
+      "register.ts",
+    );
+    const registerSource = fs.readFileSync(registerPath, "utf8");
+    expect(registerSource).toContain("refusing fallback to direct daemon restart");
+    expect(registerSource).not.toContain("falling back to daemon restart");
+  });
 });

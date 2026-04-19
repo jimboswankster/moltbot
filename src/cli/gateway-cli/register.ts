@@ -88,9 +88,9 @@ async function runGatewayRestartWithHydraPreference(opts: Record<string, unknown
     return;
   }
 
-  // Prefer Hydra in private workspace installs because it rebuilds/restarts
-  // the managed stack consistently with local operational policy. If this path
-  // fails, retain the legacy daemon restart as a compatibility fallback.
+  // Prefer Hydra in private workspace installs because it is the authoritative
+  // control plane for the managed stack. If Hydra fails, fail loudly instead
+  // of silently falling back to a second restart authority.
   const result = await runCommandWithTimeout([hydraInvocation.command, ...hydraInvocation.args], {
     timeoutMs: 20 * 60_000,
     env: process.env,
@@ -105,10 +105,9 @@ async function runGatewayRestartWithHydraPreference(opts: Record<string, unknown
     return;
   }
 
-  defaultRuntime.error(
-    `Hydra restart failed (code ${String(result.code)}${result.signal ? `, signal ${result.signal}` : ""}); falling back to daemon restart.`,
+  throw new Error(
+    `Hydra restart failed (code ${String(result.code)}${result.signal ? `, signal ${result.signal}` : ""}); refusing fallback to direct daemon restart in a Hydra-managed workspace.`,
   );
-  await runDaemonRestart(opts);
 }
 
 function parseDaysOption(raw: unknown, fallback = 30): number {
@@ -226,11 +225,6 @@ export function registerGatewayCli(program: Command) {
     .description("Restart the Gateway service (launchd/systemd/schtasks)")
     .option("--json", "Output JSON", false)
     .action(async (opts) => {
-      // Keep JSON mode on legacy daemon path for machine compatibility.
-      if (Boolean(opts?.json)) {
-        await runDaemonRestart(opts);
-        return;
-      }
       await runGatewayRestartWithHydraPreference(opts);
     });
 
