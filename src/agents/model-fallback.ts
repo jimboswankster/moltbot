@@ -711,6 +711,52 @@ export async function runWithModelFallback<T>(params: {
     });
     try {
       const result = await params.run(candidate.provider, candidate.model);
+      // TDD fix: Validate result has meaningful content - empty results should trigger fallback
+      // This is the core fix for cascade failures where primary returns success but no visible text
+      const hasContent = (r: unknown): boolean => {
+        if (typeof r === "string") return r.trim().length > 0;
+        if (r && typeof r === "object") {
+          const rec = r as Record<string, unknown>;
+          const text =
+            typeof rec.text === "string"
+              ? rec.text
+              : Array.isArray(rec.payloads)
+                ? rec.payloads
+                : null;
+          if (typeof text === "string") return text.trim().length > 0;
+          if (Array.isArray(text))
+            return text.some(
+              (p: unknown) => typeof p === "object" && (p as Record<string, unknown>).text,
+            );
+        }
+        return false;
+      };
+      if (!hasContent(result)) {
+        // TDD fix: Treat empty content as soft failure - trigger fallback
+        // Bypass coerceToFailoverError - empty content IS a failover condition
+        attempts.push({
+          provider: candidate.provider,
+          model: candidate.model,
+          error: "empty content",
+          reason: "empty_content",
+          status: 0, // No HTTP status for soft failure
+        });
+        recordRuntimeTelemetryEvent({
+          event: "agent.llm_invocation_completed",
+          subsystem: "agent-ops",
+          severity: "warning",
+          status: "degraded",
+          details: {
+            ...telemetryContext,
+            invocationId,
+            attempt: i + 1,
+            provider: candidate.provider,
+            model: candidate.model,
+            reason: "empty_content_fallback",
+          },
+        });
+        continue;
+      }
       const durationMs = Date.now() - invocationStartedAt;
       const effective = extractEffectiveModelRef(result);
       const { usage, costUsd } = extractUsageAndCost({
