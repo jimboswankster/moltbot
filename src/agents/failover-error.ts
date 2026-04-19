@@ -160,6 +160,9 @@ export function resolveFailoverReasonFromError(err: unknown): FailoverReason | n
   if (status === 408) {
     return "timeout";
   }
+  if (typeof status === "number" && status >= 500) {
+    return "rate_limit";
+  }
 
   const code = (getErrorCode(err) ?? "").toUpperCase();
   if (["ETIMEDOUT", "ESOCKETTIMEDOUT", "ECONNRESET", "ECONNABORTED"].includes(code)) {

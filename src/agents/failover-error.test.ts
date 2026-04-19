@@ -11,6 +11,7 @@ describe("failover-error", () => {
     expect(resolveFailoverReasonFromError({ statusCode: "429" })).toBe("rate_limit");
     expect(resolveFailoverReasonFromError({ status: 403 })).toBe("auth");
     expect(resolveFailoverReasonFromError({ status: 408 })).toBe("timeout");
+    expect(resolveFailoverReasonFromError({ status: 500 })).toBe("rate_limit");
   });
 
   it("infers format errors from error messages", () => {
@@ -45,6 +46,24 @@ describe("failover-error", () => {
     });
     expect(err?.reason).toBe("format");
     expect(err?.status).toBe(400);
+  });
+
+  it("coerces generic 5xx provider failures into failover errors", () => {
+    const err = coerceToFailoverError(
+      {
+        message: '500 "internal service error"',
+        status: 500,
+      },
+      {
+        provider: "ollama",
+        model: "glm-5:cloud",
+      },
+    );
+    expect(err?.name).toBe("FailoverError");
+    expect(err?.reason).toBe("rate_limit");
+    expect(err?.status).toBe(500);
+    expect(err?.provider).toBe("ollama");
+    expect(err?.model).toBe("glm-5:cloud");
   });
 
   it("describes non-Error values consistently", () => {

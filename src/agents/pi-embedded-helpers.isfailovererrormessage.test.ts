@@ -17,6 +17,8 @@ describe("isFailoverErrorMessage", () => {
       "Your credit balance is too low",
       "request timed out",
       "invalid request format",
+      '500 "internal service error"',
+      "503 service unavailable",
     ];
     for (const sample of samples) {
       expect(isFailoverErrorMessage(sample)).toBe(true);
