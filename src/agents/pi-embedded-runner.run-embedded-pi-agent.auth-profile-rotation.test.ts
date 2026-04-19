@@ -218,6 +218,51 @@ describe("runEmbeddedPiAgent auth profile rotation", () => {
     }
   });
 
+  it("fails closed for telegram stabilization turns that produce no visible result", async () => {
+    const agentDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-agent-"));
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-workspace-"));
+    try {
+      await writeAuthStore(agentDir);
+
+      runEmbeddedAttemptMock.mockResolvedValueOnce(
+        makeAttempt({
+          assistantTexts: [],
+          lastAssistant: buildAssistant({
+            stopReason: "stop",
+            content: [],
+          }),
+        }),
+      );
+
+      const result = await runEmbeddedPiAgent({
+        sessionId: "session:test",
+        sessionKey: "agent:test:telegram-stabilization",
+        sessionFile: path.join(workspaceDir, "session.jsonl"),
+        workspaceDir,
+        agentDir,
+        config: makeConfig(),
+        prompt: "hello",
+        provider: "openai",
+        model: "mock-1",
+        authProfileId: "openai:p1",
+        authProfileIdSource: "user",
+        trustedTaskClass: "telegram-codex-stabilization",
+        timeoutMs: 5_000,
+        runId: "run:telegram-stabilization",
+      });
+
+      expect(result.payloads).toEqual([
+        {
+          text: "I failed to produce a usable result for that turn. Please retry.",
+          isError: true,
+        },
+      ]);
+    } finally {
+      await fs.rm(agentDir, { recursive: true, force: true });
+      await fs.rm(workspaceDir, { recursive: true, force: true });
+    }
+  });
+
   it("honors user-pinned profiles even when in cooldown", async () => {
     vi.useFakeTimers();
     try {

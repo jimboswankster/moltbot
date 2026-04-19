@@ -829,7 +829,7 @@ export async function runEmbeddedPiAgent(
             usage,
           };
 
-          const payloads = buildEmbeddedRunPayloads({
+          let payloads = buildEmbeddedRunPayloads({
             assistantTexts: attempt.assistantTexts,
             toolMetas: attempt.toolMetas,
             lastAssistant: attempt.lastAssistant,
@@ -841,11 +841,39 @@ export async function runEmbeddedPiAgent(
             toolResultFormat: resolvedToolResultFormat,
             inlineToolResultsAllowed: false,
           });
+          const telegramStabilizationEmptyResult =
+            params.trustedTaskClass === "telegram-codex-stabilization" &&
+            !aborted &&
+            payloads.length === 0 &&
+            !attempt.didSendViaMessagingTool &&
+            !attempt.clientToolCall;
+
+          if (telegramStabilizationEmptyResult) {
+            const emptyResultMessage =
+              "The agent produced no visible result for this Telegram stabilization turn.";
+            if (fallbackConfigured) {
+              throw new FailoverError(emptyResultMessage, {
+                reason: "unknown",
+                provider,
+                model: modelId,
+                profileId: lastProfileId,
+              });
+            }
+            log.warn(
+              `${emptyResultMessage} runId=${params.runId} sessionId=${params.sessionId} provider=${provider} model=${modelId}`,
+            );
+            payloads = [
+              {
+                text: "I failed to produce a usable result for that turn. Please retry.",
+                isError: true,
+              },
+            ];
+          }
 
           log.debug(
             `embedded run done: runId=${params.runId} sessionId=${params.sessionId} durationMs=${Date.now() - started} aborted=${aborted}`,
           );
-          if (lastProfileId) {
+          if (lastProfileId && !telegramStabilizationEmptyResult) {
             await markAuthProfileGood({
               store: authStore,
               provider,
