@@ -31,6 +31,7 @@ export function readLastCacheTtlTimestamp(sessionManager: unknown): number | nul
   try {
     const entries = sm.getEntries();
     let last: number | null = null;
+    // Iterate backwards to find most RECENT timestamp (last entry)
     for (let i = entries.length - 1; i >= 0; i--) {
       const entry = entries[i];
       if (entry?.type !== "custom" || entry?.customType !== CACHE_TTL_CUSTOM_TYPE) {
@@ -38,7 +39,8 @@ export function readLastCacheTtlTimestamp(sessionManager: unknown): number | nul
       }
       const data = entry?.data as Partial<CacheTtlEntryData> | undefined;
       const ts = typeof data?.timestamp === "number" ? data.timestamp : null;
-      if (ts && Number.isFinite(ts)) {
+      // FIX: Must be positive AND finite (reject negative, Infinity, NaN)
+      if (ts != null && ts > 0 && Number.isFinite(ts)) {
         last = ts;
         break;
       }
