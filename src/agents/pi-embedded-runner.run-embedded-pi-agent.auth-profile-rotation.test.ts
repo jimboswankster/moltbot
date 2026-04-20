@@ -253,8 +253,105 @@ describe("runEmbeddedPiAgent auth profile rotation", () => {
 
       expect(result.payloads).toEqual([
         {
-          text: "I failed to produce a usable result for that turn. Please retry.",
+          text: "I failed to produce a usable tool-backed result for that turn. Please retry.",
           isError: true,
+        },
+      ]);
+    } finally {
+      await fs.rm(agentDir, { recursive: true, force: true });
+      await fs.rm(workspaceDir, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed for telegram stabilization turns that only produce plain text", async () => {
+    const agentDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-agent-"));
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-workspace-"));
+    try {
+      await writeAuthStore(agentDir);
+
+      runEmbeddedAttemptMock.mockResolvedValueOnce(
+        makeAttempt({
+          assistantTexts: ["Here is a conversational answer with no tool use."],
+          lastAssistant: buildAssistant({
+            stopReason: "stop",
+            content: [{ type: "text", text: "Here is a conversational answer with no tool use." }],
+          }),
+        }),
+      );
+
+      const result = await runEmbeddedPiAgent({
+        sessionId: "session:test",
+        sessionKey: "agent:test:telegram-stabilization-plain-text",
+        sessionFile: path.join(workspaceDir, "session.jsonl"),
+        workspaceDir,
+        agentDir,
+        config: makeConfig(),
+        prompt: "hello",
+        provider: "openai",
+        model: "mock-1",
+        authProfileId: "openai:p1",
+        authProfileIdSource: "user",
+        trustedTaskClass: "telegram-codex-stabilization",
+        timeoutMs: 5_000,
+        runId: "run:telegram-stabilization-plain-text",
+      });
+
+      expect(result.payloads).toEqual([
+        {
+          text: "I failed to produce a usable tool-backed result for that turn. Please retry.",
+          isError: true,
+        },
+      ]);
+    } finally {
+      await fs.rm(agentDir, { recursive: true, force: true });
+      await fs.rm(workspaceDir, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts telegram stabilization turns that have tool activity", async () => {
+    const agentDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-agent-"));
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-workspace-"));
+    try {
+      await writeAuthStore(agentDir);
+
+      runEmbeddedAttemptMock.mockResolvedValueOnce(
+        makeAttempt({
+          assistantTexts: ["I read the files and found the blocker."],
+          toolMetas: [{ toolName: "read", meta: "Read one file successfully." }],
+          lastAssistant: buildAssistant({
+            stopReason: "stop",
+            content: [{ type: "text", text: "I read the files and found the blocker." }],
+          }),
+        }),
+      );
+
+      const result = await runEmbeddedPiAgent({
+        sessionId: "session:test",
+        sessionKey: "agent:test:telegram-stabilization-tool-backed",
+        sessionFile: path.join(workspaceDir, "session.jsonl"),
+        workspaceDir,
+        agentDir,
+        config: makeConfig(),
+        prompt: "hello",
+        provider: "openai",
+        model: "mock-1",
+        authProfileId: "openai:p1",
+        authProfileIdSource: "user",
+        trustedTaskClass: "telegram-codex-stabilization",
+        timeoutMs: 5_000,
+        runId: "run:telegram-stabilization-tool-backed",
+      });
+
+      expect(result.payloads).toEqual([
+        {
+          text: "I read the files and found the blocker.",
+          mediaUrls: undefined,
+          mediaUrl: undefined,
+          isError: undefined,
+          replyToId: undefined,
+          replyToTag: false,
+          replyToCurrent: false,
+          audioAsVoice: false,
         },
       ]);
     } finally {

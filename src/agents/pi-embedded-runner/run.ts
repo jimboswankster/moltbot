@@ -841,16 +841,29 @@ export async function runEmbeddedPiAgent(
             toolResultFormat: resolvedToolResultFormat,
             inlineToolResultsAllowed: false,
           });
+          const telegramStabilizationRequiresToolUse =
+            params.trustedTaskClass === "telegram-codex-stabilization";
+          const telegramStabilizationHasToolActivity =
+            attempt.toolMetas.length > 0 ||
+            Boolean(attempt.lastToolError) ||
+            attempt.didSendViaMessagingTool ||
+            Boolean(attempt.clientToolCall);
           const telegramStabilizationEmptyResult =
             params.trustedTaskClass === "telegram-codex-stabilization" &&
             !aborted &&
             payloads.length === 0 &&
             !attempt.didSendViaMessagingTool &&
             !attempt.clientToolCall;
+          const telegramStabilizationPlainChatResult =
+            telegramStabilizationRequiresToolUse &&
+            !aborted &&
+            payloads.length > 0 &&
+            !telegramStabilizationHasToolActivity;
 
-          if (telegramStabilizationEmptyResult) {
-            const emptyResultMessage =
-              "The agent produced no visible result for this Telegram stabilization turn.";
+          if (telegramStabilizationEmptyResult || telegramStabilizationPlainChatResult) {
+            const emptyResultMessage = telegramStabilizationEmptyResult
+              ? "The agent produced no visible result for this Telegram stabilization turn."
+              : "The agent produced a plain-text reply without any tool activity for this Telegram stabilization turn.";
             if (fallbackConfigured) {
               throw new FailoverError(emptyResultMessage, {
                 reason: "unknown",
@@ -864,7 +877,7 @@ export async function runEmbeddedPiAgent(
             );
             payloads = [
               {
-                text: "I failed to produce a usable result for that turn. Please retry.",
+                text: "I failed to produce a usable tool-backed result for that turn. Please retry.",
                 isError: true,
               },
             ];
@@ -873,7 +886,11 @@ export async function runEmbeddedPiAgent(
           log.debug(
             `embedded run done: runId=${params.runId} sessionId=${params.sessionId} durationMs=${Date.now() - started} aborted=${aborted}`,
           );
-          if (lastProfileId && !telegramStabilizationEmptyResult) {
+          if (
+            lastProfileId &&
+            !telegramStabilizationEmptyResult &&
+            !telegramStabilizationPlainChatResult
+          ) {
             await markAuthProfileGood({
               store: authStore,
               provider,
