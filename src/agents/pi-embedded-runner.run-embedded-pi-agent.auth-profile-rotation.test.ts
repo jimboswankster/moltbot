@@ -224,15 +224,25 @@ describe("runEmbeddedPiAgent auth profile rotation", () => {
     try {
       await writeAuthStore(agentDir);
 
-      runEmbeddedAttemptMock.mockResolvedValueOnce(
-        makeAttempt({
-          assistantTexts: [],
-          lastAssistant: buildAssistant({
-            stopReason: "stop",
-            content: [],
+      runEmbeddedAttemptMock
+        .mockResolvedValueOnce(
+          makeAttempt({
+            assistantTexts: [],
+            lastAssistant: buildAssistant({
+              stopReason: "stop",
+              content: [],
+            }),
           }),
-        }),
-      );
+        )
+        .mockResolvedValueOnce(
+          makeAttempt({
+            assistantTexts: [],
+            lastAssistant: buildAssistant({
+              stopReason: "stop",
+              content: [],
+            }),
+          }),
+        );
 
       const result = await runEmbeddedPiAgent({
         sessionId: "session:test",
@@ -257,6 +267,10 @@ describe("runEmbeddedPiAgent auth profile rotation", () => {
           isError: true,
         },
       ]);
+      expect(runEmbeddedAttemptMock).toHaveBeenCalledTimes(2);
+      expect(
+        (runEmbeddedAttemptMock.mock.calls[1]?.[0] as { prompt?: string } | undefined)?.prompt,
+      ).toContain("SYSTEM REPAIR REQUIREMENT");
     } finally {
       await fs.rm(agentDir, { recursive: true, force: true });
       await fs.rm(workspaceDir, { recursive: true, force: true });
@@ -269,15 +283,29 @@ describe("runEmbeddedPiAgent auth profile rotation", () => {
     try {
       await writeAuthStore(agentDir);
 
-      runEmbeddedAttemptMock.mockResolvedValueOnce(
-        makeAttempt({
-          assistantTexts: ["Here is a conversational answer with no tool use."],
-          lastAssistant: buildAssistant({
-            stopReason: "stop",
-            content: [{ type: "text", text: "Here is a conversational answer with no tool use." }],
+      runEmbeddedAttemptMock
+        .mockResolvedValueOnce(
+          makeAttempt({
+            assistantTexts: ["Here is a conversational answer with no tool use."],
+            lastAssistant: buildAssistant({
+              stopReason: "stop",
+              content: [
+                { type: "text", text: "Here is a conversational answer with no tool use." },
+              ],
+            }),
           }),
-        }),
-      );
+        )
+        .mockResolvedValueOnce(
+          makeAttempt({
+            assistantTexts: ["Here is still a conversational answer with no tool use."],
+            lastAssistant: buildAssistant({
+              stopReason: "stop",
+              content: [
+                { type: "text", text: "Here is still a conversational answer with no tool use." },
+              ],
+            }),
+          }),
+        );
 
       const result = await runEmbeddedPiAgent({
         sessionId: "session:test",
@@ -302,6 +330,10 @@ describe("runEmbeddedPiAgent auth profile rotation", () => {
           isError: true,
         },
       ]);
+      expect(runEmbeddedAttemptMock).toHaveBeenCalledTimes(2);
+      expect(
+        (runEmbeddedAttemptMock.mock.calls[1]?.[0] as { prompt?: string } | undefined)?.prompt,
+      ).toContain("SYSTEM REPAIR REQUIREMENT");
     } finally {
       await fs.rm(agentDir, { recursive: true, force: true });
       await fs.rm(workspaceDir, { recursive: true, force: true });
@@ -345,6 +377,72 @@ describe("runEmbeddedPiAgent auth profile rotation", () => {
       expect(result.payloads).toEqual([
         {
           text: "I read the files and found the blocker.",
+          mediaUrls: undefined,
+          mediaUrl: undefined,
+          isError: undefined,
+          replyToId: undefined,
+          replyToTag: false,
+          replyToCurrent: false,
+          audioAsVoice: false,
+        },
+      ]);
+    } finally {
+      await fs.rm(agentDir, { recursive: true, force: true });
+      await fs.rm(workspaceDir, { recursive: true, force: true });
+    }
+  });
+
+  it("recovers telegram stabilization turns when the repair retry produces tool activity", async () => {
+    const agentDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-agent-"));
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-workspace-"));
+    try {
+      await writeAuthStore(agentDir);
+
+      runEmbeddedAttemptMock
+        .mockResolvedValueOnce(
+          makeAttempt({
+            assistantTexts: ["Natural language only."],
+            lastAssistant: buildAssistant({
+              stopReason: "stop",
+              content: [{ type: "text", text: "Natural language only." }],
+            }),
+          }),
+        )
+        .mockResolvedValueOnce(
+          makeAttempt({
+            assistantTexts: ["I checked the files and found the issue."],
+            toolMetas: [{ toolName: "read", meta: "Read one file successfully." }],
+            lastAssistant: buildAssistant({
+              stopReason: "stop",
+              content: [{ type: "text", text: "I checked the files and found the issue." }],
+            }),
+          }),
+        );
+
+      const result = await runEmbeddedPiAgent({
+        sessionId: "session:test",
+        sessionKey: "agent:test:telegram-stabilization-repair-success",
+        sessionFile: path.join(workspaceDir, "session.jsonl"),
+        workspaceDir,
+        agentDir,
+        config: makeConfig(),
+        prompt: "hello",
+        provider: "openai",
+        model: "mock-1",
+        authProfileId: "openai:p1",
+        authProfileIdSource: "user",
+        trustedTaskClass: "telegram-codex-stabilization",
+        timeoutMs: 5_000,
+        runId: "run:telegram-stabilization-repair-success",
+      });
+
+      expect(runEmbeddedAttemptMock).toHaveBeenCalledTimes(2);
+      expect(
+        (runEmbeddedAttemptMock.mock.calls[1]?.[0] as { prompt?: string } | undefined)?.prompt,
+      ).toContain("SYSTEM REPAIR REQUIREMENT");
+      expect(result.payloads).toEqual([
+        {
+          text: "I checked the files and found the issue.",
           mediaUrls: undefined,
           mediaUrl: undefined,
           isError: undefined,

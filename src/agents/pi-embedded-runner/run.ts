@@ -64,6 +64,10 @@ type ApiKeyInfo = ResolvedProviderAuth;
 // Avoid Anthropic's refusal test token poisoning session transcripts.
 const ANTHROPIC_MAGIC_STRING_TRIGGER_REFUSAL = "ANTHROPIC_MAGIC_STRING_TRIGGER_REFUSAL";
 const ANTHROPIC_MAGIC_STRING_REPLACEMENT = "ANTHROPIC MAGIC STRING TRIGGER REFUSAL (redacted)";
+const TELEGRAM_STABILIZATION_TOOL_REPAIR_PROMPT =
+  "\n\nSYSTEM REPAIR REQUIREMENT: This Telegram stabilization turn requires real tool activity before any final reply. " +
+  "Do not answer conversationally. First use at least one relevant tool to inspect, verify, or act. " +
+  "Only after tool activity, return the final operator-facing reply grounded in those tool results.";
 
 function scrubAnthropicRefusalMagic(prompt: string): string {
   if (!prompt.includes(ANTHROPIC_MAGIC_STRING_TRIGGER_REFUSAL)) {
@@ -426,13 +430,15 @@ export async function runEmbeddedPiAgent(
       const MAX_COMPACTION_ATTEMPTS = 2;
       let compactionAttempts = 0;
       let allowProactiveCompaction = true;
+      let telegramStabilizationRepairAttempts = 0;
+      let activePrompt = params.prompt;
       try {
         while (true) {
           attemptedThinking.add(thinkLevel);
           await fs.mkdir(resolvedWorkspace, { recursive: true });
 
           const prompt =
-            provider === "anthropic" ? scrubAnthropicRefusalMagic(params.prompt) : params.prompt;
+            provider === "anthropic" ? scrubAnthropicRefusalMagic(activePrompt) : activePrompt;
 
           const attempt = await runEmbeddedAttempt({
             sessionId: params.sessionId,
@@ -861,10 +867,18 @@ export async function runEmbeddedPiAgent(
             !telegramStabilizationHasToolActivity;
 
           if (telegramStabilizationEmptyResult || telegramStabilizationPlainChatResult) {
+            if (telegramStabilizationRepairAttempts < 1) {
+              telegramStabilizationRepairAttempts += 1;
+              activePrompt = `${params.prompt}${TELEGRAM_STABILIZATION_TOOL_REPAIR_PROMPT}`;
+              log.warn(
+                `telegram stabilization produced a non-tool-backed result for ${provider}/${modelId}; retrying with explicit repair prompt (${telegramStabilizationRepairAttempts}/1)`,
+              );
+              continue;
+            }
             const emptyResultMessage = telegramStabilizationEmptyResult
               ? "The agent produced no visible result for this Telegram stabilization turn."
               : "The agent produced a plain-text reply without any tool activity for this Telegram stabilization turn.";
-            if (fallbackConfigured) {
+            if (fallbackConfigured && !telegramStabilizationRequiresToolUse) {
               throw new FailoverError(emptyResultMessage, {
                 reason: "unknown",
                 provider,
