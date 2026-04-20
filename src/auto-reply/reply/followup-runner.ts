@@ -28,6 +28,17 @@ import { incrementCompactionCount } from "./session-updates.js";
 import { persistSessionUsageUpdate } from "./session-usage.js";
 import { createTypingSignaler } from "./typing-mode.js";
 
+function resolveFollowupFallbacksOverride(
+  config: Parameters<typeof resolveAgentModelFallbacksOverride>[0],
+  sessionKey: string | undefined,
+  trustedTaskClass: string | undefined,
+): string[] | undefined {
+  if (trustedTaskClass === "telegram-codex-stabilization") {
+    return [];
+  }
+  return resolveAgentModelFallbacksOverride(config, resolveAgentIdFromSessionKey(sessionKey));
+}
+
 export function createFollowupRunner(params: {
   opts?: GetReplyOptions;
   typing: TypingController;
@@ -153,9 +164,10 @@ export function createFollowupRunner(params: {
             policyVersion: deterministic.policyVersion,
           },
           providerAllowlist: deterministic.providerAllowlist,
-          fallbacksOverride: resolveAgentModelFallbacksOverride(
+          fallbacksOverride: resolveFollowupFallbacksOverride(
             queued.run.config,
-            resolveAgentIdFromSessionKey(queued.run.sessionKey),
+            queued.run.sessionKey,
+            queued.run.trustedTaskClass,
           ),
           run: (provider, model) => {
             const authProfileId =

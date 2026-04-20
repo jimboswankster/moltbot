@@ -7,21 +7,26 @@ import { loadSessionStore, saveSessionStore, type SessionEntry } from "../../con
 import { createMockTypingController } from "./test-helpers.js";
 
 const runEmbeddedPiAgentMock = vi.fn();
+const { runWithModelFallbackMock } = vi.hoisted(() => ({
+  runWithModelFallbackMock: vi.fn(
+    async ({
+      provider,
+      model,
+      run,
+    }: {
+      provider: string;
+      model: string;
+      run: (provider: string, model: string) => Promise<unknown>;
+    }) => ({
+      result: await run(provider, model),
+      provider,
+      model,
+    }),
+  ),
+}));
 
 vi.mock("../../agents/model-fallback.js", () => ({
-  runWithModelFallback: async ({
-    provider,
-    model,
-    run,
-  }: {
-    provider: string;
-    model: string;
-    run: (provider: string, model: string) => Promise<unknown>;
-  }) => ({
-    result: await run(provider, model),
-    provider,
-    model,
-  }),
+  runWithModelFallback: runWithModelFallbackMock,
 }));
 
 vi.mock("../../agents/pi-embedded.js", () => ({
@@ -310,5 +315,32 @@ describe("createFollowupRunner messaging tool dedupe", () => {
     };
     expect(call.preserveRequestedModel).toBe(true);
     expect(call.trustedTaskClass).toBe("policy-review");
+  });
+
+  it("disables global fallbacks for telegram codex stabilization followups", async () => {
+    const onBlockReply = vi.fn(async () => {});
+    runWithModelFallbackMock.mockClear();
+    runEmbeddedPiAgentMock.mockReset();
+    runEmbeddedPiAgentMock.mockResolvedValueOnce({
+      payloads: [{ text: "hello world!" }],
+      meta: {},
+    });
+
+    const runner = createFollowupRunner({
+      opts: { onBlockReply },
+      typing: createMockTypingController(),
+      typingMode: "instant",
+      defaultModel: "anthropic/claude-opus-4-5",
+    });
+
+    const queued = baseQueuedRun("telegram");
+    queued.run.trustedTaskClass = "telegram-codex-stabilization";
+
+    await runner(queued);
+
+    const call = runWithModelFallbackMock.mock.calls.at(-1)?.[0] as {
+      fallbacksOverride?: string[];
+    };
+    expect(call.fallbacksOverride).toEqual([]);
   });
 });

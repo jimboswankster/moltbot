@@ -43,6 +43,17 @@ import { createBlockReplyPayloadKey, type BlockReplyPipeline } from "./block-rep
 import { parseReplyDirectives } from "./reply-directives.js";
 import { applyReplyTagsToPayload, isRenderablePayload } from "./reply-payloads.js";
 
+function resolveReplyRunnerFallbacksOverride(
+  config: Parameters<typeof resolveAgentModelFallbacksOverride>[0],
+  sessionKey: string | undefined,
+  trustedTaskClass: string | undefined,
+): string[] | undefined {
+  if (trustedTaskClass === "telegram-codex-stabilization") {
+    return [];
+  }
+  return resolveAgentModelFallbacksOverride(config, resolveAgentIdFromSessionKey(sessionKey));
+}
+
 export type AgentRunLoopResult =
   | {
       kind: "success";
@@ -174,9 +185,10 @@ export async function runAgentTurnWithFallback(params: {
           policyVersion: deterministic.policyVersion,
         },
         providerAllowlist: deterministic.providerAllowlist,
-        fallbacksOverride: resolveAgentModelFallbacksOverride(
+        fallbacksOverride: resolveReplyRunnerFallbacksOverride(
           params.followupRun.run.config,
-          resolveAgentIdFromSessionKey(params.followupRun.run.sessionKey),
+          params.followupRun.run.sessionKey,
+          params.followupRun.run.trustedTaskClass,
         ),
         run: (provider, model) => {
           // Notify that model selection is complete (including after fallback).
