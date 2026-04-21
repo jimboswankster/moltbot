@@ -203,6 +203,46 @@ describe("tool adversarial corpus", () => {
     }
   });
 
+  describe("retry stability", () => {
+    for (const fixture of TOOL_ADVERSARIAL_FAILURE_CORPUS.filter(
+      (candidate) =>
+        candidate.id === "read.live_2026_04_20.pathless_object_repeat" ||
+        candidate.id === "edit.live_2026_04_20.missing_old_text_repeat",
+    )) {
+      it(`${fixture.id}: repeated malformed retries stay deterministic`, async () => {
+        const wrapped = makeWrappedTool(fixture.tool as "read" | "edit");
+        const [def] = toToolDefinitions([wrapped]);
+
+        const first = await def.execute(
+          `call:${fixture.id}:1`,
+          fixture.payload,
+          undefined,
+          undefined,
+        );
+        const second = await def.execute(
+          `call:${fixture.id}:2`,
+          fixture.payload,
+          undefined,
+          undefined,
+        );
+
+        const firstDetails = (first.details ?? {}) as Record<string, unknown>;
+        const secondDetails = (second.details ?? {}) as Record<string, unknown>;
+
+        expect(firstDetails.errorCode).toBe(fixture.expected.errorCode);
+        expect(secondDetails.errorCode).toBe(fixture.expected.errorCode);
+        expect(firstDetails.errorCategory).toBe(secondDetails.errorCategory);
+        expect(firstDetails.retryable).toBe(secondDetails.retryable);
+        expect(firstDetails.next_action ?? firstDetails.nextAction).toBe(
+          secondDetails.next_action ?? secondDetails.nextAction,
+        );
+        expect(firstDetails.hint_commands ?? firstDetails.hintCommands).toEqual(
+          secondDetails.hint_commands ?? secondDetails.hintCommands,
+        );
+      });
+    }
+  });
+
   describe("mutation ladder success corpus", () => {
     for (const fixture of TOOL_ADVERSARIAL_SUCCESS_CORPUS) {
       it(`${fixture.id}: ${fixture.description}`, async () => {

@@ -3,6 +3,7 @@ export type ToolAdversarialFailureFixture = {
   source: "telemetry_replay" | "mutation_ladder";
   tool: "read" | "edit" | "message" | "web_search";
   description: string;
+  telemetryRef?: string;
   payload: unknown;
   expected: {
     errorCode: string;
@@ -56,6 +57,24 @@ export const TOOL_ADVERSARIAL_FAILURE_CORPUS: ToolAdversarialFailureFixture[] = 
     },
   },
   {
+    id: "read.live_2026_04_20.pathless_object_repeat",
+    source: "telemetry_replay",
+    tool: "read",
+    description:
+      "Replay the April 20, 2026 Telegram-lane pathless read family that still appeared after local hardening.",
+    telemetryRef:
+      "gateway.err.log: 2026-04-20T13:00-13:03Z repeated `read tool called without path` entries",
+    payload: {},
+    expected: {
+      errorCode: "TOOL_READ_MISSING_PATH",
+      errorCategory: "missing_required_param",
+      missingKeys: ["path"],
+      retryable: true,
+      nextActionIncludes: "concrete file path",
+      hintCommandIncludes: "read(path=",
+    },
+  },
+  {
     id: "read.mutation.non_object_payload",
     source: "mutation_ladder",
     tool: "read",
@@ -75,6 +94,24 @@ export const TOOL_ADVERSARIAL_FAILURE_CORPUS: ToolAdversarialFailureFixture[] = 
     source: "telemetry_replay",
     tool: "edit",
     description: "Replay frequent production edit attempt missing oldText/old_string.",
+    payload: { path: "foo.txt", newText: "after" },
+    expected: {
+      errorCode: "TOOL_EDIT_MISSING_OLD_TEXT",
+      errorCategory: "missing_required_param",
+      missingKeys: ["oldText"],
+      retryable: true,
+      nextActionIncludes: "Read the target file",
+      hintCommandIncludes: "read(path=",
+    },
+  },
+  {
+    id: "edit.live_2026_04_20.missing_old_text_repeat",
+    source: "telemetry_replay",
+    tool: "edit",
+    description:
+      "Replay the April 20, 2026 repeated edit calls that still omitted oldText in live telemetry.",
+    telemetryRef:
+      "gateway.err.log: 2026-04-20T13:03:38Z and nearby repeated `Missing required parameter: oldText` entries",
     payload: { path: "foo.txt", newText: "after" },
     expected: {
       errorCode: "TOOL_EDIT_MISSING_OLD_TEXT",
