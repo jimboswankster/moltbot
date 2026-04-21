@@ -1,7 +1,7 @@
 export type ToolAdversarialFailureFixture = {
   id: string;
   source: "telemetry_replay" | "mutation_ladder";
-  tool: "read" | "edit";
+  tool: "read" | "edit" | "message";
   description: string;
   payload: unknown;
   expected: {
@@ -114,6 +114,34 @@ export const TOOL_ADVERSARIAL_FAILURE_CORPUS: ToolAdversarialFailureFixture[] = 
       retryable: true,
       nextActionIncludes: "path, oldText, and newText",
       hintCommandIncludes: "read(path=",
+    },
+  },
+  {
+    id: "message.telemetry.missing_target",
+    source: "telemetry_replay",
+    tool: "message",
+    description: "Replay recurring send attempt with no explicit target.",
+    payload: { action: "send", message: "hi" },
+    expected: {
+      errorCode: "TOOL_MESSAGE_MISSING_TARGET",
+      errorCategory: "invalid_arguments",
+      retryable: true,
+      nextActionIncludes: "explicit target",
+      hintCommandIncludes: "message(action='send', target='telegram:<chatId>'",
+    },
+  },
+  {
+    id: "message.telemetry.unknown_target_handle",
+    source: "telemetry_replay",
+    tool: "message",
+    description: "Replay recurring Telegram unknown-target failure with a natural-language handle.",
+    payload: { action: "send", target: "desk", message: "hi" },
+    expected: {
+      errorCode: "TOOL_MESSAGE_UNKNOWN_TARGET",
+      errorCategory: "invalid_arguments",
+      retryable: true,
+      nextActionIncludes: "valid target id",
+      hintCommandIncludes: "message(action='send', target='telegram:<chatId>'",
     },
   },
 ];

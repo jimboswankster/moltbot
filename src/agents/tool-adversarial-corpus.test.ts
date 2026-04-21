@@ -6,6 +6,21 @@ import {
   TOOL_ADVERSARIAL_FAILURE_CORPUS,
   TOOL_ADVERSARIAL_SUCCESS_CORPUS,
 } from "./test-fixtures/tool-adversarial-corpus.js";
+import { createMessageTool } from "./tools/message-tool.js";
+
+const mocks = vi.hoisted(() => ({
+  runMessageAction: vi.fn(),
+}));
+
+vi.mock("../infra/outbound/message-action-runner.js", async () => {
+  const actual = await vi.importActual<typeof import("../infra/outbound/message-action-runner.js")>(
+    "../infra/outbound/message-action-runner.js",
+  );
+  return {
+    ...actual,
+    runMessageAction: mocks.runMessageAction,
+  };
+});
 
 function requiredGroupsFor(tool: "read" | "edit") {
   if (tool === "read") {
@@ -42,6 +57,52 @@ describe("tool adversarial corpus", () => {
   describe("replay failure corpus", () => {
     for (const fixture of TOOL_ADVERSARIAL_FAILURE_CORPUS) {
       it(`${fixture.id}: ${fixture.description}`, async () => {
+        if (fixture.tool === "message") {
+          mocks.runMessageAction.mockReset();
+          if (fixture.expected.errorCode === "TOOL_MESSAGE_UNKNOWN_TARGET") {
+            mocks.runMessageAction.mockRejectedValueOnce(
+              new Error('Unknown target "desk" for Telegram. Hint: <chatId>'),
+            );
+          }
+          const tool = createMessageTool({
+            config: {} as never,
+            requireExplicitTarget: true,
+          });
+          const [def] = toToolDefinitions([tool]);
+          const result = await def.execute(
+            `call:${fixture.id}`,
+            fixture.payload,
+            undefined,
+            undefined,
+          );
+
+          expect(result.details).toMatchObject({
+            status: "error",
+            tool: fixture.tool,
+            errorCode: fixture.expected.errorCode,
+            errorCategory: fixture.expected.errorCategory,
+          });
+          if (fixture.expected.retryable !== undefined) {
+            expect(result.details).toMatchObject({
+              retryable: fixture.expected.retryable,
+            });
+          }
+          const details = result.details as Record<string, unknown>;
+          if (fixture.expected.nextActionIncludes) {
+            expect(String(details.next_action ?? details.nextAction ?? "")).toContain(
+              fixture.expected.nextActionIncludes,
+            );
+          }
+          if (fixture.expected.hintCommandIncludes) {
+            const hints = Array.isArray(details.hint_commands)
+              ? details.hint_commands
+              : Array.isArray(details.hintCommands)
+                ? details.hintCommands
+                : [];
+            expect(hints.join("\n")).toContain(fixture.expected.hintCommandIncludes);
+          }
+          return;
+        }
         const wrapped =
           fixture.expected.errorCode === "TOOL_EDIT_ANCHOR_MISMATCH"
             ? makeWrappedTool(fixture.tool, async () => {
