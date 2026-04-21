@@ -7,6 +7,7 @@ import {
   TOOL_ADVERSARIAL_SUCCESS_CORPUS,
 } from "./test-fixtures/tool-adversarial-corpus.js";
 import { createMessageTool } from "./tools/message-tool.js";
+import { createWebSearchTool } from "./tools/web-tools.js";
 
 const mocks = vi.hoisted(() => ({
   runMessageAction: vi.fn(),
@@ -100,6 +101,57 @@ describe("tool adversarial corpus", () => {
                 ? details.hintCommands
                 : [];
             expect(hints.join("\n")).toContain(fixture.expected.hintCommandIncludes);
+          }
+          return;
+        }
+        if (fixture.tool === "web_search") {
+          const priorFetch = global.fetch;
+          vi.stubEnv("BRAVE_API_KEY", "test-key");
+          const status = fixture.expected.errorCode === "brave_auth_invalid" ? 422 : 429;
+          const body =
+            fixture.expected.errorCode === "brave_auth_invalid"
+              ? JSON.stringify({
+                  error: {
+                    code: "SUBSCRIPTION_TOKEN_INVALID",
+                    detail: "The provided subscription token is invalid.",
+                  },
+                })
+              : "rate limited";
+          const mockFetch = vi.fn(() =>
+            Promise.resolve({
+              ok: false,
+              status,
+              statusText: status === 422 ? "Unprocessable Entity" : "Too Many Requests",
+              text: () => Promise.resolve(body),
+            } as Response),
+          );
+          // @ts-expect-error test fetch stub
+          global.fetch = mockFetch;
+          try {
+            const tool = createWebSearchTool({ config: undefined, sandboxed: true });
+            const result = await tool?.execute?.(`call:${fixture.id}`, fixture.payload);
+            expect(result?.details).toMatchObject({
+              error: fixture.expected.errorCode,
+              error_category: fixture.expected.errorCategory,
+              retryable: fixture.expected.retryable,
+            });
+            const details = (result?.details ?? {}) as Record<string, unknown>;
+            if (fixture.expected.nextActionIncludes) {
+              expect(String(details.next_action ?? "")).toContain(
+                fixture.expected.nextActionIncludes,
+              );
+            }
+            if (fixture.expected.hintCommandIncludes) {
+              const hints = Array.isArray(details.hint_commands) ? details.hint_commands : [];
+              const hintDocs = Array.isArray(details.hint_docs) ? details.hint_docs : [];
+              expect([...hints, ...hintDocs].join("\n")).toContain(
+                fixture.expected.hintCommandIncludes,
+              );
+            }
+          } finally {
+            vi.unstubAllEnvs();
+            // @ts-expect-error restore fetch
+            global.fetch = priorFetch;
           }
           return;
         }

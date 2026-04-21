@@ -1,7 +1,7 @@
 export type ToolAdversarialFailureFixture = {
   id: string;
   source: "telemetry_replay" | "mutation_ladder";
-  tool: "read" | "edit" | "message";
+  tool: "read" | "edit" | "message" | "web_search";
   description: string;
   payload: unknown;
   expected: {
@@ -142,6 +142,34 @@ export const TOOL_ADVERSARIAL_FAILURE_CORPUS: ToolAdversarialFailureFixture[] = 
       retryable: true,
       nextActionIncludes: "valid target id",
       hintCommandIncludes: "message(action='send', target='telegram:<chatId>'",
+    },
+  },
+  {
+    id: "web_search.telemetry.brave_auth_invalid",
+    source: "telemetry_replay",
+    tool: "web_search",
+    description: "Replay recurring Brave invalid-subscription-token provider failure.",
+    payload: { query: "test" },
+    expected: {
+      errorCode: "brave_auth_invalid",
+      errorCategory: "provider_auth_invalid",
+      retryable: false,
+      nextActionIncludes: "BRAVE_API_KEY",
+      hintCommandIncludes: "openclaw configure --section web",
+    },
+  },
+  {
+    id: "web_search.telemetry.brave_rate_limited",
+    source: "telemetry_replay",
+    tool: "web_search",
+    description: "Replay recurring Brave rate-limit degradation.",
+    payload: { query: "test" },
+    expected: {
+      errorCode: "brave_rate_limited",
+      errorCategory: "provider_rate_limited",
+      retryable: true,
+      nextActionIncludes: "Wait briefly",
+      hintCommandIncludes: "docs.openclaw.ai/tools/web",
     },
   },
 ];
