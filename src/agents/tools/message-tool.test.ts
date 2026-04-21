@@ -216,3 +216,54 @@ describe("message tool sandbox passthrough", () => {
     expect(call?.sandboxRoot).toBeUndefined();
   });
 });
+
+describe("message tool recovery hints", () => {
+  it("returns structured hints when an explicit target is missing", async () => {
+    mocks.runMessageAction.mockClear();
+
+    const tool = createMessageTool({
+      config: {} as never,
+      requireExplicitTarget: true,
+    });
+
+    await expect(
+      tool.execute("1", {
+        action: "send",
+        message: "hi",
+      }),
+    ).rejects.toMatchObject({
+      errorCode: "TOOL_MESSAGE_MISSING_TARGET",
+      errorCategory: "invalid_arguments",
+      retryable: true,
+      nextAction: expect.stringMatching(/explicit target/i),
+      hintCommands: expect.arrayContaining([
+        expect.stringContaining("message(action='send', target='telegram:<chatId>'"),
+      ]),
+    });
+  });
+
+  it("returns structured hints when the downstream runner reports an unknown target", async () => {
+    mocks.runMessageAction.mockClear();
+    mocks.runMessageAction.mockRejectedValue(
+      new Error('Unknown target "desk" for Telegram. Hint: <chatId>'),
+    );
+
+    const tool = createMessageTool({
+      config: {} as never,
+    });
+
+    await expect(
+      tool.execute("1", {
+        action: "send",
+        target: "desk",
+        message: "hi",
+      }),
+    ).rejects.toMatchObject({
+      errorCode: "TOOL_MESSAGE_UNKNOWN_TARGET",
+      errorCategory: "invalid_arguments",
+      retryable: true,
+      nextAction: expect.stringMatching(/valid target id|exact channel\/user handle/i),
+      hintDocs: expect.arrayContaining(["/Users/basecamp/openclaw/docs/cli/message.md"]),
+    });
+  });
+});

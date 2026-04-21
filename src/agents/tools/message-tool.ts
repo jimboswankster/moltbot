@@ -20,6 +20,7 @@ import { normalizeMessageChannel } from "../../utils/message-channel.js";
 import { resolveSessionAgentId } from "../agent-scope.js";
 import { listChannelSupportedActions } from "../channel-tools.js";
 import { channelTargetSchema, channelTargetsSchema, stringEnum } from "../schema/typebox.js";
+import { buildToolFailureHints, type ToolExecutionError } from "../tool-hints.js";
 import { jsonResult, readNumberParam, readStringParam } from "./common.js";
 
 const AllMessageActions = CHANNEL_MESSAGE_ACTION_NAMES;
@@ -35,6 +36,44 @@ const EXPLICIT_TARGET_ACTIONS = new Set<ChannelMessageActionName>([
 function actionNeedsExplicitTarget(action: ChannelMessageActionName): boolean {
   return EXPLICIT_TARGET_ACTIONS.has(action);
 }
+
+type MessageToolFailureCode =
+  | "TOOL_MESSAGE_MISSING_TARGET"
+  | "TOOL_MESSAGE_UNKNOWN_TARGET"
+  | "TOOL_MESSAGE_AMBIGUOUS_TARGET";
+
+function classifyMessageToolError(error: unknown): MessageToolFailureCode | undefined {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  if (
+    /requires a target/i.test(message) ||
+    /explicit message target required/i.test(message) ||
+    /requires target/i.test(message)
+  ) {
+    return "TOOL_MESSAGE_MISSING_TARGET";
+  }
+  if (/unknown target/i.test(message)) {
+    return "TOOL_MESSAGE_UNKNOWN_TARGET";
+  }
+  if (/ambiguous target/i.test(message)) {
+    return "TOOL_MESSAGE_AMBIGUOUS_TARGET";
+  }
+  return undefined;
+}
+
+function enrichMessageToolError(error: unknown, code: MessageToolFailureCode): never {
+  const message = error instanceof Error ? error.message : String(error ?? "Message tool failed");
+  const hintBundle = buildToolFailureHints(code);
+  const toolError = new Error(message) as ToolExecutionError;
+  toolError.errorCode = code;
+  toolError.errorCategory = "invalid_arguments";
+  toolError.retryable = hintBundle.retryable;
+  toolError.nextAction = hintBundle.next_action;
+  toolError.hintCommands = hintBundle.hint_commands;
+  toolError.hintDocs = hintBundle.hint_docs;
+  toolError.hintContract = hintBundle.hint_contract;
+  throw toolError;
+}
+
 function buildRoutingSchema() {
   return {
     channel: Type.Optional(Type.String()),
@@ -415,8 +454,11 @@ export function createMessageTool(options?: MessageToolOptions): AnyAgentTool {
           (Array.isArray(params.targets) &&
             params.targets.some((value) => typeof value === "string" && value.trim().length > 0));
         if (!explicitTarget) {
-          throw new Error(
-            "Explicit message target required for this run. Provide target/targets (and channel when needed).",
+          enrichMessageToolError(
+            new Error(
+              "Explicit message target required for this run. Provide target/targets (and channel when needed).",
+            ),
+            "TOOL_MESSAGE_MISSING_TARGET",
           );
         }
       }
@@ -453,19 +495,28 @@ export function createMessageTool(options?: MessageToolOptions): AnyAgentTool {
             }
           : undefined;
 
-      const result = await runMessageAction({
-        cfg,
-        action,
-        params,
-        defaultAccountId: accountId ?? undefined,
-        gateway,
-        toolContext,
-        agentId: options?.agentSessionKey
-          ? resolveSessionAgentId({ sessionKey: options.agentSessionKey, config: cfg })
-          : undefined,
-        sandboxRoot: options?.sandboxRoot,
-        abortSignal: signal,
-      });
+      let result;
+      try {
+        result = await runMessageAction({
+          cfg,
+          action,
+          params,
+          defaultAccountId: accountId ?? undefined,
+          gateway,
+          toolContext,
+          agentId: options?.agentSessionKey
+            ? resolveSessionAgentId({ sessionKey: options.agentSessionKey, config: cfg })
+            : undefined,
+          sandboxRoot: options?.sandboxRoot,
+          abortSignal: signal,
+        });
+      } catch (error) {
+        const code = classifyMessageToolError(error);
+        if (code) {
+          enrichMessageToolError(error, code);
+        }
+        throw error;
+      }
 
       const toolResult = getToolResult(result);
       if (toolResult) {

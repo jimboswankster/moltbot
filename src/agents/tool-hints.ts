@@ -25,19 +25,23 @@ type ToolHintCode =
   | "TOOL_EDIT_MISSING_PATH"
   | "TOOL_EDIT_MISSING_OLD_TEXT"
   | "TOOL_EDIT_MISSING_NEW_TEXT"
-  | "TOOL_EDIT_ANCHOR_MISMATCH";
+  | "TOOL_EDIT_ANCHOR_MISMATCH"
+  | "TOOL_MESSAGE_MISSING_TARGET"
+  | "TOOL_MESSAGE_UNKNOWN_TARGET"
+  | "TOOL_MESSAGE_AMBIGUOUS_TARGET";
 
 const TOOL_DOCS = {
   read: ["/Users/basecamp/openclaw/docs/tools/index.md"],
   edit: ["/Users/basecamp/openclaw/docs/tools/index.md"],
+  message: ["/Users/basecamp/openclaw/docs/cli/message.md"],
 } as const;
 
-function baseHintContract(tool: "read" | "edit"): ToolHintContract {
+function baseHintContract(tool: "read" | "edit" | "message"): ToolHintContract {
   return {
     schema_version: "hint.contract.v1",
     kind: "tool_failure",
     tool,
-    lane_chain: [tool, "read", "exec"],
+    lane_chain: tool === "message" ? [tool, "read", "exec"] : [tool, "read", "exec"],
     guidance: {
       mode: "progressive_repair",
       default_detail: "summary",
@@ -127,6 +131,42 @@ export function buildToolFailureHints(code: ToolHintCode): ToolHintBundle {
         ],
         hint_docs: [...TOOL_DOCS.edit],
         hint_contract: baseHintContract("edit"),
+      };
+    case "TOOL_MESSAGE_MISSING_TARGET":
+      return {
+        retryable: true,
+        next_action:
+          "Retry the message call with an explicit target. Use a provider-scoped target id when available.",
+        hint_commands: [
+          "message(action='send', target='telegram:<chatId>', message='...')",
+          "message(action='send', target='slack:#channel-or-user', message='...')",
+        ],
+        hint_docs: [...TOOL_DOCS.message],
+        hint_contract: baseHintContract("message"),
+      };
+    case "TOOL_MESSAGE_UNKNOWN_TARGET":
+      return {
+        retryable: true,
+        next_action:
+          "Retry the message call with a valid target id or exact channel/user handle for the selected provider.",
+        hint_commands: [
+          "message(action='send', target='telegram:<chatId>', message='...')",
+          "message(action='send', target='slack:#exact-channel', message='...')",
+        ],
+        hint_docs: [...TOOL_DOCS.message],
+        hint_contract: baseHintContract("message"),
+      };
+    case "TOOL_MESSAGE_AMBIGUOUS_TARGET":
+      return {
+        retryable: true,
+        next_action:
+          "Retry the message call with a unique provider-scoped target id instead of a partial or ambiguous name.",
+        hint_commands: [
+          "message(action='send', target='telegram:<chatId>', message='...')",
+          "message(action='send', target='slack:C123456', message='...')",
+        ],
+        hint_docs: [...TOOL_DOCS.message],
+        hint_contract: baseHintContract("message"),
       };
   }
 }
