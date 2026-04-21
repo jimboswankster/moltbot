@@ -195,6 +195,64 @@ function missingSearchKeyPayload(provider: (typeof SEARCH_PROVIDERS)[number]) {
   };
 }
 
+function classifyWebSearchFailure(
+  provider: (typeof SEARCH_PROVIDERS)[number],
+  err: unknown,
+): Record<string, unknown> | undefined {
+  if (!(err instanceof Error)) {
+    return undefined;
+  }
+
+  const message = err.message || String(err);
+  if (provider === "brave") {
+    if (
+      message.includes("SUBSCRIPTION_TOKEN_INVALID") ||
+      message.includes("Brave Search API error (422)")
+    ) {
+      return {
+        error: "brave_auth_invalid",
+        error_category: "provider_auth_invalid",
+        provider: "brave",
+        retryable: false,
+        message:
+          "Brave Search rejected the configured subscription token. Rotate or replace the Brave API key instead of retrying the same request.",
+        next_action:
+          "Update BRAVE_API_KEY or tools.web.search.apiKey with a valid Data for Search token, then retry.",
+        hint_commands: ["openclaw configure --section web"],
+        hint_docs: ["https://docs.openclaw.ai/tools/web", "https://docs.openclaw.ai/brave-search"],
+      };
+    }
+    if (message.includes("Brave Search API error (403)")) {
+      return {
+        error: "brave_forbidden",
+        error_category: "provider_auth_invalid",
+        provider: "brave",
+        retryable: false,
+        message:
+          "Brave Search refused the request. Check whether the configured API key and plan are valid for Data for Search.",
+        next_action:
+          "Verify the Brave API key and plan, then retry after configuration is corrected.",
+        hint_commands: ["openclaw configure --section web"],
+        hint_docs: ["https://docs.openclaw.ai/tools/web", "https://docs.openclaw.ai/brave-search"],
+      };
+    }
+    if (message.includes("Brave Search API error (429)")) {
+      return {
+        error: "brave_rate_limited",
+        error_category: "provider_rate_limited",
+        provider: "brave",
+        retryable: true,
+        message:
+          "Brave Search rate-limited the request. Retrying immediately may fail again until the window clears.",
+        next_action: "Wait briefly or lower query volume, then retry the request.",
+        hint_docs: ["https://docs.openclaw.ai/tools/web", "https://docs.openclaw.ai/brave-search"],
+      };
+    }
+  }
+
+  return undefined;
+}
+
 function resolveSearchProvider(search?: WebSearchConfig): (typeof SEARCH_PROVIDERS)[number] {
   const raw =
     search && "provider" in search && typeof search.provider === "string"
@@ -790,29 +848,37 @@ export function createWebSearchTool(options?: {
           docs: "https://docs.openclaw.ai/tools/web",
         });
       }
-      const result = await runWebSearch({
-        query,
-        count: resolveSearchCount(count, DEFAULT_SEARCH_COUNT),
-        apiKey,
-        timeoutSeconds: resolveTimeoutSeconds(search?.timeoutSeconds, DEFAULT_TIMEOUT_SECONDS),
-        cacheTtlMs: resolveCacheTtlMs(search?.cacheTtlMinutes, DEFAULT_CACHE_TTL_MINUTES),
-        provider,
-        policyProvider: options?.llmProvider,
-        policyModel: options?.llmModelId,
-        country,
-        search_lang,
-        ui_lang,
-        freshness,
-        perplexityBaseUrl: resolvePerplexityBaseUrl(
-          perplexityConfig,
-          perplexityAuth?.source,
-          perplexityAuth?.apiKey,
-        ),
-        perplexityModel: resolvePerplexityModel(perplexityConfig),
-        grokModel: resolveGrokModel(grokConfig),
-        grokInlineCitations: resolveGrokInlineCitations(grokConfig),
-      });
-      return jsonResult(result);
+      try {
+        const result = await runWebSearch({
+          query,
+          count: resolveSearchCount(count, DEFAULT_SEARCH_COUNT),
+          apiKey,
+          timeoutSeconds: resolveTimeoutSeconds(search?.timeoutSeconds, DEFAULT_TIMEOUT_SECONDS),
+          cacheTtlMs: resolveCacheTtlMs(search?.cacheTtlMinutes, DEFAULT_CACHE_TTL_MINUTES),
+          provider,
+          policyProvider: options?.llmProvider,
+          policyModel: options?.llmModelId,
+          country,
+          search_lang,
+          ui_lang,
+          freshness,
+          perplexityBaseUrl: resolvePerplexityBaseUrl(
+            perplexityConfig,
+            perplexityAuth?.source,
+            perplexityAuth?.apiKey,
+          ),
+          perplexityModel: resolvePerplexityModel(perplexityConfig),
+          grokModel: resolveGrokModel(grokConfig),
+          grokInlineCitations: resolveGrokInlineCitations(grokConfig),
+        });
+        return jsonResult(result);
+      } catch (err) {
+        const classified = classifyWebSearchFailure(provider, err);
+        if (classified) {
+          return jsonResult(classified);
+        }
+        throw err;
+      }
     },
   };
 }

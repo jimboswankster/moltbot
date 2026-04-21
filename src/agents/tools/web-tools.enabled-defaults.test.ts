@@ -121,6 +121,61 @@ describe("web_search country and language parameters", () => {
     expect(mockFetch).not.toHaveBeenCalled();
     expect(result?.details).toMatchObject({ error: "invalid_freshness" });
   });
+
+  it("classifies invalid Brave subscription tokens as provider auth failures", async () => {
+    const mockFetch = vi.fn(() =>
+      Promise.resolve({
+        ok: false,
+        status: 422,
+        statusText: "Unprocessable Entity",
+        text: () =>
+          Promise.resolve(
+            JSON.stringify({
+              error: {
+                code: "SUBSCRIPTION_TOKEN_INVALID",
+                detail: "The provided subscription token is invalid.",
+              },
+            }),
+          ),
+      } as Response),
+    );
+    // @ts-expect-error mock fetch
+    global.fetch = mockFetch;
+
+    const tool = createWebSearchTool({ config: undefined, sandboxed: true });
+    const result = await tool?.execute?.(1, { query: "test" });
+
+    expect(result?.details).toMatchObject({
+      error: "brave_auth_invalid",
+      error_category: "provider_auth_invalid",
+      provider: "brave",
+      retryable: false,
+    });
+    expect((result?.details as Record<string, unknown>)?.next_action).toMatch(/BRAVE_API_KEY/);
+  });
+
+  it("classifies Brave rate limits as retryable provider degradation", async () => {
+    const mockFetch = vi.fn(() =>
+      Promise.resolve({
+        ok: false,
+        status: 429,
+        statusText: "Too Many Requests",
+        text: () => Promise.resolve("rate limited"),
+      } as Response),
+    );
+    // @ts-expect-error mock fetch
+    global.fetch = mockFetch;
+
+    const tool = createWebSearchTool({ config: undefined, sandboxed: true });
+    const result = await tool?.execute?.(1, { query: "test" });
+
+    expect(result?.details).toMatchObject({
+      error: "brave_rate_limited",
+      error_category: "provider_rate_limited",
+      provider: "brave",
+      retryable: true,
+    });
+  });
 });
 
 describe("web_search perplexity baseUrl defaults", () => {
