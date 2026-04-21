@@ -169,22 +169,30 @@ export function normalizeToolParams(params: unknown): Record<string, unknown> | 
     delete normalized.input;
   }
   // file_path/filepath → path (read, write, edit)
-  if ("file_path" in normalized && !("path" in normalized)) {
-    normalized.path = normalized.file_path;
+  if ("file_path" in normalized) {
+    if (!("path" in normalized)) {
+      normalized.path = normalized.file_path;
+    }
     delete normalized.file_path;
   }
-  if ("filepath" in normalized && !("path" in normalized)) {
-    normalized.path = normalized.filepath;
+  if ("filepath" in normalized) {
+    if (!("path" in normalized)) {
+      normalized.path = normalized.filepath;
+    }
     delete normalized.filepath;
   }
   // old_string → oldText (edit)
-  if ("old_string" in normalized && !("oldText" in normalized)) {
-    normalized.oldText = normalized.old_string;
+  if ("old_string" in normalized) {
+    if (!("oldText" in normalized)) {
+      normalized.oldText = normalized.old_string;
+    }
     delete normalized.old_string;
   }
   // new_string → newText (edit)
-  if ("new_string" in normalized && !("newText" in normalized)) {
-    normalized.newText = normalized.new_string;
+  if ("new_string" in normalized) {
+    if (!("newText" in normalized)) {
+      normalized.newText = normalized.new_string;
+    }
     delete normalized.new_string;
   }
   return normalized;
