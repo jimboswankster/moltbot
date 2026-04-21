@@ -40,6 +40,44 @@ describe("createOpenClawCodingTools", () => {
       expect(params.required ?? []).not.toContain("path");
       expect(params.required ?? []).not.toContain("file_path");
       expect(params.required ?? []).not.toContain("filepath");
+      expect(String((patched.parameters as { description?: string }).description ?? "")).toContain(
+        "Required: provide a destination path using path, file_path, or filepath.",
+      );
+      expect(String(patched.description ?? "")).toContain(
+        "Required: provide a destination path using path, file_path, or filepath.",
+      );
+    });
+
+    it("adds explicit model-facing sequencing guidance to edit tools", () => {
+      const base: AgentTool = {
+        name: "edit",
+        description: "Edit a file.",
+        parameters: {
+          type: "object",
+          required: ["path", "oldText", "newText"],
+          properties: {
+            path: { type: "string", description: "Path" },
+            oldText: { type: "string", description: "Old text" },
+            newText: { type: "string", description: "New text" },
+          },
+        },
+        execute: vi.fn(),
+      };
+
+      const patched = __testing.patchToolSchemaForClaudeCompatibility(base);
+      const params = patched.parameters as {
+        properties?: Record<string, { description?: string }>;
+        description?: string;
+      };
+
+      expect(String(patched.description ?? "")).toContain("Read the file first");
+      expect(String(params.description ?? "")).toContain("oldText/old_string");
+      expect(String(params.properties?.old_string?.description ?? "")).toContain(
+        "Read the file first",
+      );
+      expect(String(params.properties?.new_string?.description ?? "")).toContain(
+        "newText/new_string",
+      );
     });
 
     it("normalizes file_path to path and enforces required groups at runtime", async () => {

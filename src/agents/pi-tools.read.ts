@@ -143,6 +143,43 @@ export const CLAUDE_PARAM_GROUPS = {
   ],
 } as const;
 
+function aliasInstructionForTool(toolName: string): string | undefined {
+  if (toolName === "read") {
+    return (
+      "Required: provide a file path using path, file_path, or filepath. " +
+      "Do not call read without one of those fields."
+    );
+  }
+  if (toolName === "write") {
+    return "Required: provide a destination path using path, file_path, or filepath.";
+  }
+  if (toolName === "edit") {
+    return (
+      "Required: provide path/file_path/filepath plus oldText/old_string and newText/new_string. " +
+      "Read the file first when you are not certain of the exact oldText anchor."
+    );
+  }
+  return undefined;
+}
+
+function appendInstruction(
+  base: string | undefined,
+  extra: string | undefined,
+): string | undefined {
+  const trimmedBase = typeof base === "string" ? base.trim() : "";
+  const trimmedExtra = typeof extra === "string" ? extra.trim() : "";
+  if (!trimmedExtra) {
+    return trimmedBase || undefined;
+  }
+  if (!trimmedBase) {
+    return trimmedExtra;
+  }
+  if (trimmedBase.includes(trimmedExtra)) {
+    return trimmedBase;
+  }
+  return `${trimmedBase} ${trimmedExtra}`;
+}
+
 // Normalize tool parameters from Claude Code conventions to pi-coding-agent conventions.
 // Claude Code uses file_path/old_string/new_string while pi-coding-agent uses path/oldText/newText.
 // This prevents models trained on Claude Code from getting stuck in tool-call loops.
@@ -213,6 +250,7 @@ export function patchToolSchemaForClaudeCompatibility(tool: AnyAgentTool): AnyAg
     ? schema.required.filter((key): key is string => typeof key === "string")
     : [];
   let changed = false;
+  const instruction = aliasInstructionForTool(tool.name);
 
   const aliasPairs: Array<{ original: string; alias: string }> = [
     { original: "path", alias: "file_path" },
@@ -221,12 +259,41 @@ export function patchToolSchemaForClaudeCompatibility(tool: AnyAgentTool): AnyAg
     { original: "newText", alias: "new_string" },
   ];
 
+  for (const original of ["path", "oldText", "newText"] as const) {
+    if (!(original in properties)) {
+      continue;
+    }
+    const prop = properties[original];
+    if (prop && typeof prop === "object") {
+      const nextProp = { ...(prop as Record<string, unknown>) };
+      const nextDescription = appendInstruction(
+        typeof nextProp.description === "string" ? nextProp.description : undefined,
+        instruction,
+      );
+      if (nextDescription !== nextProp.description) {
+        nextProp.description = nextDescription;
+        properties[original] = nextProp;
+        changed = true;
+      }
+    }
+  }
+
   for (const { original, alias } of aliasPairs) {
     if (!(original in properties)) {
       continue;
     }
     if (!(alias in properties)) {
-      properties[alias] = properties[original];
+      const originalProp =
+        properties[original] && typeof properties[original] === "object"
+          ? ({ ...(properties[original] as Record<string, unknown>) } as Record<string, unknown>)
+          : properties[original];
+      if (originalProp && typeof originalProp === "object") {
+        originalProp.description = appendInstruction(
+          typeof originalProp.description === "string" ? originalProp.description : undefined,
+          instruction,
+        );
+      }
+      properties[alias] = originalProp;
       changed = true;
     }
     const idx = required.indexOf(original);
@@ -237,13 +304,31 @@ export function patchToolSchemaForClaudeCompatibility(tool: AnyAgentTool): AnyAg
   }
 
   if (!changed) {
-    return tool;
+    if (!instruction) {
+      return tool;
+    }
+    return {
+      ...tool,
+      description: appendInstruction(tool.description, instruction) ?? tool.description,
+      parameters: {
+        ...schema,
+        description: appendInstruction(
+          typeof schema.description === "string" ? schema.description : undefined,
+          instruction,
+        ),
+      },
+    };
   }
 
   return {
     ...tool,
+    description: appendInstruction(tool.description, instruction) ?? tool.description,
     parameters: {
       ...schema,
+      description: appendInstruction(
+        typeof schema.description === "string" ? schema.description : undefined,
+        instruction,
+      ),
       properties,
       required,
     },
