@@ -19,7 +19,9 @@ export type ToolHintBundle = {
 };
 
 type ToolHintCode =
+  | "TOOL_READ_MISSING_PARAMETERS"
   | "TOOL_READ_MISSING_PATH"
+  | "TOOL_EDIT_MISSING_PARAMETERS"
   | "TOOL_EDIT_MISSING_PATH"
   | "TOOL_EDIT_MISSING_OLD_TEXT"
   | "TOOL_EDIT_MISSING_NEW_TEXT"
@@ -56,6 +58,30 @@ export function buildToolFailureHints(code: ToolHintCode): ToolHintBundle {
         ],
         hint_docs: [...TOOL_DOCS.read],
         hint_contract: baseHintContract("read"),
+      };
+    case "TOOL_READ_MISSING_PARAMETERS":
+      return {
+        retryable: true,
+        next_action:
+          "Retry the read call with an object payload that includes a concrete file path.",
+        hint_commands: [
+          "read(path='relative/or/absolute/file.txt')",
+          "exec(command='rg --files . | rg \"<filename-fragment>\"')",
+        ],
+        hint_docs: [...TOOL_DOCS.read],
+        hint_contract: baseHintContract("read"),
+      };
+    case "TOOL_EDIT_MISSING_PARAMETERS":
+      return {
+        retryable: true,
+        next_action:
+          "Retry edit with an object payload containing path, oldText, and newText. Read the file first if you are not certain of the exact anchor text.",
+        hint_commands: [
+          "read(path='relative/or/absolute/file.txt')",
+          "edit(path='relative/or/absolute/file.txt', oldText='exact old text', newText='replacement text')",
+        ],
+        hint_docs: [...TOOL_DOCS.edit],
+        hint_contract: baseHintContract("edit"),
       };
     case "TOOL_EDIT_MISSING_PATH":
       return {

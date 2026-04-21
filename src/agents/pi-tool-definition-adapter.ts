@@ -121,9 +121,13 @@ export function toToolDefinitions(tools: AnyAgentTool[]): ToolDefinition[] {
             ...(metadata?.missingKeys ? { missingKeys: metadata.missingKeys } : {}),
             ...(metadata?.retryable !== undefined ? { retryable: metadata.retryable } : {}),
             ...(metadata?.nextAction ? { nextAction: metadata.nextAction } : {}),
+            ...(metadata?.nextAction ? { next_action: metadata.nextAction } : {}),
             ...(metadata?.hintCommands ? { hintCommands: metadata.hintCommands } : {}),
+            ...(metadata?.hintCommands ? { hint_commands: metadata.hintCommands } : {}),
             ...(metadata?.hintDocs ? { hintDocs: metadata.hintDocs } : {}),
+            ...(metadata?.hintDocs ? { hint_docs: metadata.hintDocs } : {}),
             ...(metadata?.hintContract ? { hintContract: metadata.hintContract } : {}),
+            ...(metadata?.hintContract ? { hint_contract: metadata.hintContract } : {}),
           });
         }
       },

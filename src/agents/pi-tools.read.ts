@@ -248,10 +248,24 @@ export function assertRequiredParams(
   toolName: string,
 ): void {
   if (!record || typeof record !== "object") {
+    const hintCode =
+      toolName === "read"
+        ? "TOOL_READ_MISSING_PARAMETERS"
+        : toolName === "edit"
+          ? "TOOL_EDIT_MISSING_PARAMETERS"
+          : undefined;
+    const hintBundle = hintCode ? buildToolFailureHints(hintCode) : undefined;
     const err = new Error(`Missing parameters for ${toolName}`) as ToolExecutionError;
-    err.errorCode = `TOOL_${toolName.toUpperCase()}_MISSING_PARAMETERS`;
+    err.errorCode = hintCode ?? `TOOL_${toolName.toUpperCase()}_MISSING_PARAMETERS`;
     err.errorCategory = "missing_required_param";
     err.missingKeys = groups.map((group) => group.keys[0] ?? "unknown");
+    if (hintBundle) {
+      err.retryable = hintBundle.retryable;
+      err.nextAction = hintBundle.next_action;
+      err.hintCommands = hintBundle.hint_commands;
+      err.hintDocs = hintBundle.hint_docs;
+      err.hintContract = hintBundle.hint_contract;
+    }
     throw err;
   }
 

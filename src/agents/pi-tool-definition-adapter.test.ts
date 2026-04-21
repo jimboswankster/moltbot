@@ -80,6 +80,54 @@ describe("pi tool definition adapter", () => {
       missingKeys: ["path"],
       retryable: true,
       nextAction: "Retry the read call with a concrete file path.",
+      next_action: "Retry the read call with a concrete file path.",
+    });
+  });
+
+  it("mirrors hint metadata using mission-control-style snake_case keys", async () => {
+    const tool = {
+      name: "edit",
+      label: "Edit",
+      description: "throws",
+      parameters: {},
+      execute: async () => {
+        const err = new Error("Missing parameters for edit") as Error & {
+          errorCode?: string;
+          errorCategory?: string;
+          missingKeys?: string[];
+          retryable?: boolean;
+          nextAction?: string;
+          hintCommands?: string[];
+          hintDocs?: string[];
+          hintContract?: Record<string, unknown>;
+        };
+        err.errorCode = "TOOL_EDIT_MISSING_PARAMETERS";
+        err.errorCategory = "missing_required_param";
+        err.missingKeys = ["path", "oldText", "newText"];
+        err.retryable = true;
+        err.nextAction = "Retry edit with an object payload containing path, oldText, and newText.";
+        err.hintCommands = [
+          "read(path='file.txt')",
+          "edit(path='file.txt', oldText='a', newText='b')",
+        ];
+        err.hintDocs = ["/Users/basecamp/openclaw/docs/tools/index.md"];
+        err.hintContract = { schema_version: "hint.contract.v1" };
+        throw err;
+      },
+    } satisfies AgentTool<unknown, unknown>;
+
+    const defs = toToolDefinitions([tool]);
+    const result = await defs[0].execute("call4", {}, undefined, undefined);
+
+    expect(result.details).toMatchObject({
+      nextAction: "Retry edit with an object payload containing path, oldText, and newText.",
+      next_action: "Retry edit with an object payload containing path, oldText, and newText.",
+      hintCommands: ["read(path='file.txt')", "edit(path='file.txt', oldText='a', newText='b')"],
+      hint_commands: ["read(path='file.txt')", "edit(path='file.txt', oldText='a', newText='b')"],
+      hintDocs: ["/Users/basecamp/openclaw/docs/tools/index.md"],
+      hint_docs: ["/Users/basecamp/openclaw/docs/tools/index.md"],
+      hintContract: { schema_version: "hint.contract.v1" },
+      hint_contract: { schema_version: "hint.contract.v1" },
     });
   });
 });
