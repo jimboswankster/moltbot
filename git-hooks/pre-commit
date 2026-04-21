@@ -2,3 +2,8 @@
 ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
 [ -z "$ROOT" ] && exit 0
 node "$ROOT/scripts/format-staged.js"
+
+WORKSPACE_ROOT=$(cd "$ROOT/.." 2>/dev/null && pwd)/.openclaw/workspace
+if [ -d "$WORKSPACE_ROOT" ]; then
+  node --experimental-strip-types "$WORKSPACE_ROOT/os/scripts/tool-audit-change-gate.ts" --cwd "$ROOT" --repo-role engine || exit 1
+fi

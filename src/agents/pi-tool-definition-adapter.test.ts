@@ -45,4 +45,41 @@ describe("pi tool definition adapter", () => {
       error: "nope",
     });
   });
+
+  it("preserves structured tool hint metadata in error results", async () => {
+    const tool = {
+      name: "read",
+      label: "Read",
+      description: "throws",
+      parameters: {},
+      execute: async () => {
+        const err = new Error("Missing required parameter: path") as Error & {
+          errorCode?: string;
+          errorCategory?: string;
+          missingKeys?: string[];
+          retryable?: boolean;
+          nextAction?: string;
+        };
+        err.errorCode = "TOOL_READ_MISSING_PATH";
+        err.errorCategory = "missing_required_param";
+        err.missingKeys = ["path"];
+        err.retryable = true;
+        err.nextAction = "Retry the read call with a concrete file path.";
+        throw err;
+      },
+    } satisfies AgentTool<unknown, unknown>;
+
+    const defs = toToolDefinitions([tool]);
+    const result = await defs[0].execute("call3", {}, undefined, undefined);
+
+    expect(result.details).toMatchObject({
+      status: "error",
+      tool: "read",
+      errorCode: "TOOL_READ_MISSING_PATH",
+      errorCategory: "missing_required_param",
+      missingKeys: ["path"],
+      retryable: true,
+      nextAction: "Retry the read call with a concrete file path.",
+    });
+  });
 });

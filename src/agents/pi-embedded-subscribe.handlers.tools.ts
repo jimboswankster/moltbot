@@ -11,6 +11,7 @@ import {
   sanitizeToolResult,
 } from "./pi-embedded-subscribe.tools.js";
 import { inferToolMetaFromArgs } from "./pi-embedded-utils.js";
+import { normalizeToolParams } from "./pi-tools.read.js";
 import { normalizeToolName } from "./tool-policy.js";
 
 function extendExecMeta(toolName: string, args: unknown, meta?: string): string | undefined {
@@ -52,11 +53,13 @@ export async function handleToolExecutionStart(
   const args = evt.args;
 
   if (toolName === "read") {
-    const record = args && typeof args === "object" ? (args as Record<string, unknown>) : {};
-    // Check both `path` and `file_path` (Claude Code alias normalized downstream by normalizeToolParams)
+    const normalized = normalizeToolParams(args);
+    const record =
+      normalized ?? (args && typeof args === "object" ? (args as Record<string, unknown>) : {});
     const filePath =
       (typeof record.path === "string" ? record.path.trim() : "") ||
-      (typeof record.file_path === "string" ? (record.file_path as string).trim() : "");
+      (typeof record.file_path === "string" ? (record.file_path as string).trim() : "") ||
+      (typeof record.filepath === "string" ? (record.filepath as string).trim() : "");
     if (!filePath) {
       const argsPreview = typeof args === "string" ? args.slice(0, 200) : undefined;
       ctx.log.warn(

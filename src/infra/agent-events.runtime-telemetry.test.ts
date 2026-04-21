@@ -134,4 +134,53 @@ describe("agent-events runtime telemetry bridge", () => {
       }),
     );
   });
+
+  it("emits failed tool telemetry with malformed-call classification", () => {
+    vi.useFakeTimers();
+    try {
+      registerAgentRunContext("run-4", { sessionKey: "agent:main:test" });
+      emitAgentEvent({
+        runId: "run-4",
+        stream: "tool",
+        data: { phase: "start", name: "read", toolCallId: "tool-4" },
+      });
+      vi.advanceTimersByTime(10);
+      emitAgentEvent({
+        runId: "run-4",
+        stream: "tool",
+        data: {
+          phase: "result",
+          name: "read",
+          toolCallId: "tool-4",
+          isError: true,
+          result: {
+            details: {
+              status: "error",
+              errorCode: "TOOL_READ_MISSING_PATH",
+              errorCategory: "missing_required_param",
+              missingKeys: ["path"],
+              retryable: true,
+            },
+          },
+        },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(recordRuntimeTelemetryEventMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: "agent.tool_call_failed",
+        subsystem: "agent-ops",
+        details: expect.objectContaining({
+          runId: "run-4",
+          toolName: "read",
+          errorCode: "TOOL_READ_MISSING_PATH",
+          errorCategory: "missing_required_param",
+          missingKeys: ["path"],
+          retryable: true,
+        }),
+      }),
+    );
+  });
 });

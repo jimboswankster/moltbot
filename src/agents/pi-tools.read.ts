@@ -6,6 +6,7 @@ import path from "node:path";
 import type { AnyAgentTool } from "./pi-tools.types.js";
 import { detectMime } from "../media/mime.js";
 import { assertSandboxPath } from "./sandbox-paths.js";
+import { buildToolFailureHints, type ToolExecutionError } from "./tool-hints.js";
 import { sanitizeToolResultImages } from "./tool-images.js";
 
 // NOTE(steipete): Upstream read now does file-magic MIME detection; we keep the wrapper
@@ -247,7 +248,11 @@ export function assertRequiredParams(
   toolName: string,
 ): void {
   if (!record || typeof record !== "object") {
-    throw new Error(`Missing parameters for ${toolName}`);
+    const err = new Error(`Missing parameters for ${toolName}`) as ToolExecutionError;
+    err.errorCode = `TOOL_${toolName.toUpperCase()}_MISSING_PARAMETERS`;
+    err.errorCategory = "missing_required_param";
+    err.missingKeys = groups.map((group) => group.keys[0] ?? "unknown");
+    throw err;
   }
 
   for (const group of groups) {
@@ -267,7 +272,31 @@ export function assertRequiredParams(
 
     if (!satisfied) {
       const label = group.label ?? group.keys.join(" or ");
-      throw new Error(`Missing required parameter: ${label}`);
+      const primaryKey = group.keys[0] ?? "unknown";
+      const hintCode =
+        toolName === "read"
+          ? "TOOL_READ_MISSING_PATH"
+          : toolName === "edit" && primaryKey === "path"
+            ? "TOOL_EDIT_MISSING_PATH"
+            : toolName === "edit" && primaryKey === "oldText"
+              ? "TOOL_EDIT_MISSING_OLD_TEXT"
+              : toolName === "edit" && primaryKey === "newText"
+                ? "TOOL_EDIT_MISSING_NEW_TEXT"
+                : undefined;
+      const hintBundle = hintCode ? buildToolFailureHints(hintCode) : undefined;
+      const err = new Error(`Missing required parameter: ${label}`) as ToolExecutionError;
+      err.errorCode =
+        hintCode ?? `TOOL_${toolName.toUpperCase()}_MISSING_${primaryKey.toUpperCase()}`;
+      err.errorCategory = "missing_required_param";
+      err.missingKeys = [primaryKey];
+      if (hintBundle) {
+        err.retryable = hintBundle.retryable;
+        err.nextAction = hintBundle.next_action;
+        err.hintCommands = hintBundle.hint_commands;
+        err.hintDocs = hintBundle.hint_docs;
+        err.hintContract = hintBundle.hint_contract;
+      }
+      throw err;
     }
   }
 }
@@ -287,6 +316,15 @@ function enhanceFsError(err: unknown, toolName: string, path?: string): unknown 
   } else if (toolName === "edit" && msg.includes("Could not find the exact text")) {
     hint =
       "Hint: The 'oldText' must match EXACTLY, including whitespace and newlines. Use 'read' to get the exact content first.";
+    const toolErr = err as ToolExecutionError;
+    const hintBundle = buildToolFailureHints("TOOL_EDIT_ANCHOR_MISMATCH");
+    toolErr.errorCode = "TOOL_EDIT_ANCHOR_MISMATCH";
+    toolErr.errorCategory = "content_anchor_mismatch";
+    toolErr.retryable = hintBundle.retryable;
+    toolErr.nextAction = hintBundle.next_action;
+    toolErr.hintCommands = hintBundle.hint_commands;
+    toolErr.hintDocs = hintBundle.hint_docs;
+    toolErr.hintContract = hintBundle.hint_contract;
   }
 
   if (hint) {

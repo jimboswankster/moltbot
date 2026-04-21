@@ -130,6 +130,44 @@ describe("createOpenClawCodingTools", () => {
         undefined,
       );
     });
+
+    it("normalizes wrapped input aliases for edit", async () => {
+      const execute = vi.fn(async (_id, args) => args);
+      const tool: AgentTool = {
+        name: "edit",
+        description: "test",
+        parameters: {
+          type: "object",
+          required: ["path", "oldText", "newText"],
+          properties: {
+            path: { type: "string" },
+            oldText: { type: "string" },
+            newText: { type: "string" },
+          },
+        },
+        execute,
+      };
+
+      const wrapped = __testing.wrapToolParamNormalization(tool, [
+        { keys: ["path", "file_path", "filepath"] },
+        { keys: ["oldText", "old_string"] },
+        { keys: ["newText", "new_string"] },
+      ]);
+      await wrapped.execute("tool-edit-1", {
+        input: {
+          filepath: "foo.txt",
+          old_string: "before",
+          new_string: "after",
+        },
+      });
+
+      expect(execute).toHaveBeenCalledWith(
+        "tool-edit-1",
+        { path: "foo.txt", oldText: "before", newText: "after" },
+        undefined,
+        undefined,
+      );
+    });
   });
 
   it("keeps browser tool schema OpenAI-compatible without normalization", () => {

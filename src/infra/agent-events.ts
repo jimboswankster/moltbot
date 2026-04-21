@@ -106,6 +106,14 @@ function recordMirroredRuntimeTelemetry(event: AgentEventPayload) {
   const durationMs =
     typeof startedAt === "number" && Number.isFinite(startedAt) ? event.ts - startedAt : null;
   const isError = event.data?.isError === true;
+  const resultRecord =
+    event.data?.result && typeof event.data.result === "object"
+      ? (event.data.result as Record<string, unknown>)
+      : undefined;
+  const resultDetails =
+    resultRecord?.details && typeof resultRecord.details === "object"
+      ? (resultRecord.details as Record<string, unknown>)
+      : undefined;
   recordRuntimeTelemetryEvent({
     event: isError ? "agent.tool_call_failed" : "agent.tool_call_completed",
     subsystem: "agent-ops",
@@ -118,6 +126,11 @@ function recordMirroredRuntimeTelemetry(event: AgentEventPayload) {
       toolName: name,
       durationMs,
       meta: typeof event.data?.meta === "string" ? event.data.meta : null,
+      errorCode: typeof resultDetails?.errorCode === "string" ? resultDetails.errorCode : null,
+      errorCategory:
+        typeof resultDetails?.errorCategory === "string" ? resultDetails.errorCategory : null,
+      missingKeys: Array.isArray(resultDetails?.missingKeys) ? resultDetails.missingKeys : null,
+      retryable: typeof resultDetails?.retryable === "boolean" ? resultDetails.retryable : null,
     },
   });
 }

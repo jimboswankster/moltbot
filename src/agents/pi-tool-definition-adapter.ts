@@ -7,6 +7,7 @@ import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import type { ClientToolDefinition } from "./pi-embedded-runner/run/params.js";
 import { logDebug, logError } from "../logger.js";
 import { runBeforeToolCallHook } from "./pi-tools.before-tool-call.js";
+import { isToolExecutionMetadata } from "./tool-hints.js";
 import { normalizeToolName } from "./tool-policy.js";
 import { jsonResult } from "./tools/common.js";
 
@@ -110,10 +111,19 @@ export function toToolDefinitions(tools: AnyAgentTool[]): ToolDefinition[] {
             logDebug(`tools: ${normalizedName} failed stack:\n${described.stack}`);
           }
           logError(`[tools] ${normalizedName} failed: ${described.message}`);
+          const metadata = isToolExecutionMetadata(err) ? err : undefined;
           return jsonResult({
             status: "error",
             tool: normalizedName,
             error: described.message,
+            ...(metadata?.errorCode ? { errorCode: metadata.errorCode } : {}),
+            ...(metadata?.errorCategory ? { errorCategory: metadata.errorCategory } : {}),
+            ...(metadata?.missingKeys ? { missingKeys: metadata.missingKeys } : {}),
+            ...(metadata?.retryable !== undefined ? { retryable: metadata.retryable } : {}),
+            ...(metadata?.nextAction ? { nextAction: metadata.nextAction } : {}),
+            ...(metadata?.hintCommands ? { hintCommands: metadata.hintCommands } : {}),
+            ...(metadata?.hintDocs ? { hintDocs: metadata.hintDocs } : {}),
+            ...(metadata?.hintContract ? { hintContract: metadata.hintContract } : {}),
           });
         }
       },
