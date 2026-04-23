@@ -160,6 +160,14 @@ export const AgentDefaultsSchema = z
       ])
       .optional(),
     heartbeat: HeartbeatSchema,
+    telegramStabilization: z
+      .object({
+        toolUseGuardMode: z
+          .union([z.literal("off"), z.literal("diagnostic"), z.literal("enforce")])
+          .optional(),
+      })
+      .strict()
+      .optional(),
     maxConcurrent: z.number().int().positive().optional(),
     subagents: z
       .object({

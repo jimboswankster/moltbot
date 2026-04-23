@@ -7,9 +7,14 @@ import type { OpenClawConfig } from "../config/config.js";
 import type { EmbeddedRunAttemptResult } from "./pi-embedded-runner/run/types.js";
 
 const runEmbeddedAttemptMock = vi.fn<Promise<EmbeddedRunAttemptResult>, [unknown]>();
+const recordRuntimeTelemetryEventMock = vi.fn();
 
 vi.mock("./pi-embedded-runner/run/attempt.js", () => ({
   runEmbeddedAttempt: (params: unknown) => runEmbeddedAttemptMock(params),
+}));
+
+vi.mock("../infra/runtime-telemetry.js", () => ({
+  recordRuntimeTelemetryEvent: (event: unknown) => recordRuntimeTelemetryEventMock(event),
 }));
 
 let runEmbeddedPiAgent: typeof import("./pi-embedded-runner.js").runEmbeddedPiAgent;
@@ -21,6 +26,7 @@ beforeAll(async () => {
 beforeEach(() => {
   vi.useRealTimers();
   runEmbeddedAttemptMock.mockReset();
+  recordRuntimeTelemetryEventMock.mockReset();
 });
 
 const baseUsage = {
@@ -61,12 +67,19 @@ const makeAttempt = (overrides: Partial<EmbeddedRunAttemptResult>): EmbeddedRunA
   ...overrides,
 });
 
-const makeConfig = (opts?: { fallbacks?: string[]; apiKey?: string }): OpenClawConfig =>
+const makeConfig = (opts?: {
+  fallbacks?: string[];
+  apiKey?: string;
+  telegramToolUseGuardMode?: "off" | "diagnostic" | "enforce";
+}): OpenClawConfig =>
   ({
     agents: {
       defaults: {
         model: {
           fallbacks: opts?.fallbacks ?? [],
+        },
+        telegramStabilization: {
+          toolUseGuardMode: opts?.telegramToolUseGuardMode,
         },
       },
     },
@@ -152,7 +165,7 @@ describe("runEmbeddedPiAgent auth profile rotation", () => {
         sessionFile: path.join(workspaceDir, "session.jsonl"),
         workspaceDir,
         agentDir,
-        config: makeConfig(),
+        config: makeConfig({ telegramToolUseGuardMode: "enforce" }),
         prompt: "hello",
         provider: "openai",
         model: "mock-1",
@@ -196,7 +209,7 @@ describe("runEmbeddedPiAgent auth profile rotation", () => {
         sessionFile: path.join(workspaceDir, "session.jsonl"),
         workspaceDir,
         agentDir,
-        config: makeConfig(),
+        config: makeConfig({ telegramToolUseGuardMode: "enforce" }),
         prompt: "hello",
         provider: "openai",
         model: "mock-1",
@@ -250,7 +263,7 @@ describe("runEmbeddedPiAgent auth profile rotation", () => {
         sessionFile: path.join(workspaceDir, "session.jsonl"),
         workspaceDir,
         agentDir,
-        config: makeConfig(),
+        config: makeConfig({ telegramToolUseGuardMode: "enforce" }),
         prompt: "hello",
         provider: "openai",
         model: "mock-1",
@@ -268,9 +281,14 @@ describe("runEmbeddedPiAgent auth profile rotation", () => {
         },
       ]);
       expect(runEmbeddedAttemptMock).toHaveBeenCalledTimes(2);
-      expect(
-        (runEmbeddedAttemptMock.mock.calls[1]?.[0] as { prompt?: string } | undefined)?.prompt,
-      ).toContain("SYSTEM REPAIR REQUIREMENT");
+      const secondCall = runEmbeddedAttemptMock.mock.calls[1]?.[0] as
+        | { prompt?: string; extraSystemPrompt?: string }
+        | undefined;
+      expect(secondCall?.prompt).toBe("hello");
+      expect(secondCall?.extraSystemPrompt).toContain("SYSTEM REPAIR REQUIREMENT");
+      expect(secondCall?.extraSystemPrompt).toContain(
+        "`read`, `exec`, `sessions_history`, `session_status`, `message`",
+      );
     } finally {
       await fs.rm(agentDir, { recursive: true, force: true });
       await fs.rm(workspaceDir, { recursive: true, force: true });
@@ -313,7 +331,7 @@ describe("runEmbeddedPiAgent auth profile rotation", () => {
         sessionFile: path.join(workspaceDir, "session.jsonl"),
         workspaceDir,
         agentDir,
-        config: makeConfig(),
+        config: makeConfig({ telegramToolUseGuardMode: "enforce" }),
         prompt: "hello",
         provider: "openai",
         model: "mock-1",
@@ -331,9 +349,14 @@ describe("runEmbeddedPiAgent auth profile rotation", () => {
         },
       ]);
       expect(runEmbeddedAttemptMock).toHaveBeenCalledTimes(2);
-      expect(
-        (runEmbeddedAttemptMock.mock.calls[1]?.[0] as { prompt?: string } | undefined)?.prompt,
-      ).toContain("SYSTEM REPAIR REQUIREMENT");
+      const secondCall = runEmbeddedAttemptMock.mock.calls[1]?.[0] as
+        | { prompt?: string; extraSystemPrompt?: string }
+        | undefined;
+      expect(secondCall?.prompt).toBe("hello");
+      expect(secondCall?.extraSystemPrompt).toContain("SYSTEM REPAIR REQUIREMENT");
+      expect(secondCall?.extraSystemPrompt).toContain(
+        "`read`, `exec`, `sessions_history`, `session_status`, `message`",
+      );
     } finally {
       await fs.rm(agentDir, { recursive: true, force: true });
       await fs.rm(workspaceDir, { recursive: true, force: true });
@@ -363,7 +386,7 @@ describe("runEmbeddedPiAgent auth profile rotation", () => {
         sessionFile: path.join(workspaceDir, "session.jsonl"),
         workspaceDir,
         agentDir,
-        config: makeConfig(),
+        config: makeConfig({ telegramToolUseGuardMode: "enforce" }),
         prompt: "hello",
         provider: "openai",
         model: "mock-1",
@@ -425,7 +448,7 @@ describe("runEmbeddedPiAgent auth profile rotation", () => {
         sessionFile: path.join(workspaceDir, "session.jsonl"),
         workspaceDir,
         agentDir,
-        config: makeConfig(),
+        config: makeConfig({ telegramToolUseGuardMode: "enforce" }),
         prompt: "hello",
         provider: "openai",
         model: "mock-1",
@@ -437,12 +460,195 @@ describe("runEmbeddedPiAgent auth profile rotation", () => {
       });
 
       expect(runEmbeddedAttemptMock).toHaveBeenCalledTimes(2);
-      expect(
-        (runEmbeddedAttemptMock.mock.calls[1]?.[0] as { prompt?: string } | undefined)?.prompt,
-      ).toContain("SYSTEM REPAIR REQUIREMENT");
+      const secondCall = runEmbeddedAttemptMock.mock.calls[1]?.[0] as
+        | { prompt?: string; extraSystemPrompt?: string }
+        | undefined;
+      expect(secondCall?.prompt).toBe("hello");
+      expect(secondCall?.extraSystemPrompt).toContain("SYSTEM REPAIR REQUIREMENT");
+      const repairResultEvent = recordRuntimeTelemetryEventMock.mock.calls
+        .map((call) => call[0] as { event?: string; details?: Record<string, unknown> })
+        .find((event) => event.event === "agent.telegram_stabilization.repair_result");
+      expect(repairResultEvent).toBeTruthy();
+      expect(repairResultEvent?.details?.firstToolName).toBe("read");
+      expect(repairResultEvent?.details?.firstToolInTier).toBe(true);
       expect(result.payloads).toEqual([
         {
           text: "I checked the files and found the issue.",
+          mediaUrls: undefined,
+          mediaUrl: undefined,
+          isError: undefined,
+          replyToId: undefined,
+          replyToTag: false,
+          replyToCurrent: false,
+          audioAsVoice: false,
+        },
+      ]);
+    } finally {
+      await fs.rm(agentDir, { recursive: true, force: true });
+      await fs.rm(workspaceDir, { recursive: true, force: true });
+    }
+  });
+
+  it("records out-of-tier retry tool choices for telegram stabilization repairs", async () => {
+    const agentDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-agent-"));
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-workspace-"));
+    try {
+      await writeAuthStore(agentDir);
+
+      runEmbeddedAttemptMock
+        .mockResolvedValueOnce(
+          makeAttempt({
+            assistantTexts: ["Natural language only."],
+            lastAssistant: buildAssistant({
+              stopReason: "stop",
+              content: [{ type: "text", text: "Natural language only." }],
+            }),
+          }),
+        )
+        .mockResolvedValueOnce(
+          makeAttempt({
+            assistantTexts: ["I used web search first and then replied."],
+            toolMetas: [{ toolName: "web_search", meta: "Searched one query." }],
+            lastAssistant: buildAssistant({
+              stopReason: "stop",
+              content: [{ type: "text", text: "I used web search first and then replied." }],
+            }),
+          }),
+        );
+
+      await runEmbeddedPiAgent({
+        sessionId: "session:test",
+        sessionKey: "agent:test:telegram-stabilization-repair-out-of-tier",
+        sessionFile: path.join(workspaceDir, "session.jsonl"),
+        workspaceDir,
+        agentDir,
+        config: makeConfig({ telegramToolUseGuardMode: "enforce" }),
+        prompt: "hello",
+        provider: "openai",
+        model: "mock-1",
+        authProfileId: "openai:p1",
+        authProfileIdSource: "user",
+        trustedTaskClass: "telegram-codex-stabilization",
+        timeoutMs: 5_000,
+        runId: "run:telegram-stabilization-repair-out-of-tier",
+      });
+
+      const repairResultEvent = recordRuntimeTelemetryEventMock.mock.calls
+        .map((call) => call[0] as { event?: string; details?: Record<string, unknown> })
+        .find((event) => event.event === "agent.telegram_stabilization.repair_result");
+      expect(repairResultEvent).toBeTruthy();
+      expect(repairResultEvent?.details?.firstToolName).toBe("web_search");
+      expect(repairResultEvent?.details?.firstToolInTier).toBe(false);
+    } finally {
+      await fs.rm(agentDir, { recursive: true, force: true });
+      await fs.rm(workspaceDir, { recursive: true, force: true });
+    }
+  });
+
+  it("allows plain-text stabilization replies in diagnostic mode after one repair retry", async () => {
+    const agentDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-agent-"));
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-workspace-"));
+    try {
+      await writeAuthStore(agentDir);
+
+      runEmbeddedAttemptMock
+        .mockResolvedValueOnce(
+          makeAttempt({
+            assistantTexts: ["Natural language only."],
+            lastAssistant: buildAssistant({
+              stopReason: "stop",
+              content: [{ type: "text", text: "Natural language only." }],
+            }),
+          }),
+        )
+        .mockResolvedValueOnce(
+          makeAttempt({
+            assistantTexts: ["Still plain text, but usable."],
+            lastAssistant: buildAssistant({
+              stopReason: "stop",
+              content: [{ type: "text", text: "Still plain text, but usable." }],
+            }),
+          }),
+        );
+
+      const result = await runEmbeddedPiAgent({
+        sessionId: "session:test",
+        sessionKey: "agent:test:telegram-stabilization-diagnostic",
+        sessionFile: path.join(workspaceDir, "session.jsonl"),
+        workspaceDir,
+        agentDir,
+        config: makeConfig({ telegramToolUseGuardMode: "diagnostic" }),
+        prompt: "hello",
+        provider: "openai",
+        model: "mock-1",
+        authProfileId: "openai:p1",
+        authProfileIdSource: "user",
+        trustedTaskClass: "telegram-codex-stabilization",
+        timeoutMs: 5_000,
+        runId: "run:telegram-stabilization-diagnostic",
+      });
+
+      expect(runEmbeddedAttemptMock).toHaveBeenCalledTimes(2);
+      expect(result.payloads).toEqual([
+        {
+          text: "Still plain text, but usable.",
+          mediaUrls: undefined,
+          mediaUrl: undefined,
+          isError: undefined,
+          replyToId: undefined,
+          replyToTag: false,
+          replyToCurrent: false,
+          audioAsVoice: false,
+        },
+      ]);
+      const repairResultEvent = recordRuntimeTelemetryEventMock.mock.calls
+        .map((call) => call[0] as { event?: string; details?: Record<string, unknown> })
+        .find((event) => event.event === "agent.telegram_stabilization.repair_result");
+      expect(repairResultEvent?.details?.resultType).toBe("plain_text_allowed");
+      expect(repairResultEvent?.details?.guardMode).toBe("diagnostic");
+    } finally {
+      await fs.rm(agentDir, { recursive: true, force: true });
+      await fs.rm(workspaceDir, { recursive: true, force: true });
+    }
+  });
+
+  it("allows plain-text stabilization replies immediately when guard mode is off", async () => {
+    const agentDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-agent-"));
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-workspace-"));
+    try {
+      await writeAuthStore(agentDir);
+
+      runEmbeddedAttemptMock.mockResolvedValueOnce(
+        makeAttempt({
+          assistantTexts: ["Immediate plain text."],
+          lastAssistant: buildAssistant({
+            stopReason: "stop",
+            content: [{ type: "text", text: "Immediate plain text." }],
+          }),
+        }),
+      );
+
+      const result = await runEmbeddedPiAgent({
+        sessionId: "session:test",
+        sessionKey: "agent:test:telegram-stabilization-off",
+        sessionFile: path.join(workspaceDir, "session.jsonl"),
+        workspaceDir,
+        agentDir,
+        config: makeConfig({ telegramToolUseGuardMode: "off" }),
+        prompt: "hello",
+        provider: "openai",
+        model: "mock-1",
+        authProfileId: "openai:p1",
+        authProfileIdSource: "user",
+        trustedTaskClass: "telegram-codex-stabilization",
+        timeoutMs: 5_000,
+        runId: "run:telegram-stabilization-off",
+      });
+
+      expect(runEmbeddedAttemptMock).toHaveBeenCalledTimes(1);
+      expect(result.payloads).toEqual([
+        {
+          text: "Immediate plain text.",
           mediaUrls: undefined,
           mediaUrl: undefined,
           isError: undefined,

@@ -62,6 +62,14 @@ export type TelegramBotOptions = {
     lastUpdateId?: number | null;
     onUpdateId?: (updateId: number) => void | Promise<void>;
   };
+  diagnostics?: {
+    onUpdateObserved?: (details: {
+      updateId: number;
+      skipped: boolean;
+      reason?: "stale_offset" | "dedupe";
+      key?: string;
+    }) => void;
+  };
 };
 
 export function getTelegramSequentialKey(ctx: {
@@ -171,11 +179,24 @@ export function createTelegramBot(opts: TelegramBotOptions) {
     const updateId = resolveTelegramUpdateId(ctx);
     if (typeof updateId === "number" && lastUpdateId !== null) {
       if (updateId <= lastUpdateId) {
+        opts.diagnostics?.onUpdateObserved?.({
+          updateId,
+          skipped: true,
+          reason: "stale_offset",
+        });
         return true;
       }
     }
     const key = buildTelegramUpdateKey(ctx);
     const skipped = recentUpdates.check(key);
+    if (typeof updateId === "number" && skipped) {
+      opts.diagnostics?.onUpdateObserved?.({
+        updateId,
+        skipped: true,
+        reason: "dedupe",
+        key: key ?? undefined,
+      });
+    }
     if (skipped && key && shouldLogVerbose()) {
       logVerbose(`telegram dedupe: skipped ${key}`);
     }
@@ -209,6 +230,7 @@ export function createTelegramBot(opts: TelegramBotOptions) {
   };
 
   bot.use(async (ctx, next) => {
+    const updateId = resolveTelegramUpdateId(ctx);
     if (shouldLogVerbose()) {
       try {
         const raw = stringifyUpdate(ctx.update);
@@ -220,6 +242,12 @@ export function createTelegramBot(opts: TelegramBotOptions) {
       }
     }
     await next();
+    if (typeof updateId === "number") {
+      opts.diagnostics?.onUpdateObserved?.({
+        updateId,
+        skipped: false,
+      });
+    }
     recordUpdateId(ctx);
   });
 

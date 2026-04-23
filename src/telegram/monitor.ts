@@ -90,6 +90,7 @@ const isGrammyHttpError = (err: unknown): boolean => {
 
 export async function monitorTelegramProvider(opts: MonitorTelegramOpts = {}) {
   const log = opts.runtime?.error ?? console.error;
+  const info = opts.runtime?.log ?? console.log;
 
   // Register handler for Grammy HttpError unhandled rejections.
   // This catches network errors that escape the polling loop's try-catch
@@ -122,6 +123,10 @@ export async function monitorTelegramProvider(opts: MonitorTelegramOpts = {}) {
     let lastUpdateId = await readTelegramUpdateOffset({
       accountId: account.accountId,
     });
+    let highestObservedUpdateId = lastUpdateId;
+    let lastAcceptedUpdateId = lastUpdateId;
+    let lastSkippedUpdateId: number | null = null;
+    let lastSkipReason: "stale_offset" | "dedupe" | null = null;
     const persistUpdateId = async (updateId: number) => {
       if (lastUpdateId !== null && updateId <= lastUpdateId) {
         return;
@@ -149,6 +154,21 @@ export async function monitorTelegramProvider(opts: MonitorTelegramOpts = {}) {
         lastUpdateId,
         onUpdateId: persistUpdateId,
       },
+      diagnostics: {
+        onUpdateObserved: ({ updateId, skipped, reason }) => {
+          if (highestObservedUpdateId == null || updateId > highestObservedUpdateId) {
+            highestObservedUpdateId = updateId;
+          }
+          if (skipped) {
+            lastSkippedUpdateId = updateId;
+            lastSkipReason = reason ?? null;
+            return;
+          }
+          if (lastAcceptedUpdateId == null || updateId > lastAcceptedUpdateId) {
+            lastAcceptedUpdateId = updateId;
+          }
+        },
+      },
     });
 
     if (opts.useWebhook) {
@@ -171,6 +191,9 @@ export async function monitorTelegramProvider(opts: MonitorTelegramOpts = {}) {
     let restartAttempts = 0;
 
     while (!opts.abortSignal?.aborted) {
+      info(
+        `[telegram] polling start account=${account.accountId} persistedOffset=${lastUpdateId ?? "none"} acceptedOffset=${lastAcceptedUpdateId ?? "none"} observedUpdate=${highestObservedUpdateId ?? "none"} restartAttempt=${restartAttempts}`,
+      );
       const runner = run(bot, createTelegramRunnerOptions(cfg));
       // Track the runner.stop() promise so we can await it during cleanup,
       // preventing resource leaks from fire-and-forget stops.
@@ -196,8 +219,8 @@ export async function monitorTelegramProvider(opts: MonitorTelegramOpts = {}) {
           return;
         }
         restartAttempts = 0;
-        (opts.runtime?.error ?? console.warn)(
-          "Telegram runner stopped (non-error); restarting polling...",
+        info(
+          `[telegram] runner stopped (non-error); restarting polling account=${account.accountId} persistedOffset=${lastUpdateId ?? "none"} acceptedOffset=${lastAcceptedUpdateId ?? "none"} observedUpdate=${highestObservedUpdateId ?? "none"} lastSkipped=${lastSkippedUpdateId ?? "none"} skipReason=${lastSkipReason ?? "none"}`,
         );
         continue;
       } catch (err) {
@@ -213,8 +236,8 @@ export async function monitorTelegramProvider(opts: MonitorTelegramOpts = {}) {
         const delayMs = computeBackoff(TELEGRAM_POLL_RESTART_POLICY, restartAttempts);
         const reason = isConflict ? "getUpdates conflict" : "network error";
         const errMsg = formatErrorMessage(err);
-        (opts.runtime?.error ?? console.error)(
-          `Telegram ${reason}: ${errMsg}; retrying in ${formatDurationMs(delayMs)}.`,
+        log(
+          `Telegram ${reason}: ${errMsg}; retrying in ${formatDurationMs(delayMs)}. account=${account.accountId} persistedOffset=${lastUpdateId ?? "none"} acceptedOffset=${lastAcceptedUpdateId ?? "none"} observedUpdate=${highestObservedUpdateId ?? "none"} lastSkipped=${lastSkippedUpdateId ?? "none"} skipReason=${lastSkipReason ?? "none"} restartAttempt=${restartAttempts}`,
         );
         try {
           await sleepWithAbort(delayMs, opts.abortSignal);

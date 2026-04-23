@@ -199,7 +199,11 @@ describe("createTelegramBot", () => {
     editMessageTextSpy.mockReset();
     setMyCommandsSpy.mockReset();
     wasSentByBot.mockReset();
+    useSpy.mockReset();
     middlewareUseSpy.mockReset();
+    onSpy.mockReset();
+    stopSpy.mockReset();
+    commandSpy.mockReset();
     sequentializeSpy.mockReset();
     botCtorSpy.mockReset();
     sequentializeKey = undefined;
@@ -212,6 +216,43 @@ describe("createTelegramBot", () => {
     createTelegramBot({ token: "tok" });
     expect(throttlerSpy).toHaveBeenCalledTimes(1);
     expect(useSpy).toHaveBeenCalledWith("throttler");
+  });
+
+  it("reports accepted and skipped update diagnostics", async () => {
+    const onUpdateObserved = vi.fn();
+    createTelegramBot({
+      token: "tok",
+      updateOffset: { lastUpdateId: 100, onUpdateId: vi.fn() },
+      diagnostics: { onUpdateObserved },
+    });
+
+    const rawUpdateMiddleware = middlewareUseSpy.mock.calls[1]?.[0] as
+      | ((ctx: Record<string, unknown>, next: () => Promise<void>) => Promise<void>)
+      | undefined;
+    expect(rawUpdateMiddleware).toBeTypeOf("function");
+
+    await rawUpdateMiddleware?.({ update: { update_id: 101 } }, async () => {});
+    expect(onUpdateObserved).toHaveBeenCalledWith({
+      updateId: 101,
+      skipped: false,
+    });
+
+    const messageHandler = getOnHandler("message");
+    await messageHandler({
+      update: { update_id: 100 },
+      message: {
+        message_id: 1,
+        chat: { id: 123, type: "private" },
+        text: "hi",
+      },
+      me: { username: "mybot" },
+      getFile: vi.fn(async () => ({})),
+    });
+    expect(onUpdateObserved).toHaveBeenCalledWith({
+      updateId: 100,
+      skipped: true,
+      reason: "stale_offset",
+    });
   });
 
   it("merges custom commands with native commands", () => {

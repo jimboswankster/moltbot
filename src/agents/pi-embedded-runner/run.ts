@@ -57,6 +57,12 @@ import { log } from "./logger.js";
 import { resolveModel } from "./model.js";
 import { runEmbeddedAttempt } from "./run/attempt.js";
 import { buildEmbeddedRunPayloads } from "./run/payloads.js";
+import {
+  buildTelegramStabilizationRepairPrompt,
+  isTelegramStabilizationPreferredFirstStepTool,
+  resolveTelegramStabilizationScaffold,
+  resolveTelegramStabilizationToolUseGuardMode,
+} from "./telegram-stabilization-scaffold.js";
 import { describeUnknownError } from "./utils.js";
 
 type ApiKeyInfo = ResolvedProviderAuth;
@@ -64,11 +70,6 @@ type ApiKeyInfo = ResolvedProviderAuth;
 // Avoid Anthropic's refusal test token poisoning session transcripts.
 const ANTHROPIC_MAGIC_STRING_TRIGGER_REFUSAL = "ANTHROPIC_MAGIC_STRING_TRIGGER_REFUSAL";
 const ANTHROPIC_MAGIC_STRING_REPLACEMENT = "ANTHROPIC MAGIC STRING TRIGGER REFUSAL (redacted)";
-const TELEGRAM_STABILIZATION_TOOL_REPAIR_PROMPT =
-  "\n\nSYSTEM REPAIR REQUIREMENT: This Telegram stabilization turn requires real tool activity before any final reply. " +
-  "Do not answer conversationally. First use at least one relevant tool to inspect, verify, or act. " +
-  "Only after tool activity, return the final operator-facing reply grounded in those tool results.";
-
 function scrubAnthropicRefusalMagic(prompt: string): string {
   if (!prompt.includes(ANTHROPIC_MAGIC_STRING_TRIGGER_REFUSAL)) {
     return prompt;
@@ -211,6 +212,13 @@ export async function runEmbeddedPiAgent(
         },
       });
       const agentDir = params.agentDir ?? resolveOpenClawAgentDir();
+      const telegramStabilizationScaffold = resolveTelegramStabilizationScaffold(
+        params.trustedTaskClass,
+      );
+      const telegramStabilizationToolUseGuardMode = resolveTelegramStabilizationToolUseGuardMode({
+        config: params.config,
+        trustedTaskClass: params.trustedTaskClass,
+      });
       const fallbackConfigured =
         (params.config?.agents?.defaults?.model?.fallbacks?.length ?? 0) > 0;
       await ensureOpenClawModelsJson(params.config, agentDir);
@@ -432,6 +440,7 @@ export async function runEmbeddedPiAgent(
       let allowProactiveCompaction = true;
       let telegramStabilizationRepairAttempts = 0;
       let activePrompt = params.prompt;
+      let activeExtraSystemPrompt = params.extraSystemPrompt;
       try {
         while (true) {
           attemptedThinking.add(thinkLevel);
@@ -489,7 +498,7 @@ export async function runEmbeddedPiAgent(
             onReasoningStream: params.onReasoningStream,
             onToolResult: params.onToolResult,
             onAgentEvent: params.onAgentEvent,
-            extraSystemPrompt: params.extraSystemPrompt,
+            extraSystemPrompt: activeExtraSystemPrompt,
             streamParams: params.streamParams,
             inputSource: params.inputSource,
             ownerNumbers: params.ownerNumbers,
@@ -847,8 +856,12 @@ export async function runEmbeddedPiAgent(
             toolResultFormat: resolvedToolResultFormat,
             inlineToolResultsAllowed: false,
           });
+          const telegramStabilizationTracksToolUse =
+            params.trustedTaskClass === "telegram-codex-stabilization" &&
+            telegramStabilizationToolUseGuardMode !== "off";
           const telegramStabilizationRequiresToolUse =
-            params.trustedTaskClass === "telegram-codex-stabilization";
+            telegramStabilizationTracksToolUse &&
+            telegramStabilizationToolUseGuardMode === "enforce";
           const telegramStabilizationHasToolActivity =
             attempt.toolMetas.length > 0 ||
             Boolean(attempt.lastToolError) ||
@@ -861,40 +874,142 @@ export async function runEmbeddedPiAgent(
             !attempt.didSendViaMessagingTool &&
             !attempt.clientToolCall;
           const telegramStabilizationPlainChatResult =
-            telegramStabilizationRequiresToolUse &&
+            telegramStabilizationTracksToolUse &&
             !aborted &&
             payloads.length > 0 &&
             !telegramStabilizationHasToolActivity;
+          const telegramStabilizationRetryFirstTool =
+            telegramStabilizationRepairAttempts > 0
+              ? (attempt.toolMetas[0]?.toolName ?? attempt.clientToolCall?.name ?? null)
+              : null;
+          const telegramStabilizationRetryFirstToolInTier =
+            telegramStabilizationRepairAttempts > 0
+              ? isTelegramStabilizationPreferredFirstStepTool(
+                  telegramStabilizationScaffold,
+                  telegramStabilizationRetryFirstTool,
+                )
+              : null;
 
           if (telegramStabilizationEmptyResult || telegramStabilizationPlainChatResult) {
             if (telegramStabilizationRepairAttempts < 1) {
               telegramStabilizationRepairAttempts += 1;
-              activePrompt = `${params.prompt}${TELEGRAM_STABILIZATION_TOOL_REPAIR_PROMPT}`;
+              if (telegramStabilizationScaffold && telegramStabilizationTracksToolUse) {
+                recordRuntimeTelemetryEvent({
+                  event: "agent.telegram_stabilization.repair_retry_started",
+                  subsystem: "agent-embedded",
+                  severity: "warning",
+                  status: "degraded",
+                  details: {
+                    runId: params.runId,
+                    sessionId: params.sessionId,
+                    sessionKey: params.sessionKey,
+                    provider,
+                    model: modelId,
+                    scaffoldId: telegramStabilizationScaffold.id,
+                    preferredFirstStep: telegramStabilizationScaffold.preferredFirstStep,
+                    failureMode: telegramStabilizationEmptyResult ? "empty_result" : "plain_text",
+                    guardMode: telegramStabilizationToolUseGuardMode,
+                    repairAttempt: telegramStabilizationRepairAttempts,
+                  },
+                });
+              }
+              activePrompt = params.prompt;
+              activeExtraSystemPrompt = [
+                params.extraSystemPrompt?.trim(),
+                telegramStabilizationTracksToolUse
+                  ? buildTelegramStabilizationRepairPrompt(
+                      telegramStabilizationScaffold ?? {
+                        id: "fallback",
+                        taskClass: "telegram-codex-stabilization",
+                        preferredFirstStep: [],
+                        secondary: [],
+                        contextual: [],
+                      },
+                    )
+                  : undefined,
+              ]
+                .filter(Boolean)
+                .join("\n\n");
               log.warn(
-                `telegram stabilization produced a non-tool-backed result for ${provider}/${modelId}; retrying with explicit repair prompt (${telegramStabilizationRepairAttempts}/1)`,
+                telegramStabilizationTracksToolUse
+                  ? `telegram stabilization produced a non-tool-backed result for ${provider}/${modelId}; retrying with explicit repair prompt (${telegramStabilizationRepairAttempts}/1)`
+                  : `telegram stabilization produced an empty result for ${provider}/${modelId}; retrying once (${telegramStabilizationRepairAttempts}/1)`,
               );
               continue;
             }
-            const emptyResultMessage = telegramStabilizationEmptyResult
-              ? "The agent produced no visible result for this Telegram stabilization turn."
-              : "The agent produced a plain-text reply without any tool activity for this Telegram stabilization turn.";
-            if (fallbackConfigured && !telegramStabilizationRequiresToolUse) {
-              throw new FailoverError(emptyResultMessage, {
-                reason: "unknown",
-                provider,
-                model: modelId,
-                profileId: lastProfileId,
+            if (telegramStabilizationRepairAttempts > 0 && telegramStabilizationScaffold) {
+              recordRuntimeTelemetryEvent({
+                event: "agent.telegram_stabilization.repair_result",
+                subsystem: "agent-embedded",
+                severity: "warning",
+                status: "failed",
+                details: {
+                  runId: params.runId,
+                  sessionId: params.sessionId,
+                  sessionKey: params.sessionKey,
+                  provider,
+                  model: modelId,
+                  scaffoldId: telegramStabilizationScaffold.id,
+                  repairAttempt: telegramStabilizationRepairAttempts,
+                  resultType: telegramStabilizationEmptyResult
+                    ? "empty_result"
+                    : telegramStabilizationRequiresToolUse
+                      ? "plain_text_rejected"
+                      : "plain_text_allowed",
+                  guardMode: telegramStabilizationToolUseGuardMode,
+                  firstToolName: telegramStabilizationRetryFirstTool,
+                  firstToolInTier: telegramStabilizationRetryFirstToolInTier,
+                  hadToolActivity: telegramStabilizationHasToolActivity,
+                },
               });
             }
-            log.warn(
-              `${emptyResultMessage} runId=${params.runId} sessionId=${params.sessionId} provider=${provider} model=${modelId}`,
-            );
-            payloads = [
-              {
-                text: "I failed to produce a usable tool-backed result for that turn. Please retry.",
-                isError: true,
+            if (telegramStabilizationPlainChatResult && !telegramStabilizationRequiresToolUse) {
+              log.warn(
+                `telegram stabilization allowed plain-text result under guardMode=${telegramStabilizationToolUseGuardMode} runId=${params.runId} sessionId=${params.sessionId} provider=${provider} model=${modelId}`,
+              );
+            } else {
+              const emptyResultMessage = telegramStabilizationEmptyResult
+                ? "The agent produced no visible result for this Telegram stabilization turn."
+                : "The agent produced a plain-text reply without any tool activity for this Telegram stabilization turn.";
+              if (fallbackConfigured && !telegramStabilizationRequiresToolUse) {
+                throw new FailoverError(emptyResultMessage, {
+                  reason: "unknown",
+                  provider,
+                  model: modelId,
+                  profileId: lastProfileId,
+                });
+              }
+              log.warn(
+                `${emptyResultMessage} runId=${params.runId} sessionId=${params.sessionId} provider=${provider} model=${modelId}`,
+              );
+              payloads = [
+                {
+                  text: "I failed to produce a usable tool-backed result for that turn. Please retry.",
+                  isError: true,
+                },
+              ];
+            }
+          } else if (telegramStabilizationRepairAttempts > 0 && telegramStabilizationScaffold) {
+            recordRuntimeTelemetryEvent({
+              event: "agent.telegram_stabilization.repair_result",
+              subsystem: "agent-embedded",
+              severity: "info",
+              status: "ok",
+              details: {
+                runId: params.runId,
+                sessionId: params.sessionId,
+                sessionKey: params.sessionKey,
+                provider,
+                model: modelId,
+                scaffoldId: telegramStabilizationScaffold.id,
+                repairAttempt: telegramStabilizationRepairAttempts,
+                resultType: "tool_backed",
+                guardMode: telegramStabilizationToolUseGuardMode,
+                firstToolName: telegramStabilizationRetryFirstTool,
+                firstToolInTier: telegramStabilizationRetryFirstToolInTier,
+                hadToolActivity: telegramStabilizationHasToolActivity,
               },
-            ];
+            });
           }
 
           log.debug(

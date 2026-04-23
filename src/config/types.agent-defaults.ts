@@ -255,6 +255,16 @@ export type AgentDefaultsConfig = {
       prompt?: string;
     };
   };
+  /** Lane-specific stabilization policy for Telegram federated-master turns. */
+  telegramStabilization?: {
+    /**
+     * Plain-text-without-tool guard mode for `telegram-codex-stabilization`.
+     * - "off": allow plain-text replies
+     * - "diagnostic": retry once with the scaffold, then allow plain-text replies
+     * - "enforce": retry once with the scaffold, then fail closed on plain-text replies
+     */
+    toolUseGuardMode?: "off" | "diagnostic" | "enforce";
+  };
   /** Max concurrent agent runs across all conversations. Default: 1 (sequential). */
   maxConcurrent?: number;
   /** Sub-agent defaults (spawned via sessions_spawn). */

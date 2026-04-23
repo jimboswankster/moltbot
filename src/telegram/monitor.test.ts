@@ -38,6 +38,7 @@ const { computeBackoff, sleepWithAbort } = vi.hoisted(() => ({
   computeBackoff: vi.fn(() => 0),
   sleepWithAbort: vi.fn(async () => undefined),
 }));
+let latestCreateBotOpts: Record<string, unknown> | undefined;
 
 vi.mock("../config/config.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../config/config.js")>();
@@ -48,7 +49,8 @@ vi.mock("../config/config.js", async (importOriginal) => {
 });
 
 vi.mock("./bot.js", () => ({
-  createTelegramBot: () => {
+  createTelegramBot: (opts: Record<string, unknown>) => {
+    latestCreateBotOpts = opts;
     handlers.message = async (ctx: MockCtx) => {
       const chatId = ctx.message.chat.id;
       const isGroup = ctx.message.chat.type !== "private";
@@ -91,6 +93,7 @@ vi.mock("../auto-reply/reply.js", () => ({
 
 describe("monitorTelegramProvider (grammY)", () => {
   beforeEach(() => {
+    latestCreateBotOpts = undefined;
     loadConfig.mockReturnValue({
       agents: { defaults: { maxConcurrent: 2 } },
       channels: { telegram: {} },
@@ -177,6 +180,45 @@ describe("monitorTelegramProvider (grammY)", () => {
     expect(computeBackoff).toHaveBeenCalled();
     expect(sleepWithAbort).toHaveBeenCalled();
     expect(runSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("logs offset diagnostics on recoverable restart", async () => {
+    const networkError = Object.assign(new Error("timeout"), { code: "ETIMEDOUT" });
+    const runtime = { log: vi.fn(), error: vi.fn() };
+    runSpy
+      .mockImplementationOnce(() => ({
+        task: () => {
+          const onUpdateObserved = latestCreateBotOpts?.diagnostics as
+            | {
+                onUpdateObserved?: (details: {
+                  updateId: number;
+                  skipped: boolean;
+                  reason?: "stale_offset" | "dedupe";
+                }) => void;
+              }
+            | undefined;
+          onUpdateObserved?.onUpdateObserved?.({ updateId: 42, skipped: false });
+          onUpdateObserved?.onUpdateObserved?.({
+            updateId: 41,
+            skipped: true,
+            reason: "stale_offset",
+          });
+          return Promise.reject(networkError);
+        },
+        stop: vi.fn(),
+      }))
+      .mockImplementationOnce(() => ({
+        task: () => Promise.resolve(),
+        stop: vi.fn(),
+      }));
+
+    await monitorTelegramProvider({ token: "tok", runtime });
+
+    expect(runtime.error).toHaveBeenCalledWith(expect.stringContaining("acceptedOffset=42"));
+    expect(runtime.error).toHaveBeenCalledWith(expect.stringContaining("lastSkipped=41"));
+    expect(runtime.log).toHaveBeenCalledWith(
+      expect.stringContaining("polling start account=default"),
+    );
   });
 
   it("surfaces non-recoverable errors", async () => {
