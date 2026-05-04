@@ -86,7 +86,7 @@ describe("routing authority telemetry contract", () => {
         policyVersion: 1,
       },
       run: async () => ({
-        payloads: [],
+        payloads: [{ text: "ok" }],
         meta: {
           agentMeta: {
             provider: "openrouter",
@@ -123,7 +123,7 @@ describe("routing authority telemetry contract", () => {
         policyVersion: 1,
       },
       run: async () => ({
-        payloads: [],
+        payloads: [{ text: "ok" }],
         meta: {
           agentMeta: {
             provider: "minimax",
