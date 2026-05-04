@@ -1,6 +1,7 @@
 import type { startGatewayServer } from "../../gateway/server.js";
 import type { defaultRuntime } from "../../runtime.js";
 import { acquireGatewayLock } from "../../infra/gateway-lock.js";
+import { consumeRecentGatewayShutdownIntentSync } from "../../infra/gateway-shutdown-provenance.js";
 import {
   consumeGatewaySigusr1RestartAuthorization,
   isGatewaySigusr1RestartExternallyAllowed,
@@ -35,6 +36,10 @@ export async function runGatewayLoop(params: {
     shuttingDown = true;
     const isRestart = action === "restart";
     gatewayLog.info(`received ${signal}; ${isRestart ? "restarting" : "shutting down"}`);
+    const provenance =
+      signal === "SIGTERM" || signal === "SIGINT"
+        ? consumeRecentGatewayShutdownIntentSync({ maxAgeMs: 120_000 })
+        : null;
     recordRuntimeTelemetryEvent({
       event: "gateway.signal",
       subsystem: "gateway",
@@ -44,6 +49,14 @@ export async function runGatewayLoop(params: {
         signal,
         action,
         restart: isRestart,
+        parentPid: process.ppid,
+        xpcServiceName: process.env.XPC_SERVICE_NAME || null,
+        launchdLabel: process.env.OPENCLAW_LAUNCHD_LABEL || null,
+        shutdownIntentInitiator: provenance?.initiator || null,
+        shutdownIntentAction: provenance?.action || null,
+        shutdownIntentReason: provenance?.reason || null,
+        shutdownIntentTs: provenance?.ts || null,
+        shutdownIntentPid: provenance?.pid || null,
       },
     });
 
