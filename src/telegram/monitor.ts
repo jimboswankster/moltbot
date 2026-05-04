@@ -1,11 +1,15 @@
 import { type RunOptions, run } from "@grammyjs/runner";
+import fs from "node:fs/promises";
+import path from "node:path";
 import type { OpenClawConfig } from "../config/config.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { resolveAgentMaxConcurrent } from "../config/agent-limits.js";
 import { loadConfig } from "../config/config.js";
+import { resolveStateDir } from "../config/paths.js";
 import { computeBackoff, sleepWithAbort } from "../infra/backoff.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import { formatDurationMs } from "../infra/format-duration.js";
+import { recordRuntimeTelemetryEvent } from "../infra/runtime-telemetry.js";
 import { registerUnhandledRejectionHandler } from "../infra/unhandled-rejections.js";
 import { resolveTelegramAccount } from "./accounts.js";
 import { resolveTelegramAllowedUpdates } from "./allowed-updates.js";
@@ -27,6 +31,7 @@ export type MonitorTelegramOpts = {
   webhookSecret?: string;
   proxyFetch?: typeof fetch;
   webhookUrl?: string;
+  env?: NodeJS.ProcessEnv;
 };
 
 export function createTelegramRunnerOptions(cfg: OpenClawConfig): RunOptions<unknown> {
@@ -57,6 +62,194 @@ const TELEGRAM_POLL_RESTART_POLICY = {
   factor: 1.8,
   jitter: 0.25,
 };
+const activeTelegramPollers = new Set<string>();
+
+type TelegramPollerLockHandle = {
+  release: () => Promise<void>;
+};
+const DEFAULT_TELEGRAM_POLLER_LOCK_STALE_MS = 10 * 60 * 1000;
+type TelegramPollerLockPayload = {
+  pid?: number;
+  accountId?: string;
+  createdAt?: string;
+};
+
+function normalizeTelegramAccountForLock(accountId?: string): string {
+  const trimmed = accountId?.trim();
+  if (!trimmed) {
+    return "default";
+  }
+  return trimmed.replace(/[^a-z0-9._-]+/gi, "_");
+}
+
+function isPidAlive(pid: number): boolean {
+  if (!Number.isFinite(pid) || pid <= 0) {
+    return false;
+  }
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function resolveRuntimeTelemetryPathForPreflight(env: NodeJS.ProcessEnv = process.env): string {
+  const configured = env.OPENCLAW_RUNTIME_TELEMETRY_FILE?.trim();
+  if (configured) {
+    return configured;
+  }
+  const home = env.HOME || "/Users/basecamp";
+  return path.join(home, ".openclaw", "logs", "runtime-telemetry.jsonl");
+}
+
+async function ensureTelegramMonitorPermissionPreflight(params: {
+  accountId: string;
+  env?: NodeJS.ProcessEnv;
+}): Promise<void> {
+  const stateDir = resolveStateDir(params.env);
+  const normalized = normalizeTelegramAccountForLock(params.accountId);
+  const lockPath = path.join(stateDir, "telegram", `poller-${normalized}.lock`);
+  await fs.mkdir(path.dirname(lockPath), { recursive: true, mode: 0o700 });
+  const telemetryPath = resolveRuntimeTelemetryPathForPreflight(params.env);
+  await fs.mkdir(path.dirname(telemetryPath), { recursive: true, mode: 0o700 });
+}
+
+async function acquireTelegramPollerLock(params: {
+  accountId: string;
+  env?: NodeJS.ProcessEnv;
+  onConflict?: (details: {
+    accountId: string;
+    ownerPid: number | null;
+    ownerCreatedAt: string | null;
+  }) => void;
+}): Promise<TelegramPollerLockHandle> {
+  const stateDir = resolveStateDir(params.env);
+  const normalized = normalizeTelegramAccountForLock(params.accountId);
+  const lockPath = path.join(stateDir, "telegram", `poller-${normalized}.lock`);
+  await fs.mkdir(path.dirname(lockPath), { recursive: true, mode: 0o700 });
+  let handle;
+  try {
+    handle = await fs.open(lockPath, "wx");
+  } catch (err) {
+    const code = (err as { code?: string }).code;
+    if (code === "EEXIST") {
+      const staleMsRaw = params.env?.OPENCLAW_TELEGRAM_POLLER_LOCK_STALE_MS?.trim();
+      const staleMs = Number.isFinite(Number(staleMsRaw))
+        ? Number(staleMsRaw)
+        : DEFAULT_TELEGRAM_POLLER_LOCK_STALE_MS;
+      let owner: TelegramPollerLockPayload | null = null;
+      let stale = false;
+      try {
+        const existingRaw = await fs.readFile(lockPath, "utf8");
+        const parsed = JSON.parse(existingRaw) as TelegramPollerLockPayload;
+        owner = parsed;
+        if (typeof parsed.pid === "number" && !isPidAlive(parsed.pid)) {
+          stale = true;
+        }
+        const createdAt = parsed.createdAt ? Date.parse(parsed.createdAt) : Number.NaN;
+        if (Number.isFinite(createdAt) && Date.now() - createdAt > staleMs) {
+          stale = true;
+        }
+      } catch {
+        // Fall back to mtime check below.
+      }
+      if (!stale) {
+        try {
+          const st = await fs.stat(lockPath);
+          stale = Date.now() - st.mtimeMs > staleMs;
+        } catch {
+          stale = false;
+        }
+      }
+      if (stale) {
+        recordRuntimeTelemetryEvent({
+          event: "telegram.poller_lock_reclaimed",
+          subsystem: "telegram-monitor",
+          severity: "info",
+          status: "ok",
+          details: {
+            accountId: params.accountId,
+            mode: "polling",
+            reason: typeof owner?.pid === "number" && !isPidAlive(owner.pid) ? "dead_pid" : "stale",
+            ownerPid: typeof owner?.pid === "number" ? owner.pid : null,
+            ownerCreatedAt: typeof owner?.createdAt === "string" ? owner.createdAt : null,
+          },
+        });
+        await fs.rm(lockPath, { force: true });
+        return acquireTelegramPollerLock(params);
+      }
+      const ownerPid = typeof owner?.pid === "number" ? owner.pid : null;
+      const ownerCreatedAt = typeof owner?.createdAt === "string" ? owner.createdAt : null;
+      params.onConflict?.({
+        accountId: params.accountId,
+        ownerPid,
+        ownerCreatedAt,
+      });
+      recordRuntimeTelemetryEvent({
+        event: "telegram.poller_lock_preflight_checked",
+        subsystem: "telegram-monitor",
+        severity: "warning",
+        status: "degraded",
+        details: {
+          accountId: params.accountId,
+          mode: "polling",
+          result: "conflict",
+          ownerPid,
+          ownerCreatedAt,
+        },
+      });
+      recordRuntimeTelemetryEvent({
+        event: "telegram.poller_lock_conflict",
+        subsystem: "telegram-monitor",
+        severity: "warning",
+        status: "degraded",
+        details: {
+          accountId: params.accountId,
+          mode: "polling",
+          ownerPid,
+          ownerCreatedAt,
+        },
+      });
+      const ownerSuffix =
+        ownerPid || ownerCreatedAt
+          ? ` (ownerPid=${ownerPid ?? "unknown"} ownerCreatedAt=${ownerCreatedAt ?? "unknown"})`
+          : "";
+      throw new Error(
+        `telegram poller lock already held for account=${params.accountId}${ownerSuffix}`,
+      );
+    }
+    throw err;
+  }
+
+  await handle.writeFile(
+    JSON.stringify({
+      pid: process.pid,
+      accountId: params.accountId,
+      createdAt: new Date().toISOString(),
+    }),
+    "utf8",
+  );
+  recordRuntimeTelemetryEvent({
+    event: "telegram.poller_lock_preflight_checked",
+    subsystem: "telegram-monitor",
+    severity: "info",
+    status: "ok",
+    details: {
+      accountId: params.accountId,
+      mode: "polling",
+      result: "acquired",
+      ownerPid: process.pid,
+    },
+  });
+
+  return {
+    release: async () => {
+      await handle.close().catch(() => undefined);
+      await fs.rm(lockPath, { force: true });
+    },
+  };
+}
 
 const isGetUpdatesConflict = (err: unknown) => {
   if (!err || typeof err !== "object") {
@@ -104,12 +297,51 @@ export async function monitorTelegramProvider(opts: MonitorTelegramOpts = {}) {
     return false;
   });
 
+  let activePollerKey: string | null = null;
+  let pollerLock: TelegramPollerLockHandle | null = null;
   try {
     const cfg = opts.config ?? loadConfig();
     const account = resolveTelegramAccount({
       cfg,
       accountId: opts.accountId,
     });
+    const pollerKey = account.accountId;
+    if (!opts.useWebhook) {
+      try {
+        await ensureTelegramMonitorPermissionPreflight({
+          accountId: pollerKey,
+          env: opts.env,
+        });
+      } catch (err) {
+        const message = `telegram monitor permission preflight failed: ${formatErrorMessage(err)}`;
+        log(message);
+        throw new Error(message, { cause: err });
+      }
+      if (activeTelegramPollers.has(pollerKey)) {
+        recordRuntimeTelemetryEvent({
+          event: "telegram.poller_singleton_conflict",
+          subsystem: "telegram-monitor",
+          severity: "warning",
+          status: "degraded",
+          details: {
+            accountId: pollerKey,
+            mode: "polling",
+          },
+        });
+        throw new Error(`telegram poller already running for account=${pollerKey}`);
+      }
+      activeTelegramPollers.add(pollerKey);
+      activePollerKey = pollerKey;
+      pollerLock = await acquireTelegramPollerLock({
+        accountId: pollerKey,
+        env: opts.env,
+        onConflict: ({ accountId, ownerPid, ownerCreatedAt }) => {
+          log(
+            `telegram poller preflight conflict account=${accountId} ownerPid=${ownerPid ?? "unknown"} ownerCreatedAt=${ownerCreatedAt ?? "unknown"}`,
+          );
+        },
+      });
+    }
     const token = opts.token?.trim() || account.token;
     if (!token) {
       throw new Error(
@@ -257,6 +489,10 @@ export async function monitorTelegramProvider(opts: MonitorTelegramOpts = {}) {
       }
     }
   } finally {
+    await pollerLock?.release().catch(() => undefined);
+    if (activePollerKey) {
+      activeTelegramPollers.delete(activePollerKey);
+    }
     unregisterHandler();
   }
 }
