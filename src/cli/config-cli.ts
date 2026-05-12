@@ -14,7 +14,18 @@ function isIndexSegment(raw: string): boolean {
   return /^[0-9]+$/.test(raw);
 }
 
-function parsePath(raw: string): PathSegment[] {
+function stripBracketQuotes(inside: string): string {
+  if (inside.length >= 2) {
+    const first = inside[0];
+    const last = inside[inside.length - 1];
+    if ((first === '"' && last === '"') || (first === "'" && last === "'")) {
+      return inside.slice(1, -1);
+    }
+  }
+  return inside;
+}
+
+export function parsePath(raw: string): PathSegment[] {
   const trimmed = raw.trim();
   if (!trimmed) {
     return [];
@@ -49,7 +60,8 @@ function parsePath(raw: string): PathSegment[] {
       if (close === -1) {
         throw new Error(`Invalid path (missing "]"): ${raw}`);
       }
-      const inside = trimmed.slice(i + 1, close).trim();
+      const rawInside = trimmed.slice(i + 1, close).trim();
+      const inside = stripBracketQuotes(rawInside);
       if (!inside) {
         throw new Error(`Invalid path (empty "[]"): ${raw}`);
       }
