@@ -32,6 +32,12 @@ export type CronPayload =
       message: string;
       /** Optional model override (provider/model or alias). */
       model?: string;
+      /** Optional routing policy class resolved by an external model-route contract. */
+      routePolicyClass?: string;
+      /** Optional provider/model selected by an external model-route contract. */
+      modelSource?: string;
+      /** Fail closed if the external route contract did not provide a modelSource. */
+      routerRequired?: boolean;
       thinking?: string;
       timeoutSeconds?: number;
       allowUnsafeExternalContent?: boolean;
@@ -59,6 +65,9 @@ export type CronPayloadPatch =
       kind: "agentTurn";
       message?: string;
       model?: string;
+      routePolicyClass?: string;
+      modelSource?: string;
+      routerRequired?: boolean;
       thinking?: string;
       timeoutSeconds?: number;
       allowUnsafeExternalContent?: boolean;

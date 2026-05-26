@@ -93,6 +93,61 @@ function resolveCronDeliveryBestEffort(job: CronJob): boolean {
   return false;
 }
 
+function invalidModelResult(error: string): RunCronAgentTurnResult {
+  return { status: "error", error, errorKind: "invalid-model" };
+}
+
+function resolveCronAgentModelOverrideRaw(params: {
+  cfg: OpenClawConfig;
+  job: CronJob;
+}): { raw?: string } | { error: string } {
+  if (params.job.payload.kind !== "agentTurn") {
+    return {};
+  }
+
+  const payload = params.job.payload;
+  const hasRouteFields =
+    payload.routePolicyClass !== undefined ||
+    payload.modelSource !== undefined ||
+    payload.routerRequired !== undefined;
+
+  if (payload.routePolicyClass !== undefined && typeof payload.routePolicyClass !== "string") {
+    return { error: "invalid routePolicyClass: expected string" };
+  }
+  if (payload.modelSource !== undefined && typeof payload.modelSource !== "string") {
+    return { error: "invalid modelSource: expected string" };
+  }
+  if (payload.routerRequired !== undefined && typeof payload.routerRequired !== "boolean") {
+    return { error: "invalid routerRequired: expected boolean" };
+  }
+
+  const modelSource = payload.modelSource?.trim();
+  if (modelSource) {
+    return { raw: modelSource };
+  }
+  if (hasRouteFields && payload.routerRequired === true) {
+    return { error: "model route required but no modelSource was provided" };
+  }
+  if (payload.routePolicyClass?.trim()) {
+    return { error: "routePolicyClass provided but no modelSource was provided" };
+  }
+
+  const modelOverrideRaw = payload.model;
+  if (modelOverrideRaw !== undefined && typeof modelOverrideRaw !== "string") {
+    return { error: "invalid model: expected string" };
+  }
+
+  const configuredCronModel = params.cfg.cron?.agentTurnModel?.trim();
+  if (
+    configuredCronModel &&
+    (modelOverrideRaw === undefined || modelOverrideRaw.trim().toLowerCase() === "default")
+  ) {
+    return { raw: configuredCronModel };
+  }
+
+  return { raw: modelOverrideRaw };
+}
+
 export type RunCronAgentTurnResult = {
   status: "ok" | "error" | "skipped";
   summary?: string;
@@ -193,21 +248,23 @@ export async function runCronIsolatedAgentTurn(params: {
       model = hooksGmailModelRef.model;
     }
   }
-  const modelOverrideRaw =
-    params.job.payload.kind === "agentTurn" ? params.job.payload.model : undefined;
-  if (modelOverrideRaw !== undefined) {
-    if (typeof modelOverrideRaw !== "string") {
-      return { status: "error", error: "invalid model: expected string" };
-    }
+  const modelOverride = resolveCronAgentModelOverrideRaw({
+    cfg: cfgWithAgentDefaults,
+    job: params.job,
+  });
+  if ("error" in modelOverride) {
+    return invalidModelResult(modelOverride.error);
+  }
+  if (modelOverride.raw !== undefined) {
     const resolvedOverride = resolveAllowedModelRef({
       cfg: cfgWithAgentDefaults,
       catalog: await loadCatalog(),
-      raw: modelOverrideRaw,
+      raw: modelOverride.raw,
       defaultProvider: resolvedDefault.provider,
       defaultModel: resolvedDefault.model,
     });
     if ("error" in resolvedOverride) {
-      return { status: "error", error: resolvedOverride.error };
+      return invalidModelResult(resolvedOverride.error);
     }
     provider = resolvedOverride.ref.provider;
     model = resolvedOverride.ref.model;

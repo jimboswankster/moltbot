@@ -205,6 +205,9 @@ function mergeCronPayload(existing: CronPayload, patch: CronPayloadPatch): CronP
     }
     return buildPayloadFromPatch(patch);
   }
+  if (patch.kind !== "agentTurn") {
+    return buildPayloadFromPatch(patch);
+  }
 
   const next: Extract<CronPayload, { kind: "agentTurn" }> = { ...existing };
   if (typeof patch.message === "string") {
@@ -212,6 +215,15 @@ function mergeCronPayload(existing: CronPayload, patch: CronPayloadPatch): CronP
   }
   if (typeof patch.model === "string") {
     next.model = patch.model;
+  }
+  if (typeof patch.routePolicyClass === "string") {
+    next.routePolicyClass = patch.routePolicyClass;
+  }
+  if (typeof patch.modelSource === "string") {
+    next.modelSource = patch.modelSource;
+  }
+  if (typeof patch.routerRequired === "boolean") {
+    next.routerRequired = patch.routerRequired;
   }
   if (typeof patch.thinking === "string") {
     next.thinking = patch.thinking;
@@ -262,6 +274,9 @@ function buildPayloadFromPatch(patch: CronPayloadPatch): CronPayload {
     kind: "agentTurn",
     message: patch.message,
     model: patch.model,
+    routePolicyClass: patch.routePolicyClass,
+    modelSource: patch.modelSource,
+    routerRequired: patch.routerRequired,
     thinking: patch.thinking,
     timeoutSeconds: patch.timeoutSeconds,
     deliver: patch.deliver,
