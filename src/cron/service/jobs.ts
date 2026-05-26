@@ -219,6 +219,9 @@ function mergeCronPayload(existing: CronPayload, patch: CronPayloadPatch): CronP
   if (typeof patch.routePolicyClass === "string") {
     next.routePolicyClass = patch.routePolicyClass;
   }
+  if (typeof patch.selectedModel === "string") {
+    next.selectedModel = patch.selectedModel;
+  }
   if (typeof patch.modelSource === "string") {
     next.modelSource = patch.modelSource;
   }
@@ -275,6 +278,7 @@ function buildPayloadFromPatch(patch: CronPayloadPatch): CronPayload {
     message: patch.message,
     model: patch.model,
     routePolicyClass: patch.routePolicyClass,
+    selectedModel: patch.selectedModel,
     modelSource: patch.modelSource,
     routerRequired: patch.routerRequired,
     thinking: patch.thinking,

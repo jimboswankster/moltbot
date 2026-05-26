@@ -108,11 +108,15 @@ function resolveCronAgentModelOverrideRaw(params: {
   const payload = params.job.payload;
   const hasRouteFields =
     payload.routePolicyClass !== undefined ||
+    payload.selectedModel !== undefined ||
     payload.modelSource !== undefined ||
     payload.routerRequired !== undefined;
 
   if (payload.routePolicyClass !== undefined && typeof payload.routePolicyClass !== "string") {
     return { error: "invalid routePolicyClass: expected string" };
+  }
+  if (payload.selectedModel !== undefined && typeof payload.selectedModel !== "string") {
+    return { error: "invalid selectedModel: expected string" };
   }
   if (payload.modelSource !== undefined && typeof payload.modelSource !== "string") {
     return { error: "invalid modelSource: expected string" };
@@ -121,15 +125,15 @@ function resolveCronAgentModelOverrideRaw(params: {
     return { error: "invalid routerRequired: expected boolean" };
   }
 
-  const modelSource = payload.modelSource?.trim();
-  if (modelSource) {
-    return { raw: modelSource };
+  const selectedModel = payload.selectedModel?.trim();
+  if (selectedModel) {
+    return { raw: selectedModel };
   }
   if (hasRouteFields && payload.routerRequired === true) {
-    return { error: "model route required but no modelSource was provided" };
+    return { error: "model route required but no selectedModel was provided" };
   }
   if (payload.routePolicyClass?.trim()) {
-    return { error: "routePolicyClass provided but no modelSource was provided" };
+    return { error: "routePolicyClass provided but no selectedModel was provided" };
   }
 
   const modelOverrideRaw = payload.model;

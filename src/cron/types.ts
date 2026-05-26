@@ -35,8 +35,10 @@ export type CronPayload =
       /** Optional routing policy class resolved by an external model-route contract. */
       routePolicyClass?: string;
       /** Optional provider/model selected by an external model-route contract. */
+      selectedModel?: string;
+      /** Optional provenance for selectedModel, e.g. route_policy_runtime. */
       modelSource?: string;
-      /** Fail closed if the external route contract did not provide a modelSource. */
+      /** Fail closed if the external route contract did not provide selectedModel. */
       routerRequired?: boolean;
       thinking?: string;
       timeoutSeconds?: number;
@@ -66,6 +68,7 @@ export type CronPayloadPatch =
       message?: string;
       model?: string;
       routePolicyClass?: string;
+      selectedModel?: string;
       modelSource?: string;
       routerRequired?: boolean;
       thinking?: string;

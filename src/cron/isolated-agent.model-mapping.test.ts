@@ -169,7 +169,7 @@ describe("runCronIsolatedAgentTurn model mapping", () => {
     });
   });
 
-  it("uses route-policy modelSource before literal model fallback", async () => {
+  it("uses route-policy selectedModel before literal model fallback", async () => {
     await withTempHome(async (home) => {
       vi.mocked(loadModelCatalog).mockResolvedValue([
         { id: "MiniMax-M2.1", name: "MiniMax M2.1", provider: "minimax" },
@@ -202,7 +202,8 @@ describe("runCronIsolatedAgentTurn model mapping", () => {
           kind: "agentTurn",
           message: "do it",
           routePolicyClass: "local_dgx_nemotron_worker",
-          modelSource: "local-dgx/nemotron-nano-worker",
+          selectedModel: "local-dgx/nemotron-nano-worker",
+          modelSource: "route_policy_runtime",
           model: "minimax/MiniMax-M2.1",
           routerRequired: true,
           deliver: false,
@@ -222,7 +223,7 @@ describe("runCronIsolatedAgentTurn model mapping", () => {
     });
   });
 
-  it("fails closed when route-policy routing is required without a modelSource", async () => {
+  it("fails closed when route-policy routing is required without a selectedModel", async () => {
     await withTempHome(async (home) => {
       const storePath = await writeSessionStore(home);
       const deps: CliDeps = {
@@ -252,7 +253,7 @@ describe("runCronIsolatedAgentTurn model mapping", () => {
       expect(result).toMatchObject({
         status: "error",
         errorKind: "invalid-model",
-        error: "model route required but no modelSource was provided",
+        error: "model route required but no selectedModel was provided",
       });
       expect(runEmbeddedPiAgent).not.toHaveBeenCalled();
     });
