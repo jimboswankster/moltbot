@@ -169,6 +169,96 @@ describe("runCronIsolatedAgentTurn model mapping", () => {
     });
   });
 
+  it("uses route-policy selectedModel before literal model fallback", async () => {
+    await withTempHome(async (home) => {
+      vi.mocked(loadModelCatalog).mockResolvedValue([
+        { id: "MiniMax-M2.1", name: "MiniMax M2.1", provider: "minimax" },
+        { id: "nemotron-nano-worker", name: "Nemotron Nano Worker", provider: "local-dgx" },
+      ]);
+      const storePath = await writeSessionStore(home);
+      const deps: CliDeps = {
+        sendMessageWhatsApp: vi.fn(),
+        sendMessageTelegram: vi.fn(),
+        sendMessageDiscord: vi.fn(),
+        sendMessageSignal: vi.fn(),
+        sendMessageIMessage: vi.fn(),
+      };
+      vi.mocked(runEmbeddedPiAgent).mockResolvedValue({
+        payloads: [{ text: "ok" }],
+        meta: {
+          durationMs: 5,
+          agentMeta: {
+            sessionId: "s",
+            provider: "local-dgx",
+            model: "nemotron-nano-worker",
+          },
+        },
+      });
+
+      const result = await runCronIsolatedAgentTurn({
+        cfg: makeCfg(home, storePath),
+        deps,
+        job: makeJob({
+          kind: "agentTurn",
+          message: "do it",
+          routePolicyClass: "local_dgx_nemotron_worker",
+          selectedModel: "local-dgx/nemotron-nano-worker",
+          modelSource: "route_policy_runtime",
+          model: "minimax/MiniMax-M2.1",
+          routerRequired: true,
+          deliver: false,
+        }),
+        message: "do it",
+        sessionKey: "cron:job-1",
+        lane: "cron",
+      });
+
+      expect(result.status).toBe("ok");
+      const call = vi.mocked(runEmbeddedPiAgent).mock.calls.at(-1)?.[0] as {
+        provider?: string;
+        model?: string;
+      };
+      expect(call?.provider).toBe("local-dgx");
+      expect(call?.model).toBe("nemotron-nano-worker");
+    });
+  });
+
+  it("fails closed when route-policy routing is required without a selectedModel", async () => {
+    await withTempHome(async (home) => {
+      const storePath = await writeSessionStore(home);
+      const deps: CliDeps = {
+        sendMessageWhatsApp: vi.fn(),
+        sendMessageTelegram: vi.fn(),
+        sendMessageDiscord: vi.fn(),
+        sendMessageSignal: vi.fn(),
+        sendMessageIMessage: vi.fn(),
+      };
+
+      const result = await runCronIsolatedAgentTurn({
+        cfg: makeCfg(home, storePath),
+        deps,
+        job: makeJob({
+          kind: "agentTurn",
+          message: "do it",
+          routePolicyClass: "local_dgx_nemotron_worker",
+          model: "minimax/MiniMax-M2.1",
+          routerRequired: true,
+          deliver: false,
+        }),
+        message: "do it",
+        sessionKey: "cron:job-1",
+        lane: "cron",
+      });
+
+      expect(result).toMatchObject({
+        status: "error",
+        errorKind: "invalid-model",
+        error: "model route required but no selectedModel was provided",
+      });
+      expect(runEmbeddedPiAgent).not.toHaveBeenCalled();
+    });
+  });
+
   it("uses configured primary when payload model is default and cron.agentTurnModel is unset", async () => {
     await withTempHome(async (home) => {
       const storePath = await writeSessionStore(home);
