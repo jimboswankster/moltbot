@@ -59,6 +59,58 @@ import { buildInlineKeyboard } from "./send.js";
 
 const EMPTY_RESPONSE_FALLBACK = "No response generated. Please try again.";
 const TELEGRAM_BOT_COMMAND_LIMIT = 100;
+const TELEGRAM_BOT_COMMAND_TEXT_BUDGET_BYTES = 5_000;
+
+type TelegramMenuCommand = { command: string; description: string };
+
+function telegramMenuCommandTextBytes(commands: TelegramMenuCommand[]): number {
+  return commands.reduce(
+    (total, command) =>
+      total +
+      Buffer.byteLength(command.command, "utf8") +
+      Buffer.byteLength(command.description, "utf8"),
+    0,
+  );
+}
+
+function truncateUtf8(value: string, maxBytes: number): string {
+  let result = "";
+  let usedBytes = 0;
+  for (const character of value) {
+    const characterBytes = Buffer.byteLength(character, "utf8");
+    if (usedBytes + characterBytes > maxBytes) {
+      break;
+    }
+    result += character;
+    usedBytes += characterBytes;
+  }
+  return result.trim() || ".";
+}
+
+function fitTelegramMenuCommandTextBudget(commands: TelegramMenuCommand[]): TelegramMenuCommand[] {
+  if (telegramMenuCommandTextBytes(commands) <= TELEGRAM_BOT_COMMAND_TEXT_BUDGET_BYTES) {
+    return commands;
+  }
+
+  const commandNameBytes = commands.reduce(
+    (total, command) => total + Buffer.byteLength(command.command, "utf8"),
+    0,
+  );
+  let remainingDescriptionBytes = Math.max(
+    commands.length,
+    TELEGRAM_BOT_COMMAND_TEXT_BUDGET_BYTES - commandNameBytes,
+  );
+  return commands.map((command, index) => {
+    const remainingCommands = commands.length - index;
+    const maxDescriptionBytes = Math.max(
+      1,
+      Math.floor(remainingDescriptionBytes / remainingCommands),
+    );
+    const description = truncateUtf8(command.description, maxDescriptionBytes);
+    remainingDescriptionBytes -= Buffer.byteLength(description, "utf8");
+    return { ...command, description };
+  });
+}
 
 type TelegramNativeCommandContext = Context & { match?: string };
 
@@ -372,7 +424,7 @@ export const registerTelegramNativeCommands = ({
     command: command.name,
     description: command.description,
   }));
-  const allCommands: Array<{ command: string; description: string }> = [
+  const allCommands: TelegramMenuCommand[] = [
     ...nativeMenuCommands,
     ...pluginCommands,
     ...customCommands,
@@ -386,12 +438,20 @@ export const registerTelegramNativeCommands = ({
           ...nativeMenuCommands.slice(baseNativeCommandCount),
         ]
       : allCommands;
-  const menuCommands = prioritizedCommands.slice(0, TELEGRAM_BOT_COMMAND_LIMIT);
+  const cappedMenuCommands = prioritizedCommands.slice(0, TELEGRAM_BOT_COMMAND_LIMIT);
+  const menuTextBytes = telegramMenuCommandTextBytes(cappedMenuCommands);
+  const menuCommands = fitTelegramMenuCommandTextBudget(cappedMenuCommands);
 
   if (allCommands.length > TELEGRAM_BOT_COMMAND_LIMIT) {
     runtime.log?.(
       `Telegram supports at most ${TELEGRAM_BOT_COMMAND_LIMIT} commands; ` +
         `registered ${TELEGRAM_BOT_COMMAND_LIMIT} prioritized commands and omitted ${allCommands.length - TELEGRAM_BOT_COMMAND_LIMIT} lower-priority entries.`,
+    );
+  }
+  if (menuTextBytes > TELEGRAM_BOT_COMMAND_TEXT_BUDGET_BYTES) {
+    runtime.log?.(
+      `Telegram menu text exceeded the conservative ${TELEGRAM_BOT_COMMAND_TEXT_BUDGET_BYTES}-byte budget; ` +
+        `shortened descriptions to keep ${menuCommands.length} prioritized commands visible.`,
     );
   }
 

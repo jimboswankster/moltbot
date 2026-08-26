@@ -84,7 +84,7 @@ describe("registerTelegramNativeCommands", () => {
       Array.from({ length: 120 }, (_, index) => ({
         name: `skill_${index}`,
         skillName: `skill-${index}`,
-        description: `Skill ${index}`,
+        description: `Skill ${index} ${"x".repeat(100)}`,
       })),
     );
     const runtimeLog = vi.fn();
@@ -101,6 +101,15 @@ describe("registerTelegramNativeCommands", () => {
     expect(setMyCommands).toHaveBeenCalledTimes(1);
     const menuCommands = setMyCommands.mock.calls[0]?.[0];
     expect(menuCommands).toHaveLength(100);
+    expect(
+      menuCommands?.reduce(
+        (total, command) =>
+          total +
+          Buffer.byteLength(command.command, "utf8") +
+          Buffer.byteLength(command.description, "utf8"),
+        0,
+      ),
+    ).toBeLessThanOrEqual(5_000);
     expect(menuCommands).toContainEqual({
       command: "priority_custom",
       description: "Priority custom",
@@ -109,5 +118,6 @@ describe("registerTelegramNativeCommands", () => {
     const handlerRegistrations = (params.bot.command as ReturnType<typeof vi.fn>).mock.calls;
     expect(handlerRegistrations).toContainEqual(["skill_119", expect.any(Function)]);
     expect(runtimeLog).toHaveBeenCalledWith(expect.stringContaining("at most 100 commands"));
+    expect(runtimeLog).toHaveBeenCalledWith(expect.stringContaining("5000-byte budget"));
   });
 });
