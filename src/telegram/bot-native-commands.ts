@@ -313,6 +313,9 @@ export const registerTelegramNativeCommands = ({
         provider: "telegram",
       })
     : [];
+  const baseNativeCommandCount = nativeEnabled
+    ? listNativeCommandSpecsForConfig(cfg, { provider: "telegram" }).length
+    : 0;
   const reservedCommands = new Set(
     listNativeCommandSpecs().map((command) => command.name.toLowerCase()),
   );
@@ -365,20 +368,30 @@ export const registerTelegramNativeCommands = ({
     existingCommands.add(normalized);
     pluginCommands.push({ command: normalized, description });
   }
+  const nativeMenuCommands = nativeCommands.map((command) => ({
+    command: command.name,
+    description: command.description,
+  }));
   const allCommands: Array<{ command: string; description: string }> = [
-    ...nativeCommands.map((command) => ({
-      command: command.name,
-      description: command.description,
-    })),
+    ...nativeMenuCommands,
     ...pluginCommands,
     ...customCommands,
   ];
-  const menuCommands = allCommands.slice(0, TELEGRAM_BOT_COMMAND_LIMIT);
+  const prioritizedCommands =
+    allCommands.length > TELEGRAM_BOT_COMMAND_LIMIT
+      ? [
+          ...nativeMenuCommands.slice(0, baseNativeCommandCount),
+          ...pluginCommands,
+          ...customCommands,
+          ...nativeMenuCommands.slice(baseNativeCommandCount),
+        ]
+      : allCommands;
+  const menuCommands = prioritizedCommands.slice(0, TELEGRAM_BOT_COMMAND_LIMIT);
 
   if (allCommands.length > TELEGRAM_BOT_COMMAND_LIMIT) {
     runtime.log?.(
       `Telegram supports at most ${TELEGRAM_BOT_COMMAND_LIMIT} commands; ` +
-        `registered the first ${TELEGRAM_BOT_COMMAND_LIMIT} and omitted ${allCommands.length - TELEGRAM_BOT_COMMAND_LIMIT}.`,
+        `registered ${TELEGRAM_BOT_COMMAND_LIMIT} prioritized commands and omitted ${allCommands.length - TELEGRAM_BOT_COMMAND_LIMIT} lower-priority entries.`,
     );
   }
 

@@ -19,6 +19,7 @@ Docs: https://docs.openclaw.ai
 
 ### Fixes
 
+- Telegram: cap native command-menu registration at Telegram's 100-command limit while preserving explicit commands ahead of generated skill commands.
 - CLI: prefer local Hydra for `gateway restart` command hints/execution when available, with explicit daemon-path fallback and opt-out (`OPENCLAW_PREFER_HYDRA_RESTART=0`) to keep backward compatibility.
 - Doctor: add `--dry-run` mode that reports planned repairs without mutating config/state/services, even when `--fix` is also provided.
 - Models CLI: add `openclaw models auth cooldown clear` to clear auth profile cooldown/disabled restrictions (including billing disables) after quota/balance recovery.

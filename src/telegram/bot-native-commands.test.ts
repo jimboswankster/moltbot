@@ -79,7 +79,7 @@ describe("registerTelegramNativeCommands", () => {
     expect(listSkillCommandsForAgents).toHaveBeenCalledWith({ cfg });
   });
 
-  it("caps the registered menu at Telegram's 100-command limit", () => {
+  it("caps the registered menu while retaining explicit commands and all handlers", () => {
     listSkillCommandsForAgents.mockReturnValue(
       Array.from({ length: 120 }, (_, index) => ({
         name: `skill_${index}`,
@@ -89,6 +89,9 @@ describe("registerTelegramNativeCommands", () => {
     );
     const runtimeLog = vi.fn();
     const params = buildParams({});
+    params.telegramCfg = {
+      customCommands: [{ command: "priority_custom", description: "Priority custom" }],
+    } as TelegramAccountConfig;
     params.runtime = { log: runtimeLog } as RuntimeEnv;
     const setMyCommands = vi.fn().mockResolvedValue(undefined);
     params.bot.api.setMyCommands = setMyCommands;
@@ -96,7 +99,15 @@ describe("registerTelegramNativeCommands", () => {
     registerTelegramNativeCommands(params);
 
     expect(setMyCommands).toHaveBeenCalledTimes(1);
-    expect(setMyCommands.mock.calls[0]?.[0]).toHaveLength(100);
+    const menuCommands = setMyCommands.mock.calls[0]?.[0];
+    expect(menuCommands).toHaveLength(100);
+    expect(menuCommands).toContainEqual({
+      command: "priority_custom",
+      description: "Priority custom",
+    });
+    expect(menuCommands).not.toContainEqual(expect.objectContaining({ command: "skill_119" }));
+    const handlerRegistrations = (params.bot.command as ReturnType<typeof vi.fn>).mock.calls;
+    expect(handlerRegistrations).toContainEqual(["skill_119", expect.any(Function)]);
     expect(runtimeLog).toHaveBeenCalledWith(expect.stringContaining("at most 100 commands"));
   });
 });
