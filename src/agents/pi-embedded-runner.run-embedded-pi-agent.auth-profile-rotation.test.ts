@@ -133,6 +133,63 @@ const writeAuthStore = async (
 };
 
 describe("runEmbeddedPiAgent auth profile rotation", () => {
+  it("fails over a run deadline without cooling down the active auth profile", async () => {
+    const agentDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-agent-"));
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-workspace-"));
+    try {
+      await writeAuthStore(agentDir);
+      runEmbeddedAttemptMock.mockResolvedValueOnce(
+        makeAttempt({
+          timedOut: true,
+          lastAssistant: buildAssistant({
+            stopReason: "aborted",
+            errorMessage: "Request was aborted",
+          }),
+        }),
+      );
+
+      await expect(
+        runEmbeddedPiAgent({
+          sessionId: "session:test",
+          sessionKey: "agent:test:deadline",
+          sessionFile: path.join(workspaceDir, "session.jsonl"),
+          workspaceDir,
+          agentDir,
+          config: makeConfig({ fallbacks: ["anthropic/claude-opus-4-8"] }),
+          prompt: "hello",
+          provider: "openai",
+          model: "mock-1",
+          authProfileId: "openai:p1",
+          authProfileIdSource: "user",
+          timeoutMs: 5_000,
+          runId: "run:deadline",
+        }),
+      ).rejects.toThrow("Agent run exceeded its timeout.");
+
+      const stored = JSON.parse(
+        await fs.readFile(path.join(agentDir, "auth-profiles.json"), "utf-8"),
+      ) as {
+        usageStats?: Record<string, { cooldownUntil?: number; errorCount?: number }>;
+      };
+      expect(stored.usageStats?.["openai:p1"]?.cooldownUntil).toBeUndefined();
+      expect(stored.usageStats?.["openai:p1"]?.errorCount).toBeUndefined();
+      expect(recordRuntimeTelemetryEventMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          event: "agent.run_timeout",
+          details: expect.objectContaining({
+            provider: "openai",
+            model: "mock-1",
+            profileId: "openai:p1",
+            reason: "timeout",
+          }),
+        }),
+      );
+    } finally {
+      await fs.rm(agentDir, { recursive: true, force: true });
+      await fs.rm(workspaceDir, { recursive: true, force: true });
+    }
+  });
+
   it("rotates for auto-pinned profiles", async () => {
     const agentDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-agent-"));
     const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-workspace-"));

@@ -109,6 +109,23 @@ describe("buildInlineProviderModels", () => {
 });
 
 describe("resolveModel", () => {
+  it("resolves GPT-5.6 Sol as a forward-compatible Codex OAuth model", () => {
+    const result = resolveModel("openai-codex", "gpt-5.6-sol", "/tmp/agent");
+
+    expect(result.error).toBeUndefined();
+    expect(result.model).toMatchObject({
+      id: "gpt-5.6-sol",
+      name: "GPT-5.6-Sol",
+      provider: "openai-codex",
+      api: "openai-codex-responses",
+      baseUrl: "https://chatgpt.com/backend-api",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 272_000,
+      maxTokens: 128_000,
+    });
+  });
+
   it("includes provider baseUrl in fallback model", () => {
     const cfg = {
       models: {

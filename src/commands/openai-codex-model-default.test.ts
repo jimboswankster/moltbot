@@ -6,6 +6,10 @@ import {
 } from "./openai-codex-model-default.js";
 
 describe("applyOpenAICodexModelDefault", () => {
+  it("uses GPT-5.6 Sol on the ChatGPT OAuth provider", () => {
+    expect(OPENAI_CODEX_DEFAULT_MODEL).toBe("openai-codex/gpt-5.6-sol");
+  });
+
   it("sets openai-codex default when model is unset", () => {
     const cfg: OpenClawConfig = { agents: { defaults: {} } };
     const applied = applyOpenAICodexModelDefault(cfg);

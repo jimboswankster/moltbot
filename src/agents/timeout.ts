@@ -1,7 +1,6 @@
 import type { OpenClawConfig } from "../config/config.js";
 
 const DEFAULT_AGENT_TIMEOUT_SECONDS = 600;
-const DEFAULT_TELEGRAM_AGENT_TIMEOUT_SECONDS = 120;
 
 const normalizeNumber = (value: unknown): number | undefined =>
   typeof value === "number" && Number.isFinite(value) ? Math.floor(value) : undefined;
@@ -14,16 +13,12 @@ function normalizeChannel(value: unknown): string | undefined {
   return normalized.length > 0 ? normalized : undefined;
 }
 
-function isTelegramContext(params: { channel?: string; sessionKey?: string }): boolean {
-  const channel = normalizeChannel(params.channel);
-  if (channel === "telegram") {
-    return true;
+function inferChannelFromSessionKey(value: unknown): string | undefined {
+  const sessionKey = normalizeChannel(value);
+  if (sessionKey?.startsWith("telegram:") || sessionKey?.includes(":telegram:")) {
+    return "telegram";
   }
-  const sessionKey = normalizeChannel(params.sessionKey);
-  if (!sessionKey) {
-    return false;
-  }
-  return sessionKey.startsWith("telegram:") || sessionKey.includes(":telegram:");
+  return undefined;
 }
 
 export function resolveAgentTimeoutSeconds(
@@ -35,7 +30,8 @@ export function resolveAgentTimeoutSeconds(
 ): number {
   const raw = normalizeNumber(cfg?.agents?.defaults?.timeoutSeconds);
   const defaultSeconds = raw ?? DEFAULT_AGENT_TIMEOUT_SECONDS;
-  const channelKey = normalizeChannel(context?.channel);
+  const channelKey =
+    normalizeChannel(context?.channel) ?? inferChannelFromSessionKey(context?.sessionKey);
   const byChannelRaw = channelKey
     ? normalizeNumber(
         (cfg?.agents?.defaults?.timeoutSecondsByChannel as Record<string, number | undefined>)?.[
@@ -43,14 +39,7 @@ export function resolveAgentTimeoutSeconds(
         ],
       )
     : undefined;
-  const isTelegram = isTelegramContext({
-    channel: channelKey,
-    sessionKey: context?.sessionKey,
-  });
-  const scopedDefault = isTelegram
-    ? Math.min(defaultSeconds, DEFAULT_TELEGRAM_AGENT_TIMEOUT_SECONDS)
-    : defaultSeconds;
-  const seconds = byChannelRaw ?? scopedDefault;
+  const seconds = byChannelRaw ?? defaultSeconds;
   return Math.max(seconds, 1);
 }
 

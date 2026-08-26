@@ -100,8 +100,6 @@ export async function runEmbeddedPiAgent(
         ? "markdown"
         : "plain"
       : "markdown");
-  const isProbeSession = params.sessionId?.startsWith("probe-") ?? false;
-
   console.log(
     `[runEmbeddedPiAgent] enqueueing: runId=${params.runId ?? "(none)"} sessionLane=${sessionLane} globalLane=${globalLane}`,
   );
@@ -758,26 +756,43 @@ export async function runEmbeddedPiAgent(
             );
           }
 
-          // Treat timeout as potential rate limit (Antigravity hangs on rate limit)
-          const shouldRotate = (!aborted && failoverFailure) || timedOut;
+          // A run deadline is not evidence that the active credential is unhealthy.
+          // Preserve auth-profile cooldowns for provider failures only.
+          const shouldRotateProfile = !timedOut && !aborted && failoverFailure;
+          const shouldFailOver = shouldRotateProfile || timedOut;
 
-          if (shouldRotate) {
-            if (lastProfileId) {
-              const reason =
-                timedOut || assistantFailoverReason === "timeout"
-                  ? "timeout"
-                  : (assistantFailoverReason ?? "unknown");
+          if (timedOut) {
+            recordRuntimeTelemetryEvent({
+              event: "agent.run_timeout",
+              subsystem: "agent-embedded",
+              severity: "warning",
+              status: "degraded",
+              details: {
+                provider,
+                model: modelId,
+                profileId: lastProfileId,
+                reason: "timeout",
+                timedOut: true,
+                runId: params.runId,
+                sessionId: params.sessionId,
+              },
+            });
+          }
+
+          if (shouldFailOver) {
+            if (shouldRotateProfile && lastProfileId) {
+              const reason = assistantFailoverReason ?? "unknown";
               recordRuntimeTelemetryEvent({
-                event: timedOut ? "agent.profile_timeout" : "agent.profile_failover",
+                event: "agent.profile_failover",
                 subsystem: "agent-embedded",
-                severity: reason === "rate_limit" || reason === "timeout" ? "warning" : "info",
-                status: reason === "rate_limit" || reason === "timeout" ? "degraded" : "ok",
+                severity: reason === "rate_limit" ? "warning" : "info",
+                status: reason === "rate_limit" ? "degraded" : "ok",
                 details: {
                   provider,
                   model: modelId,
                   profileId: lastProfileId,
                   reason,
-                  timedOut,
+                  timedOut: false,
                   runId: params.runId,
                   sessionId: params.sessionId,
                 },
@@ -789,11 +804,6 @@ export async function runEmbeddedPiAgent(
                 cfg: params.config,
                 agentDir: params.agentDir,
               });
-              if (timedOut && !isProbeSession) {
-                log.warn(
-                  `Profile ${lastProfileId} timed out (possible rate limit). Trying next account...`,
-                );
-              }
               if (cloudCodeAssistFormatError) {
                 log.warn(
                   `Profile ${lastProfileId} hit Cloud Code Assist format error. Tool calls will be sanitized on retry.`,
@@ -801,24 +811,23 @@ export async function runEmbeddedPiAgent(
               }
             }
 
-            const rotated = await advanceAuthProfile();
+            const rotated = shouldRotateProfile ? await advanceAuthProfile() : false;
             if (rotated) {
               continue;
             }
 
             if (fallbackConfigured) {
               // Prefer formatted error message (user-friendly) over raw errorMessage
-              const message =
-                (lastAssistant
-                  ? formatAssistantErrorText(lastAssistant, {
-                      cfg: params.config,
-                      sessionKey: params.sessionKey ?? params.sessionId,
-                    })
-                  : undefined) ||
-                lastAssistant?.errorMessage?.trim() ||
-                (timedOut
-                  ? "LLM request timed out."
-                  : rateLimitFailure
+              const message = timedOut
+                ? "Agent run exceeded its timeout."
+                : (lastAssistant
+                    ? formatAssistantErrorText(lastAssistant, {
+                        cfg: params.config,
+                        sessionKey: params.sessionKey ?? params.sessionId,
+                      })
+                    : undefined) ||
+                  lastAssistant?.errorMessage?.trim() ||
+                  (rateLimitFailure
                     ? "LLM request rate limited."
                     : authFailure
                       ? "LLM request unauthorized."
@@ -827,7 +836,7 @@ export async function runEmbeddedPiAgent(
                 resolveFailoverStatus(assistantFailoverReason ?? "unknown") ??
                 (isTimeoutErrorMessage(message) ? 408 : undefined);
               throw new FailoverError(message, {
-                reason: assistantFailoverReason ?? "unknown",
+                reason: timedOut ? "timeout" : (assistantFailoverReason ?? "unknown"),
                 provider,
                 model: modelId,
                 profileId: lastProfileId,

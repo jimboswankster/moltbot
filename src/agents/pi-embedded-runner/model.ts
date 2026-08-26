@@ -19,6 +19,29 @@ type InlineProviderConfig = {
   models?: ModelDefinitionConfig[];
 };
 
+const OPENAI_CODEX_RESPONSES_BASE_URL = "https://chatgpt.com/backend-api";
+
+function buildOpenAICodexForwardCompatModel(
+  provider: string,
+  modelId: string,
+): Model<Api> | undefined {
+  if (normalizeProviderId(provider) !== "openai-codex" || modelId !== "gpt-5.6-sol") {
+    return undefined;
+  }
+  return normalizeModelCompat({
+    id: modelId,
+    name: "GPT-5.6-Sol",
+    api: "openai-codex-responses",
+    provider: "openai-codex",
+    baseUrl: OPENAI_CODEX_RESPONSES_BASE_URL,
+    reasoning: true,
+    input: ["text", "image"],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 272000,
+    maxTokens: 128000,
+  } as Model<Api>);
+}
+
 export function buildInlineProviderModels(
   providers: Record<string, InlineProviderConfig>,
 ): InlineModelEntry[] {
@@ -81,6 +104,14 @@ export function resolveModel(
       const normalized = normalizeModelCompat(inlineMatch as Model<Api>);
       return {
         model: normalized,
+        authStorage,
+        modelRegistry,
+      };
+    }
+    const forwardCompatModel = buildOpenAICodexForwardCompatModel(provider, modelId);
+    if (forwardCompatModel) {
+      return {
+        model: forwardCompatModel,
         authStorage,
         modelRegistry,
       };

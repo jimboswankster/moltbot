@@ -37,9 +37,9 @@ describe("resolveAgentTimeoutSeconds", () => {
     expect(resolveAgentTimeoutSeconds(cfg)).toBe(1);
   });
 
-  it("caps telegram timeout to 120s by default when global timeout is higher", () => {
+  it("uses the configured global timeout for telegram when no channel override exists", () => {
     const cfg = { agents: { defaults: { timeoutSeconds: 240 } } } as any;
-    expect(resolveAgentTimeoutSeconds(cfg, { channel: "telegram" })).toBe(120);
+    expect(resolveAgentTimeoutSeconds(cfg, { channel: "telegram" })).toBe(240);
   });
 
   it("supports explicit per-channel timeout override", () => {
@@ -49,14 +49,25 @@ describe("resolveAgentTimeoutSeconds", () => {
     expect(resolveAgentTimeoutSeconds(cfg, { channel: "telegram" })).toBe(90);
   });
 
-  it("detects telegram context from session key when channel is absent", () => {
+  it("does not silently shorten the global timeout for telegram session keys", () => {
     const cfg = { agents: { defaults: { timeoutSeconds: 240 } } } as any;
     expect(
       resolveAgentTimeoutSeconds(cfg, { sessionKey: "agent:main:telegram:group:-100123:topic:99" }),
-    ).toBe(120);
+    ).toBe(240);
   });
 
-  it("does not increase timeout when global default is already lower than telegram cap", () => {
+  it("uses the telegram channel override when only the session key identifies the channel", () => {
+    const cfg = {
+      agents: { defaults: { timeoutSeconds: 240, timeoutSecondsByChannel: { telegram: 600 } } },
+    } as any;
+    expect(
+      resolveAgentTimeoutSeconds(cfg, {
+        sessionKey: "agent:main:telegram:group:-1003778262727:topic:1",
+      }),
+    ).toBe(600);
+  });
+
+  it("keeps a lower configured global timeout for telegram", () => {
     const cfg = { agents: { defaults: { timeoutSeconds: 75 } } } as any;
     expect(resolveAgentTimeoutSeconds(cfg, { channel: "telegram" })).toBe(75);
   });
@@ -144,12 +155,12 @@ describe("resolveAgentTimeoutMs", () => {
     expect(resolveAgentTimeoutMs({ overrideSeconds: NaN })).toBe(600_000);
   });
 
-  it("uses telegram-scoped default when channel is telegram", () => {
+  it("uses the configured global timeout when channel is telegram", () => {
     const cfg = { agents: { defaults: { timeoutSeconds: 240 } } } as any;
-    expect(resolveAgentTimeoutMs({ cfg, channel: "telegram" })).toBe(120_000);
+    expect(resolveAgentTimeoutMs({ cfg, channel: "telegram" })).toBe(240_000);
   });
 
-  it("keeps explicit override precedence over telegram-scoped default", () => {
+  it("keeps explicit override precedence over the global telegram timeout", () => {
     const cfg = { agents: { defaults: { timeoutSeconds: 240 } } } as any;
     expect(resolveAgentTimeoutMs({ cfg, channel: "telegram", overrideSeconds: 300 })).toBe(300_000);
   });
