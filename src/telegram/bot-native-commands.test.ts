@@ -4,8 +4,22 @@ import type { TelegramAccountConfig } from "../config/types.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { registerTelegramNativeCommands } from "./bot-native-commands.js";
 
-const { listSkillCommandsForAgents } = vi.hoisted(() => ({
+const {
+  executePluginCommand,
+  getPluginCommandSpecs,
+  listSkillCommandsForAgents,
+  matchPluginCommand,
+} = vi.hoisted(() => ({
+  executePluginCommand: vi.fn(),
+  getPluginCommandSpecs: vi.fn(() => []),
   listSkillCommandsForAgents: vi.fn(() => []),
+  matchPluginCommand: vi.fn(),
+}));
+
+vi.mock("../plugins/commands.js", () => ({
+  executePluginCommand,
+  getPluginCommandSpecs,
+  matchPluginCommand,
 }));
 
 vi.mock("../auto-reply/skill-commands.js", () => ({
@@ -15,6 +29,7 @@ vi.mock("../auto-reply/skill-commands.js", () => ({
 describe("registerTelegramNativeCommands", () => {
   beforeEach(() => {
     listSkillCommandsForAgents.mockReset();
+    getPluginCommandSpecs.mockReset().mockReturnValue([]);
   });
 
   const buildParams = (cfg: OpenClawConfig, accountId = "default") => ({
@@ -84,9 +99,12 @@ describe("registerTelegramNativeCommands", () => {
       Array.from({ length: 120 }, (_, index) => ({
         name: `skill_${index}`,
         skillName: `skill-${index}`,
-        description: `Skill ${index} ${"x".repeat(100)}`,
+        description: `Skill ${index} ${"界🙂".repeat(60)}`,
       })),
     );
+    getPluginCommandSpecs.mockReturnValue([
+      { name: "priority_plugin", description: "Priority plugin" },
+    ]);
     const runtimeLog = vi.fn();
     const params = buildParams({});
     params.telegramCfg = {
@@ -110,6 +128,12 @@ describe("registerTelegramNativeCommands", () => {
         0,
       ),
     ).toBeLessThanOrEqual(5_000);
+    expect(menuCommands?.every((command) => command.description.trim().length > 0)).toBe(true);
+    expect(menuCommands?.every((command) => !command.description.includes("�"))).toBe(true);
+    expect(menuCommands).toContainEqual({
+      command: "priority_plugin",
+      description: "Priority plugin",
+    });
     expect(menuCommands).toContainEqual({
       command: "priority_custom",
       description: "Priority custom",

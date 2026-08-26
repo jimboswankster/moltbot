@@ -84,6 +84,7 @@ function truncateUtf8(value: string, maxBytes: number): string {
     result += character;
     usedBytes += characterBytes;
   }
+  // Keep Telegram's required description nonempty even if a future caller supplies a sub-code-point budget.
   return result.trim() || ".";
 }
 
@@ -96,6 +97,8 @@ function fitTelegramMenuCommandTextBudget(commands: TelegramMenuCommand[]): Tele
     (total, command) => total + Buffer.byteLength(command.command, "utf8"),
     0,
   );
+  // Telegram command names are validated ASCII with a 32-byte maximum, so 100 names leave
+  // enough of this budget for at least one description byte per command.
   let remainingDescriptionBytes = Math.max(
     commands.length,
     TELEGRAM_BOT_COMMAND_TEXT_BUDGET_BYTES - commandNameBytes,
