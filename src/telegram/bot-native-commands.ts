@@ -58,6 +58,7 @@ import { classifyErrorForUser } from "./error-classify.js";
 import { buildInlineKeyboard } from "./send.js";
 
 const EMPTY_RESPONSE_FALLBACK = "No response generated. Please try again.";
+const TELEGRAM_BOT_COMMAND_LIMIT = 100;
 
 type TelegramNativeCommandContext = Context & { match?: string };
 
@@ -372,12 +373,20 @@ export const registerTelegramNativeCommands = ({
     ...pluginCommands,
     ...customCommands,
   ];
+  const menuCommands = allCommands.slice(0, TELEGRAM_BOT_COMMAND_LIMIT);
 
-  if (allCommands.length > 0) {
+  if (allCommands.length > TELEGRAM_BOT_COMMAND_LIMIT) {
+    runtime.log?.(
+      `Telegram supports at most ${TELEGRAM_BOT_COMMAND_LIMIT} commands; ` +
+        `registered the first ${TELEGRAM_BOT_COMMAND_LIMIT} and omitted ${allCommands.length - TELEGRAM_BOT_COMMAND_LIMIT}.`,
+    );
+  }
+
+  if (menuCommands.length > 0) {
     withTelegramApiErrorLogging({
       operation: "setMyCommands",
       runtime,
-      fn: () => bot.api.setMyCommands(allCommands),
+      fn: () => bot.api.setMyCommands(menuCommands),
     }).catch(() => {});
 
     if (typeof (bot as unknown as { command?: unknown }).command !== "function") {

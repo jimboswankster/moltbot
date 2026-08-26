@@ -78,4 +78,25 @@ describe("registerTelegramNativeCommands", () => {
 
     expect(listSkillCommandsForAgents).toHaveBeenCalledWith({ cfg });
   });
+
+  it("caps the registered menu at Telegram's 100-command limit", () => {
+    listSkillCommandsForAgents.mockReturnValue(
+      Array.from({ length: 120 }, (_, index) => ({
+        name: `skill_${index}`,
+        skillName: `skill-${index}`,
+        description: `Skill ${index}`,
+      })),
+    );
+    const runtimeLog = vi.fn();
+    const params = buildParams({});
+    params.runtime = { log: runtimeLog } as RuntimeEnv;
+    const setMyCommands = vi.fn().mockResolvedValue(undefined);
+    params.bot.api.setMyCommands = setMyCommands;
+
+    registerTelegramNativeCommands(params);
+
+    expect(setMyCommands).toHaveBeenCalledTimes(1);
+    expect(setMyCommands.mock.calls[0]?.[0]).toHaveLength(100);
+    expect(runtimeLog).toHaveBeenCalledWith(expect.stringContaining("at most 100 commands"));
+  });
 });
