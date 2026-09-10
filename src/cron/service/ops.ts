@@ -13,13 +13,24 @@ import { locked } from "./locked.js";
 import { ensureLoaded, persist, reloadFromDisk, warnIfDisabled } from "./store.js";
 import { armTimer, emit, executeJob, stopTimer, wake } from "./timer.js";
 
+// The store is shared with git and hand edits, so a write must start from
+// what is on disk now, never from the table cached at the last tick.
+async function loadForWrite(state: CronServiceState) {
+  await reloadFromDisk(state);
+  if (state.storeUnreadable) {
+    throw new Error(
+      "cron store is unreadable while an external write is in progress; retry shortly",
+    );
+  }
+}
+
 export async function start(state: CronServiceState) {
   await locked(state, async () => {
     if (!state.deps.cronEnabled) {
       state.deps.log.info({ enabled: false }, "cron: disabled");
       return;
     }
-    await ensureLoaded(state);
+    await reloadFromDisk(state);
     recomputeNextRuns(state);
     await persist(state);
     armTimer(state);
@@ -77,7 +88,7 @@ export async function refresh(state: CronServiceState) {
 export async function add(state: CronServiceState, input: CronJobCreate) {
   return await locked(state, async () => {
     warnIfDisabled(state, "add");
-    await ensureLoaded(state);
+    await loadForWrite(state);
     const job = createJob(state, input);
     state.store?.jobs.push(job);
     await persist(state);
@@ -94,7 +105,7 @@ export async function add(state: CronServiceState, input: CronJobCreate) {
 export async function update(state: CronServiceState, id: string, patch: CronJobPatch) {
   return await locked(state, async () => {
     warnIfDisabled(state, "update");
-    await ensureLoaded(state);
+    await loadForWrite(state);
     const job = findJobOrThrow(state, id);
     const now = state.deps.nowMs();
     applyJobPatch(job, patch);
@@ -120,7 +131,7 @@ export async function update(state: CronServiceState, id: string, patch: CronJob
 export async function remove(state: CronServiceState, id: string) {
   return await locked(state, async () => {
     warnIfDisabled(state, "remove");
-    await ensureLoaded(state);
+    await loadForWrite(state);
     const before = state.store?.jobs.length ?? 0;
     if (!state.store) {
       return { ok: false, removed: false } as const;

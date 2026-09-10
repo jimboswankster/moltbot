@@ -11,6 +11,32 @@ import { ensureLoaded, persist, reloadFromDisk } from "./store.js";
 
 const MAX_TIMEOUT_MS = 2 ** 31 - 1;
 
+// Due jobs run one at a time and a tick waits for each, so a run that never
+// settles would stop every job until the process restarts. Give each run a
+// deadline past its own timeout, then record it as failed and move on.
+const RUN_DEADLINE_GRACE_MS = 2 * 60_000;
+const DEFAULT_RUN_DEADLINE_MS = 60 * 60_000;
+
+function resolveRunDeadlineMs(job: CronJob) {
+  const timeoutSeconds =
+    job.payload.kind === "agentTurn" || job.payload.kind === "command"
+      ? job.payload.timeoutSeconds
+      : undefined;
+  if (typeof timeoutSeconds === "number" && timeoutSeconds > 0) {
+    return timeoutSeconds * 1000 + RUN_DEADLINE_GRACE_MS;
+  }
+  return DEFAULT_RUN_DEADLINE_MS;
+}
+
+function withDeadline<T>(work: Promise<T>, deadlineMs: number, onDeadline: () => T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<T>((resolve) => {
+    timer = setTimeout(() => resolve(onDeadline()), Math.min(deadlineMs, MAX_TIMEOUT_MS));
+    timer.unref?.();
+  });
+  return Promise.race([work, deadline]).finally(() => clearTimeout(timer));
+}
+
 function emitSystemAndRuntimeTelemetry(row: {
   subsystem: string;
   event_type: string;
@@ -205,10 +231,26 @@ export async function executeJob(
     outputText?: string;
   } | null = null;
   try {
-    outcome = await runJobCore(state, runSnapshot, {
-      runId,
-      telemetryId: runSnapshot.telemetryId ?? `cron:${runSnapshot.id}`,
-    });
+    const deadlineMs = resolveRunDeadlineMs(runSnapshot);
+    outcome = await withDeadline(
+      runJobCore(state, runSnapshot, {
+        runId,
+        telemetryId: runSnapshot.telemetryId ?? `cron:${runSnapshot.id}`,
+      }),
+      deadlineMs,
+      () => {
+        state.deps.log.warn(
+          { jobId: runSnapshot.id, deadlineMs },
+          "cron: run did not settle before its deadline; marking it failed",
+        );
+        return {
+          status: "error" as const,
+          err: `cron: run did not settle within ${Math.round(deadlineMs / 1000)}s`,
+          runId,
+          telemetryId: runSnapshot.telemetryId ?? `cron:${runSnapshot.id}`,
+        };
+      },
+    );
   } catch (err) {
     outcome = {
       status: "error",

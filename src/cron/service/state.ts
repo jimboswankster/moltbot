@@ -92,6 +92,7 @@ export type CronServiceState = {
   running: boolean;
   op: Promise<unknown>;
   warnedDisabled: boolean;
+  storeUnreadable?: boolean;
 };
 
 export function createCronServiceState(deps: CronServiceDeps): CronServiceState {

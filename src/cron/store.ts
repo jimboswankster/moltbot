@@ -2,6 +2,7 @@ import JSON5 from "json5";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import type { CronJobState, CronStoreFile } from "./types.js";
 import { CONFIG_DIR } from "../utils.js";
 
@@ -26,6 +27,13 @@ type CronStateStoreFile = {
     state?: CronJobState;
   }>;
 };
+
+export class CronStoreReadError extends Error {
+  constructor(storePath: string, cause: unknown) {
+    super(`cron store unreadable: ${storePath}`, { cause });
+    this.name = "CronStoreReadError";
+  }
+}
 
 async function resolveWritableStorePath(storePath: string): Promise<string> {
   try {
@@ -100,6 +108,15 @@ function splitPathsForStorePath(storePath: string) {
   };
 }
 
+async function fileHoldsJson(filePath: string, value: unknown): Promise<boolean> {
+  try {
+    const existing = await readJson5File(filePath);
+    return isDeepStrictEqual(existing, JSON.parse(JSON.stringify(value)));
+  } catch {
+    return false;
+  }
+}
+
 async function writeJsonAtomic(filePath: string, value: unknown) {
   await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
   const json = JSON.stringify(value, null, 2);
@@ -121,11 +138,20 @@ async function writeJsonAtomic(filePath: string, value: unknown) {
   }
 }
 
-export async function loadCronStore(storePath: string): Promise<CronStoreFile> {
+/**
+ * `strict` reports an unreadable store (missing, or mid-write by an external
+ * writer) as a CronStoreReadError instead of as an empty job table.
+ */
+export async function loadCronStore(
+  storePath: string,
+  opts: { strict?: boolean } = {},
+): Promise<CronStoreFile> {
   const writePath = await resolveWritableStorePath(storePath);
   const { configPath, statePath } = splitPathsForStorePath(writePath);
+  let configPresent = false;
   try {
     await fs.promises.access(configPath, fs.constants.F_OK);
+    configPresent = true;
     const configParsed = await readJson5File(configPath);
     const configStore: CronStoreFile = {
       version: 1,
@@ -146,7 +172,10 @@ export async function loadCronStore(storePath: string): Promise<CronStoreFile> {
     } catch {
       return configStore;
     }
-  } catch {
+  } catch (err) {
+    if (opts.strict && configPresent) {
+      throw new CronStoreReadError(configPath, err);
+    }
     // No split config present; fall back to legacy single-file store.
   }
 
@@ -156,7 +185,10 @@ export async function loadCronStore(storePath: string): Promise<CronStoreFile> {
       version: 1,
       jobs: coerceCronJobs(parsed),
     };
-  } catch {
+  } catch (err) {
+    if (opts.strict) {
+      throw new CronStoreReadError(storePath, err);
+    }
     return { version: 1, jobs: [] };
   }
 }
@@ -168,7 +200,11 @@ export async function saveCronStore(storePath: string, store: CronStoreFile) {
     await fs.promises.access(configPath, fs.constants.F_OK);
     const configStore = stripRuntimeStateForConfig(store);
     const stateStore = projectRuntimeState(store);
-    await writeJsonAtomic(configPath, configStore);
+    // The config is committed and hand-edited; rewrite it only when the job
+    // table changed, so re-serializing never dirties the checkout.
+    if (!(await fileHoldsJson(configPath, configStore))) {
+      await writeJsonAtomic(configPath, configStore);
+    }
     await writeJsonAtomic(statePath, stateStore);
     return;
   } catch {

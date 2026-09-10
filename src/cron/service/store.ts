@@ -1,7 +1,7 @@
 import type { CronJob } from "../types.js";
 import type { CronServiceState } from "./state.js";
 import { migrateLegacyCronPayload } from "../payload-migration.js";
-import { loadCronStore, saveCronStore } from "../store.js";
+import { CronStoreReadError, loadCronStore, saveCronStore } from "../store.js";
 import { inferLegacyName, normalizeOptionalText } from "./normalize.js";
 
 const storeCache = new Map<string, { version: 1; jobs: CronJob[] }>();
@@ -54,12 +54,31 @@ function ensureMainDeliveryStrategyForMainSystemEvent(raw: Record<string, unknow
  * jobs.config.json so new/updated/removed jobs are picked up without a gateway restart.
  */
 export async function reloadFromDisk(state: CronServiceState) {
+  const previous = state.store ?? storeCache.get(state.deps.storePath) ?? null;
   storeCache.delete(state.deps.storePath);
   state.store = null;
-  await ensureLoaded(state);
+  try {
+    await ensureLoaded(state, { strict: previous !== null });
+  } catch (err) {
+    if (!previous || !(err instanceof CronStoreReadError)) {
+      throw err;
+    }
+    // An external writer (git, a script, an editor) is mid-write. Keep running
+    // on the jobs we have; an empty table would disarm the timer for good.
+    if (!state.storeUnreadable) {
+      const reason = err.cause instanceof Error ? err.cause.message : err.message;
+      state.deps.log.warn(
+        { storePath: state.deps.storePath, err: reason },
+        "cron: store unreadable; keeping the last loaded jobs until it can be read",
+      );
+    }
+    state.storeUnreadable = true;
+    state.store = previous;
+    storeCache.set(state.deps.storePath, previous);
+  }
 }
 
-export async function ensureLoaded(state: CronServiceState) {
+export async function ensureLoaded(state: CronServiceState, opts?: { strict?: boolean }) {
   if (state.store) {
     return;
   }
@@ -68,7 +87,8 @@ export async function ensureLoaded(state: CronServiceState) {
     state.store = cached;
     return;
   }
-  const loaded = await loadCronStore(state.deps.storePath);
+  const loaded = await loadCronStore(state.deps.storePath, opts);
+  state.storeUnreadable = false;
   const jobs = (loaded.jobs ?? []) as unknown as Array<Record<string, unknown>>;
   let mutated = false;
   for (const raw of jobs) {
@@ -125,6 +145,11 @@ export function warnIfDisabled(state: CronServiceState, action: string) {
 
 export async function persist(state: CronServiceState) {
   if (!state.store) {
+    return;
+  }
+  // Never write over a store we could not read: that would clobber the
+  // external writer's content.
+  if (state.storeUnreadable) {
     return;
   }
   await saveCronStore(state.deps.storePath, state.store);
