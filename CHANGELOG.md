@@ -22,6 +22,7 @@ Docs: https://docs.openclaw.ai
 - Cron: keep the loaded jobs when a tick finds `jobs.config.json` half-written or momentarily missing, and never write over a store file that could not be read. Git checkouts, merges and hand edits used to leave the gateway with an empty job table and no wake timer until it restarted.
 - Cron: reload the store before `cron add`, `update` and `remove`, so they no longer overwrite edits made on disk since the last tick, and leave a committed `jobs.config.json` byte-for-byte alone unless the job table changed.
 - Cron: give every run a deadline past its own timeout. A run that never settles is now recorded as failed instead of stopping every other job until the gateway restarts.
+- Agents: release the compaction-retry wait when a run is aborted. A timeout that landed while the SDK was retrying after auto-compaction left the run pending forever, and a cron job waiting on it stopped the whole scheduler.
 - CLI: prefer local Hydra for `gateway restart` command hints/execution when available, with explicit daemon-path fallback and opt-out (`OPENCLAW_PREFER_HYDRA_RESTART=0`) to keep backward compatibility.
 - Doctor: add `--dry-run` mode that reports planned repairs without mutating config/state/services, even when `--fix` is also provided.
 - Models CLI: add `openclaw models auth cooldown clear` to clear auth profile cooldown/disabled restrictions (including billing disables) after quota/balance recovery.

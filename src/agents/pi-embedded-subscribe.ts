@@ -208,6 +208,23 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
     }
   };
 
+  const waitForPendingCompactionRetry = (): Promise<void> => {
+    if (state.compactionInFlight || state.pendingCompactionRetry > 0) {
+      ensureCompactionPromise();
+      return state.compactionRetryPromise ?? Promise.resolve();
+    }
+    return new Promise<void>((resolve) => {
+      queueMicrotask(() => {
+        if (state.compactionInFlight || state.pendingCompactionRetry > 0) {
+          ensureCompactionPromise();
+          void (state.compactionRetryPromise ?? Promise.resolve()).then(resolve);
+        } else {
+          resolve();
+        }
+      });
+    });
+  };
+
   const noteCompactionRetry = () => {
     state.pendingCompactionRetry += 1;
     ensureCompactionPromise();
@@ -616,19 +633,36 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
     getUsageTotals,
     getCompactionCount: () => compactionCount,
     waitForCompactionRetry: () => {
-      if (state.compactionInFlight || state.pendingCompactionRetry > 0) {
-        ensureCompactionPromise();
-        return state.compactionRetryPromise ?? Promise.resolve();
+      const wait = waitForPendingCompactionRetry();
+      const signal = params.abortSignal;
+      if (!signal) {
+        return wait;
       }
-      return new Promise<void>((resolve) => {
-        queueMicrotask(() => {
+      // A retry is released by the retried run's agent_end, which an aborted
+      // run (one that hit its timeout, say) may never deliver.
+      return new Promise<void>((resolve, reject) => {
+        const onAbort = () => {
           if (state.compactionInFlight || state.pendingCompactionRetry > 0) {
-            ensureCompactionPromise();
-            void (state.compactionRetryPromise ?? Promise.resolve()).then(resolve);
-          } else {
-            resolve();
+            const err = new Error("aborted");
+            err.name = "AbortError";
+            reject(err);
           }
-        });
+        };
+        if (signal.aborted) {
+          onAbort();
+        } else {
+          signal.addEventListener("abort", onAbort, { once: true });
+        }
+        wait.then(
+          () => {
+            signal.removeEventListener("abort", onAbort);
+            resolve();
+          },
+          (err) => {
+            signal.removeEventListener("abort", onAbort);
+            reject(err);
+          },
+        );
       });
     },
   };

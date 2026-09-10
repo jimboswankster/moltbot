@@ -5,6 +5,8 @@ import type { BlockReplyChunking } from "./pi-embedded-block-chunker.js";
 export type ToolResultFormat = "markdown" | "plain";
 
 export type SubscribeEmbeddedPiSessionParams = {
+  /** The run's abort signal; releases a pending compaction-retry wait when the run is aborted. */
+  abortSignal?: AbortSignal;
   session: AgentSession;
   runId: string;
   verboseLevel?: VerboseLevel;
