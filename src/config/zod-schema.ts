@@ -164,6 +164,15 @@ export const OpenClawSchema = z
           .object({
             enabled: z.boolean().optional(),
             adapterPath: z.string().optional(),
+            sessionIdentityScope: z
+              .object({
+                runtimeProfileId: z.string().min(1),
+                tenantId: z.string().min(1),
+                brandId: z.string().min(1),
+                workspaceId: z.string().min(1),
+              })
+              .strict()
+              .optional(),
             variantId: z.string().optional(),
             allowedWorkspacePrefixes: z.array(z.string()).optional(),
             batchSize: z.number().optional(),

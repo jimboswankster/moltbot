@@ -59,6 +59,22 @@ export interface MemoryCompanionAdapter {
   resolveModel(config: Record<string, unknown> | undefined): ResolvedMemoryModel | undefined;
 }
 
+type SessionIdentityAdapter = {
+  target: "openclaw";
+  resolve(input: { transcriptPath: string; transcriptRevision: string }): unknown;
+};
+
+type SessionIdentityScope = {
+  runtimeProfileId: string;
+  tenantId: string;
+  brandId: string;
+  workspaceId: string;
+};
+
+type CreateSessionIdentityAdapter = (
+  scope: SessionIdentityScope & { agentId: string },
+) => SessionIdentityAdapter;
+
 /** Companion LLM call function (injected into extension). */
 type CallCompanionLlmFn = (params: {
   systemPrompt: string;
@@ -68,6 +84,7 @@ type CallCompanionLlmFn = (params: {
 /** Engine dependencies passed to the extension factory. */
 export interface EngineDeps {
   limitHistoryTurns: (messages: AgentMessage[], limit: number | undefined) => AgentMessage[];
+  sessionIdentity: SessionIdentityAdapter;
   callCompanionLlm?: CallCompanionLlmFn;
   companionConfig?: {
     variantId?: string;
@@ -165,6 +182,13 @@ function resolveFactory(
   return null;
 }
 
+function resolveSessionIdentityFactory(
+  mod: Record<string, unknown>,
+): CreateSessionIdentityAdapter | null {
+  const candidate = mod?.createOpenClawSessionIdentityAdapter;
+  return typeof candidate === "function" ? (candidate as CreateSessionIdentityAdapter) : null;
+}
+
 /**
  * Load the Memory Companion adapter from workspace extension.
  *
@@ -181,12 +205,14 @@ export async function loadMemoryCompanionAdapter(
   cfg?: OpenClawConfig,
   agentDir?: string,
   log?: LogLike,
+  agentId?: string,
 ): Promise<MemoryCompanionAdapter | null> {
   const entry = (cfg as Record<string, unknown>)?.extensions as Record<string, unknown> | undefined;
   const mcConfig = entry?.memoryCompanion as
     | {
         enabled?: boolean;
         adapterPath?: string;
+        sessionIdentityScope?: SessionIdentityScope;
         variantId?: string;
         allowedWorkspacePrefixes?: string[];
         batchSize?: number;
@@ -206,6 +232,17 @@ export async function loadMemoryCompanionAdapter(
     return null;
   }
 
+  const sessionIdentityScope = mcConfig.sessionIdentityScope;
+  if (!sessionIdentityScope) {
+    log?.warn?.("memory companion enabled but sessionIdentityScope is missing");
+    return null;
+  }
+  const resolvedAgentId = agentId?.trim();
+  if (!resolvedAgentId) {
+    log?.warn?.("memory companion enabled but agentId is missing");
+    return null;
+  }
+
   const resolved = resolveUserPath(rawPath);
 
   try {
@@ -215,8 +252,9 @@ export async function loadMemoryCompanionAdapter(
       extensions: [".ts", ".tsx", ".mts", ".js", ".mjs"],
     });
 
-    const mod = (await jiti.import(resolved)) as Record<string, unknown>;
+    const mod = await jiti.import(resolved);
     const factory = resolveFactory(mod);
+    const identityFactory = resolveSessionIdentityFactory(mod);
 
     if (!factory) {
       log?.warn?.(
@@ -224,10 +262,21 @@ export async function loadMemoryCompanionAdapter(
       );
       return null;
     }
+    if (!identityFactory) {
+      log?.warn?.(
+        `memory companion adapter did not export createOpenClawSessionIdentityAdapter: ${resolved}`,
+      );
+      return null;
+    }
+
+    const sessionIdentity = identityFactory({
+      ...sessionIdentityScope,
+      agentId: resolvedAgentId,
+    });
 
     // Build companion LLM caller (Phase 3)
     // First, create a temporary adapter to resolve the memory model from config
-    const tempAdapter = factory({ limitHistoryTurns });
+    const tempAdapter = factory({ limitHistoryTurns, sessionIdentity });
     const memoryModel = tempAdapter.resolveModel(cfg as Record<string, unknown>);
     let callCompanionLlm: CallCompanionLlmFn | undefined;
 
@@ -244,17 +293,22 @@ export async function loadMemoryCompanionAdapter(
     }
 
     // Inject all engine dependencies (including logger for telemetry)
+    const companionConfig: NonNullable<EngineDeps["companionConfig"]> = {
+      variantId: mcConfig.variantId,
+      allowedWorkspacePrefixes: mcConfig.allowedWorkspacePrefixes,
+      batchSize: mcConfig.batchSize,
+      maxMemoryTokens: mcConfig.maxMemoryTokens,
+      epochCompactionThreshold: mcConfig.epochCompactionThreshold,
+    };
+    if (mcConfig.coldStoreRevisionMode !== undefined) {
+      companionConfig.coldStoreRevisionMode = mcConfig.coldStoreRevisionMode;
+    }
+
     const adapter = factory({
       limitHistoryTurns,
+      sessionIdentity,
       callCompanionLlm,
-      companionConfig: {
-        variantId: mcConfig.variantId,
-        allowedWorkspacePrefixes: mcConfig.allowedWorkspacePrefixes,
-        batchSize: mcConfig.batchSize,
-        maxMemoryTokens: mcConfig.maxMemoryTokens,
-        epochCompactionThreshold: mcConfig.epochCompactionThreshold,
-        coldStoreRevisionMode: mcConfig.coldStoreRevisionMode,
-      },
+      companionConfig,
       log,
     });
 

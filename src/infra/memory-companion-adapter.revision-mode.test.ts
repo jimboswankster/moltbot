@@ -3,11 +3,15 @@ import { OpenClawSchema } from "../config/zod-schema.js";
 
 const testState = vi.hoisted(() => ({
   factory: vi.fn(),
+  identityFactory: vi.fn(),
 }));
 
 vi.mock("jiti", () => ({
   createJiti: () => ({
-    import: async () => ({ createMemoryCompanionAdapter: testState.factory }),
+    import: async () => ({
+      createMemoryCompanionAdapter: testState.factory,
+      createOpenClawSessionIdentityAdapter: testState.identityFactory,
+    }),
   }),
 }));
 
@@ -19,10 +23,24 @@ const adapter = {
   resolveModel: vi.fn(() => undefined),
 };
 
+const sessionIdentity = {
+  target: "openclaw" as const,
+  resolve: vi.fn(),
+};
+
+const sessionIdentityScope = {
+  runtimeProfileId: "synthetic-openclaw-profile",
+  tenantId: "synthetic-tenant",
+  brandId: "synthetic-brand",
+  workspaceId: "synthetic-workspace",
+};
+
 describe("Memory Companion cold-store revision mode", () => {
   beforeEach(() => {
     testState.factory.mockReset();
     testState.factory.mockReturnValue(adapter);
+    testState.identityFactory.mockReset();
+    testState.identityFactory.mockReturnValue(sessionIdentity);
   });
 
   it.each(["off", "observe", "active"] as const)(
@@ -33,15 +51,17 @@ describe("Memory Companion cold-store revision mode", () => {
           memoryCompanion: {
             enabled: true,
             adapterPath: "/no-runtime-import-used-by-mocked-jiti.ts",
+            sessionIdentityScope,
             coldStoreRevisionMode,
           },
         },
       });
 
-      await loadMemoryCompanionAdapter(parsed);
+      await loadMemoryCompanionAdapter(parsed, undefined, undefined, "synthetic-agent");
 
       expect(testState.factory).toHaveBeenLastCalledWith(
         expect.objectContaining({
+          sessionIdentity,
           companionConfig: expect.objectContaining({ coldStoreRevisionMode }),
         }),
       );
@@ -54,17 +74,53 @@ describe("Memory Companion cold-store revision mode", () => {
         memoryCompanion: {
           enabled: true,
           adapterPath: "/no-runtime-import-used-by-mocked-jiti.ts",
+          sessionIdentityScope,
         },
       },
     });
 
-    await loadMemoryCompanionAdapter(parsed);
+    await loadMemoryCompanionAdapter(parsed, undefined, undefined, "synthetic-agent");
 
-    expect(testState.factory).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        companionConfig: expect.objectContaining({ coldStoreRevisionMode: undefined }),
-      }),
-    );
+    const deps = testState.factory.mock.calls.at(-1)?.[0];
+    expect(deps?.sessionIdentity).toBe(sessionIdentity);
+    expect(Object.hasOwn(deps?.companionConfig ?? {}, "coldStoreRevisionMode")).toBe(false);
+    expect(testState.identityFactory).toHaveBeenCalledWith({
+      ...sessionIdentityScope,
+      agentId: "synthetic-agent",
+    });
+  });
+
+  it("fails closed before constructing the adapter when canonical identity scope is absent", async () => {
+    const parsed = OpenClawSchema.parse({
+      extensions: {
+        memoryCompanion: {
+          enabled: true,
+          adapterPath: "/no-runtime-import-used-by-mocked-jiti.ts",
+        },
+      },
+    });
+
+    await expect(
+      loadMemoryCompanionAdapter(parsed, undefined, undefined, "synthetic-agent"),
+    ).resolves.toBeNull();
+    expect(testState.identityFactory).not.toHaveBeenCalled();
+    expect(testState.factory).not.toHaveBeenCalled();
+  });
+
+  it("fails closed before importing identity when the actual agent id is absent", async () => {
+    const parsed = OpenClawSchema.parse({
+      extensions: {
+        memoryCompanion: {
+          enabled: true,
+          adapterPath: "/no-runtime-import-used-by-mocked-jiti.ts",
+          sessionIdentityScope,
+        },
+      },
+    });
+
+    await expect(loadMemoryCompanionAdapter(parsed)).resolves.toBeNull();
+    expect(testState.identityFactory).not.toHaveBeenCalled();
+    expect(testState.factory).not.toHaveBeenCalled();
   });
 
   it("rejects unknown revision modes", () => {
@@ -73,6 +129,7 @@ describe("Memory Companion cold-store revision mode", () => {
         memoryCompanion: {
           enabled: true,
           adapterPath: "/no-runtime-import-used-by-mocked-jiti.ts",
+          sessionIdentityScope,
           coldStoreRevisionMode: "migrate-now",
         },
       },

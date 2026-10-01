@@ -153,6 +153,13 @@ export type MemoryCompanionConfig = {
   enabled?: boolean;
   /** Adapter module path (workspace-owned extension). */
   adapterPath?: string;
+  /** Explicit OS-owned scope used to derive a canonical session identity. */
+  sessionIdentityScope?: {
+    runtimeProfileId: string;
+    tenantId: string;
+    brandId: string;
+    workspaceId: string;
+  };
   /** Optional bounded rollout variant id for workspace-owned retrieval/render behavior. */
   variantId?: string;
   /** Workspace prefixes allowed to activate the bounded rollout variant. */
