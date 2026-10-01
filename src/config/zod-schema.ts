@@ -164,11 +164,23 @@ export const OpenClawSchema = z
           .object({
             enabled: z.boolean().optional(),
             adapterPath: z.string().optional(),
+            sessionIdentityScope: z
+              .object({
+                runtimeProfileId: z.string().min(1),
+                tenantId: z.string().min(1),
+                brandId: z.string().min(1),
+                workspaceId: z.string().min(1),
+              })
+              .strict()
+              .optional(),
             variantId: z.string().optional(),
             allowedWorkspacePrefixes: z.array(z.string()).optional(),
             batchSize: z.number().optional(),
             maxMemoryTokens: z.number().optional(),
             epochCompactionThreshold: z.number().optional(),
+            coldStoreRevisionMode: z
+              .union([z.literal("off"), z.literal("observe"), z.literal("active")])
+              .optional(),
           })
           .strict()
           .optional(),

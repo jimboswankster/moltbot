@@ -1,0 +1,281 @@
+# Execution Chain Profile — per-repo adaptation manifest.
+#
+# Scaffolded by /0-execution-bootstrap on 2026-10-01T13:05:00Z.
+#
+# This profile declares THIS repo's per-role paths so the execution chain
+# (/1, /2, /3, /4) and the cross-initiative aggregator can adapt to
+# non-canonical repo shapes without hardcoded assumptions. Each role
+# corresponds to a stable execution-chain concept; the path is THIS
+# repo's local implementation.
+#
+# Source values:
+#   canonical          → default value from the contract (prismScape canon)
+#   detected           → /0 --mode discover found this on disk
+#   scaffolded         → /0 --mode scaffold wrote this from a template
+#   custom             → operator-authored override; /0 does not auto-modify
+#   operator_required  → declared but not yet provisioned; downstream must surface blocker
+#
+# Bootstrap-time substitutions:
+#   REPO_ID          -> this repo's stable id
+#   BOOTSTRAP_DATE   -> ISO8601 date
+#   CANONICAL_BRANCH -> repo's canonical integration branch (detected or default)
+#   TOPOLOGY_PROFILE -> single_repo | internal_cross_repo | cleanroom_island
+#   TENANT_SLUG      -> tenant slug for cleanroom_island, otherwise null
+#
+# After /0 writes initial detected values, operator should review and tighten:
+#   - Set `source: custom` on roles where this repo diverges from canon
+#   - Add `present: false` on optional roles this repo doesn't need
+#   - Adjust `paths` for `master_memory_directory` to match this repo's
+#     actual master-memory file locations
+#
+# Full schema spec at:
+#   apps/skills-factory/source/skill-packs/execution-chain/skills/
+#   0-execution-bootstrap/references/bootstrap-contract.md
+#   § "Repo Profile (Adaptation Layer)"
+
+schema_version: 1
+profile_kind: execution_chain_consumer
+topology_profile: internal_cross_repo
+repo_id: prismscape_openclaw
+tenant_slug: null
+last_updated: "2026-10-01T13:05:00Z"
+authored_by: /0-execution-bootstrap
+
+roles:
+  # =========================================================================
+  # Core roles — required for /1-/4 functionality
+  # =========================================================================
+
+  worktree_control_ledger:
+    path: DEV_CONTROL/worktree_control/worktree-ledger.json
+    schema_version: 3
+    source: canonical
+    notes: |
+      Machine-readable lane registry. Schema v3 supports
+      master_memory_path joins (introduced 2026-05-12).
+
+  worktree_control_ledger_md:
+    path: DEV_CONTROL/worktree_control/worktree-ledger.md
+    source: canonical
+    notes: |
+      Human companion to worktree-ledger.json.
+
+  worktree_control_readme:
+    path: DEV_CONTROL/worktree_control/README.md
+    source: canonical
+    notes: |
+      Landing doc for the worktree-control surface; CLI quick-reference.
+
+  worktree_control_cli:
+    path: DEV_CONTROL/worktree_control/scripts/worktree_control_cli.py
+    source: canonical
+    notes: |
+      CLI verbs: summary, validate, portfolio, ensure, preflight,
+      acquire, release, reconcile.
+
+  agent_runtime_protocol:
+    path: DEV_CONTROL/worktree_control/AGENT_RUNTIME_WORKTREE_PROTOCOL.md
+    source: canonical
+    notes: |
+      Repo-local pointer to the OS-canonical
+      worktree-systemization-contract.md (resolved via
+      cross_repo_boundaries.yaml).
+
+  cross_repo_boundaries:
+    path: cross_repo_boundaries.yaml
+    source: canonical
+    notes: |
+      Discovery contract for cross-repo references. No symlinks across
+      repo boundary. Declares parent_repo + resolution_strategy chain.
+
+  master_memory_directory:
+    # Where orchestrator-master-memory.v1.{md,yaml} files live in this
+    # repo. The cross-initiative aggregator rglob's for the canonical
+    # filename under each declared path.
+    paths:
+      - DEV_CONTROL/worktree_control/*/
+      - docs/system-improvement-initiatives/*/
+      - packages/*/docs/*/
+    source: canonical
+    notes: |
+      Master memory files live alongside their initiative artifacts.
+      Adjust paths to match this repo's actual convention.
+
+  # =========================================================================
+  # Variant roles — declare per-repo (defaults shown; operator may override)
+  # =========================================================================
+
+  canonical_branch:
+    name: main
+    source: detected
+    notes: |
+      The repo's canonical integration branch. Detected from git's
+      origin/HEAD at bootstrap time. Override with source: custom if
+      this repo's canonical is different.
+
+  authority_repo:
+    repo_id: prismscape_os
+    resolution: cross_repo_boundaries
+    source: canonical
+    notes: |
+      Higher-altitude repo that owns execution-chain control state.
+      Set repo_id to null if this repo is standalone (no parent).
+
+  # =========================================================================
+  # Cleanroom island roles — used when topology_profile: cleanroom_island
+  # =========================================================================
+
+  tenant_registry_ref:
+    path: os/coordination/mission-control/contracts/tenant-registry.v1.json#null
+    source: canonical
+    notes: |
+      Tenant identity authority. cleanroom_island profiles must use an
+      existing tenant-registry slug and must not redefine tenant identity here.
+
+  vendor_authority_repo:
+    repo_alias: operator_required
+    path: null
+    source: operator_required
+    notes: |
+      PrismScape/vendor repo that owns reusable implementation and internal
+      capability truth. Required for topology_profile: cleanroom_island.
+
+  private_ip_island:
+    repo_alias: prismscape_openclaw
+    path: .
+    authority: execution_control
+    source: detected
+    notes: |
+      Private-IP island execution-control surface. For cleanroom_island,
+      /0 scaffolds and validates worktree control here, not in the tenant
+      runtime repo.
+
+  tenant_runtime_repo:
+    repo_alias: operator_required
+    path: null
+    authority: customer_runtime
+    source: operator_required
+    notes: |
+      Customer-visible runtime repo. May receive customer-safe implementation
+      commits only through private-IP boundary and egress/declassification gates.
+
+  managed_capability_api_boundary:
+    ref: os/vault/systems/team-command/patterns/vendor-api-boundary/pattern.md
+    required_when_runtime_capability_exposed: true
+    source: canonical
+    notes: |
+      Runtime PrismScape capability exposure requires contracts, certified
+      adapters, scoped grants, quotas, telemetry, revocation, and fallback or
+      fail-closed behavior.
+
+  # =========================================================================
+  # Optional roles — operator decides per-repo whether to use these
+  # =========================================================================
+
+  todo_system:
+    path: DEV_CONTROL/todo.md
+    detail_dir: DEV_CONTROL/todo_items/
+    present: true
+    source: canonical
+    notes: |
+      Operator task system. If this repo uses a different system (e.g.
+      .taskmaster/, GitHub Issues, Linear), set path accordingly and
+      mark source: custom.
+
+  debugging_control:
+    path: DEV_CONTROL/debugging_control/
+    present: true
+    source: canonical
+    notes: |
+      Debug tickets + audits + repair plans. Optional — if this repo
+      uses a different bug-tracking system, set present: false and
+      reference the external system in notes.
+
+  system_index:
+    path: DEV_CONTROL/SYSTEM_INDEX.md
+    present: true
+    source: canonical
+    notes: |
+      System-of-systems short-code registry. Useful for monorepos with
+      multiple subsystems; less useful for single-purpose repos.
+
+  audits:
+    path: DEV_CONTROL/audits/
+    present: true
+    source: canonical
+    notes: |
+      Behavioral verification + runtime gap analyses.
+
+  agent_memory:
+    path: null
+    source: canonical
+    notes: |
+      Cross-session agent memory. null = use parent-repo agent memory
+      resolved via cross_repo_boundaries.yaml. For prismscape_core
+      consumers, this resolves to prismscape_os/state/agent-memory/.
+      If this repo has its own repo-local memory system, set path
+      accordingly and mark source: custom.
+
+# =========================================================================
+# Per-repo overrides for /1-/4 default behavior
+# =========================================================================
+
+overrides:
+  # Examples (uncomment + adjust as needed):
+  #
+  # default_lane_class: method_lab_lane
+  # default_merge_policy: "--no-ff"
+  # require_operator_approval_for_canonical_branch_merge: true
+  # agent_role_taxonomy:
+  #   - phase_1_author
+  #   - brokerage_intelligence
+  #   - multi_channel_intake
+  #   - data_enrichment_supervisor
+  #   - infrastructure_governance
+  #   - operator
+  #   - <add per-repo custom roles here>
+
+# =========================================================================
+# Scaffold plan — what /0 should do for each role
+# =========================================================================
+
+scaffold_plan:
+  - role: cross_repo_boundaries
+    template: cross_repo_boundaries.template.yaml
+    action: write_if_missing
+
+  - role: worktree_control_ledger
+    template: worktree-ledger.template.json
+    action: write_if_missing
+
+  - role: worktree_control_ledger_md
+    template: worktree-ledger.template.md
+    action: write_if_missing
+
+  - role: worktree_control_readme
+    template: README.template.md
+    action: write_if_missing
+
+  - role: worktree_control_cli
+    action: vendor_from_authority
+
+  - role: agent_runtime_protocol
+    template: AGENT_RUNTIME_WORKTREE_PROTOCOL.template.md
+    action: write_if_missing
+
+  - role: master_memory_directory
+    action: noop  # directory pattern; created on-demand by /2
+
+# =========================================================================
+# Notes
+# =========================================================================
+
+notes:
+  - This profile was scaffolded by /0-execution-bootstrap on 2026-10-01T13:05:00Z.
+  - All roles default to `source: canonical` (prismScape canon). Operator
+    should review and mark per-repo divergences as `source: custom`.
+  - If this repo inherits a different convention from a client or has
+    pre-existing infrastructure, override the relevant role paths instead
+    of forcing the repo to canon.
+  - The profile is the adaptation layer — /1-/4 query it for role
+    resolution instead of assuming fixed paths.

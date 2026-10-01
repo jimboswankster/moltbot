@@ -780,7 +780,12 @@ export async function runEmbeddedAttempt(
         const sanitizedMemory = stripLegacySessionMemoryBlocks(validated);
 
         try {
-          mcAdapter = await loadMemoryCompanionAdapter(params.config, params.agentDir, log);
+          mcAdapter = await loadMemoryCompanionAdapter(
+            params.config,
+            params.agentDir,
+            log,
+            sessionAgentId,
+          );
         } catch (err) {
           log.warn(`memory companion adapter load failed, falling back: ${err}`);
         }
