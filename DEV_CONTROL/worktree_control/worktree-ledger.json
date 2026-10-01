@@ -1,0 +1,96 @@
+{
+  "version": 3,
+  "updated_at": "2026-10-01T13:05:00Z",
+  "canonical_checkout_policy": {
+    "canonical_branch": "main",
+    "required_role": "canonical_develop",
+    "normalization_required": false,
+    "reason": "OpenClaw fork origin/HEAD resolves to main; canonical checkout is the nested PrismScape source checkout."
+  },
+  "lane_class_contract": {
+    "field": "lane_class",
+    "classes": [
+      "mutation_lane",
+      "service_loop_lane",
+      "method_lab_lane"
+    ],
+    "execute_requires_active_worktree_for": [
+      "mutation_lane"
+    ]
+  },
+  "schema_changelog": [
+    {
+      "from_version": null,
+      "to_version": 3,
+      "at": "2026-10-01T13:05:00Z",
+      "change": "Initial seed via /0-execution-bootstrap. Schema v3 includes optional master_memory_path field per lane (relative-to-repo-root path of the lane's orchestrator-master-memory.v1.md, joining lane lifecycle to per-initiative master memory)."
+    }
+  ],
+  "worktrees": [
+    {
+      "id": "main",
+      "path": "/Users/music/Agent_os/prismscape-openclaw-os/os/apps/prismScape/open-source/moltbot",
+      "branch": "main",
+      "base_branch": "origin/main",
+      "merge_target": "main",
+      "status": "active",
+      "role": "canonical_develop",
+      "health": "healthy",
+      "notes_file": "DEV_CONTROL/worktree_control/worktree-ledger.md",
+      "tranche": "main coordination base",
+      "purpose": "Canonical OpenClaw fork checkout for coordination and future feature branching.",
+      "owner": "coordination",
+      "lane_class": "method_lab_lane",
+      "master_memory_path": "not_applicable_canonical_lane",
+      "reconciliation_state": "merged_to_main",
+      "touches_shared_contracts": false,
+      "shared_contracts": [],
+      "shared_risk_paths": [],
+      "forbidden_without_coordination": [],
+      "shared_remote_db_touched": false,
+      "merge_back_required": false,
+      "created_from_ref": "origin/main",
+      "created_merge_base": "main",
+      "cumulative_over": []
+    },
+    {
+      "id": "s03-dormant-revision-state-20261001",
+      "path": "/Users/music/Agent_os/worktrees/openclaw/s03-dormant-revision-state-20261001",
+      "branch": "prismscape/s03-dormant-revision-state-20261001",
+      "base_branch": "131e1568479d4057c0cc2923528d2b7111ef6715",
+      "merge_target": "main",
+      "status": "active",
+      "role": "feature_lane",
+      "health": "healthy",
+      "notes_file": "DEV_CONTROL/worktree_control/worktree-ledger.md",
+      "tranche": "ai-harnesses OpenClaw boundary",
+      "purpose": "Expose the dormant Memory Companion revision mode through the pinned OpenClaw host loader without runtime activation.",
+      "owner": "codex",
+      "lane_class": "mutation_lane",
+      "master_memory_path": "operator_required_parent_ai_harnesses_master_memory",
+      "reconciliation_state": "implementation_in_progress",
+      "touches_shared_contracts": true,
+      "shared_contracts": [
+        "extensions.memoryCompanion configuration shape",
+        "Memory Companion adapter factory dependency shape"
+      ],
+      "shared_risk_paths": [
+        "src/config/types.base.ts",
+        "src/config/zod-schema.ts",
+        "src/infra/memory-companion-adapter.ts"
+      ],
+      "forbidden_without_coordination": [
+        "runtime activation",
+        "live configuration writes",
+        "build or launch",
+        "provider or Telegram calls",
+        "secret or body reads"
+      ],
+      "shared_remote_db_touched": false,
+      "merge_back_required": true,
+      "created_from_ref": "131e1568479d4057c0cc2923528d2b7111ef6715",
+      "created_merge_base": "131e1568479d4057c0cc2923528d2b7111ef6715",
+      "cumulative_over": []
+    }
+  ]
+}

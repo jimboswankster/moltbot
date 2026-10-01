@@ -1,0 +1,166 @@
+# Cross-repo boundary discovery manifest — scaffolded by /0-execution-bootstrap.
+#
+# Purpose: declare this consumer repo's relationship to its parent
+# (prismscape_os) so agents and tools can discover cross-repo surfaces
+# WITHOUT relying on symlinks. Symlinks couple the install to a specific
+# filesystem layout and break silently on relocation (fresh AI-cluster
+# nodes, alternate clones, etc.). This manifest is the portable
+# replacement.
+#
+# Resolution rule: for each declared parent surface, tools try the
+# resolution_strategy entries in order. First entry that resolves to an
+# existing path wins. If none resolve, the tool MUST raise a clear error
+# rather than silently degrade.
+#
+# Bootstrap-time substitutions:
+#   REPO_ID            -> this consumer repo's stable id
+#   REPO_DESCRIPTION   -> one-line description of what this repo does
+#   BOOTSTRAP_DATE     -> ISO8601 date of bootstrap
+#   TOPOLOGY_PROFILE   -> single_repo | internal_cross_repo | cleanroom_island
+#   TENANT_SLUG        -> tenant slug for cleanroom_island, otherwise null
+#
+# After scaffold, operator should review and tighten the description +
+# surfaces list per repo-specific context.
+
+schema_version: 1
+last_updated: "2026-10-01T13:05:00Z"
+topology_profile: internal_cross_repo
+tenant_slug: null
+
+self:
+  repo_id: prismscape_openclaw
+  role: child
+  description: |
+    PrismScape-authorized OpenClaw fork and gateway host integration source.
+
+parent_repo:
+  repo_id: prismscape_os
+  role: parent
+  description: |
+    Higher-altitude system. Owns cross-system coordination, telemetry,
+    Mission Control, agent memory, and the vault knowledge graph. This
+    consumer repo is integrated at the system level but lives in a
+    separate git repo for management isolation.
+  resolution_strategy:
+    - kind: relative_path
+      value: "../.."
+      assumes: "Canonical submodule layout (consumer at os/apps/<repo>/)"
+    - kind: env_var
+      name: PRISMSCAPE_OS_ROOT
+      description: "Absolute path to prismscape_os repo root."
+    - kind: env_var
+      name: OPENCLAW_OS_ROOT
+      description: "Alternate env var name; some shells use this."
+
+  surfaces:
+    - path: coordination/crm-domain-analysis/CROSS-AGENT-STATE.yaml
+      role: cross-agent coordination (CRM substrate scope)
+      kg_role: agent-coordination
+      description: |
+        Shared YAML where Phase 1 author, brokerage intelligence, and
+        multi-channel intake agents coordinate on CRM substrate design.
+
+    - path: state/orchestration/PORTFOLIO.md
+      role: active orchestration portfolio
+      kg_role: portfolio-state
+      description: |
+        Cross-initiative portfolio. Each in-flight orchestration has a
+        row pointing at its own state dir under state/orchestration/<id>/.
+
+    - path: state/agent-memory/claude/
+      role: project memory for Claude agent
+      kg_role: agent-memory
+
+    - path: state/agent-memory/handoff/
+      role: cross-agent handoff entries
+      kg_role: agent-memory
+
+    - path: vault/systems/
+      role: cross-system domain knowledge graph
+      kg_role: domain-knowledge
+
+    - path: vault/concepts/
+      role: cross-system concept library
+      kg_role: domain-knowledge
+
+    - path: coordination/
+      role: cross-agent coordination root
+      kg_role: agent-coordination
+
+    - path: config/supabase/db-authority-registry.yaml
+      role: database authority registry
+      kg_role: governance
+
+    - path: config/supabase/repo-db-access-map.yaml
+      role: per-repo DB access map
+      kg_role: governance
+
+    - path: protocols/BOOT_SEQUENCE.md
+      role: OS-level boot protocol
+      kg_role: protocol
+
+cleanroom_island:
+  applies_when: "topology_profile == cleanroom_island"
+  tenant_registry_ref: "os/coordination/mission-control/contracts/tenant-registry.v1.json#null"
+  roles:
+    vendor_authority_repo:
+      repo_alias: operator_required
+      boundary: vendor_private
+      description: |
+        Vendor-owned implementation or capability authority. Do not copy
+        proprietary vendor source into tenant runtime repos without a
+        governed egress/declassification receipt.
+    private_ip_island:
+      repo_alias: prismscape_openclaw
+      boundary: private_execution_control
+      description: |
+        Private execution-control surface for the tenant. Worktree ledgers,
+        implementation packets, private audits, and unreleased strategy live
+        here unless separately declassified.
+    tenant_runtime_repo:
+      repo_alias: operator_required
+      boundary: customer_visible_runtime
+      description: |
+        Customer-visible runtime repo. It may receive customer-safe code and
+        docs only through the private-IP boundary and egress controls.
+    managed_capability_api_boundary:
+      ref: os/vault/systems/team-command/patterns/vendor-api-boundary/pattern.md
+      boundary: runtime_capability_contract
+  private_only_paths:
+    - DEV_CONTROL/
+    - internal/
+  customer_safe_paths:
+    - README.md
+    - docs/
+  sanitized_exchange_surface:
+    path: operator_required
+    description: |
+      Optional staging surface for customer-safe artifacts. Must not contain
+      raw private execution history or proprietary provider payloads.
+  customer_egress_receipt_surface:
+    path: operator_required
+    description: |
+      Receipt location governed by the private-IP boundary pattern. Required
+      before customer-visible export from the private-IP island.
+  forbidden_copy_directions:
+    - from: private_ip_island.private_only_paths
+      to: tenant_runtime_repo
+      unless: explicit_declassification_receipt
+    - from: vendor_authority_repo.private_source
+      to: tenant_runtime_repo
+      unless: managed_capability_api_contract_or_customer_safe_license
+
+notes:
+  - This manifest was scaffolded by /0-execution-bootstrap on 2026-10-01T13:05:00Z.
+  - Operator should review the surfaces list above and tighten/remove
+    entries that don't apply to this repo's domain.
+  - For topology_profile cleanroom_island, fill concrete repo aliases and
+    egress surfaces before treating the island as `/1`-ready.
+  - DO NOT add symlinks across the repo boundary. The 2026-05-11 dev->prod
+    incident (cross-repo symlinks bypassing safety tooling) is the
+    canonical reason for the no-symlinks rule. Once a symlink establishes
+    a non-obvious route, safety tooling can no longer enforce its
+    boundary.
+  - When prismscape_os is cloned to a non-canonical location (fresh AI
+    cluster node, alternate workspace), set PRISMSCAPE_OS_ROOT in shell
+    rc and the resolution strategy will pick it up.
