@@ -163,6 +163,8 @@ export type MemoryCompanionConfig = {
   maxMemoryTokens?: number;
   /** Number of entries before epoch compaction triggers (default: 40). */
   epochCompactionThreshold?: number;
+  /** Cold-store revision handling. Omitted defaults to "off" in the workspace adapter. */
+  coldStoreRevisionMode?: "off" | "observe" | "active";
 };
 
 export type ContextObservabilityConfig = {

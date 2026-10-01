@@ -75,6 +75,7 @@ export interface EngineDeps {
     batchSize?: number;
     maxMemoryTokens?: number;
     epochCompactionThreshold?: number;
+    coldStoreRevisionMode?: "off" | "observe" | "active";
   };
   /** Logger passed through to the extension for structured telemetry. */
   log?: LogLike;
@@ -191,6 +192,7 @@ export async function loadMemoryCompanionAdapter(
         batchSize?: number;
         maxMemoryTokens?: number;
         epochCompactionThreshold?: number;
+        coldStoreRevisionMode?: "off" | "observe" | "active";
       }
     | undefined;
 
@@ -251,6 +253,7 @@ export async function loadMemoryCompanionAdapter(
         batchSize: mcConfig.batchSize,
         maxMemoryTokens: mcConfig.maxMemoryTokens,
         epochCompactionThreshold: mcConfig.epochCompactionThreshold,
+        coldStoreRevisionMode: mcConfig.coldStoreRevisionMode,
       },
       log,
     });

@@ -169,6 +169,9 @@ export const OpenClawSchema = z
             batchSize: z.number().optional(),
             maxMemoryTokens: z.number().optional(),
             epochCompactionThreshold: z.number().optional(),
+            coldStoreRevisionMode: z
+              .union([z.literal("off"), z.literal("observe"), z.literal("active")])
+              .optional(),
           })
           .strict()
           .optional(),
