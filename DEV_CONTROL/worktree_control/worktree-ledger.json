@@ -66,6 +66,7 @@
       "tranche": "ai-harnesses OpenClaw boundary",
       "purpose": "Expose the dormant Memory Companion revision mode through the pinned OpenClaw host loader without runtime activation.",
       "owner": "codex",
+      "node_id": "macbook-pro",
       "lane_class": "mutation_lane",
       "master_memory_path": "operator_required_parent_ai_harnesses_master_memory",
       "reconciliation_state": "merged_to_develop",
