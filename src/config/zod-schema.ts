@@ -198,6 +198,14 @@ export const OpenClawSchema = z
           })
           .strict()
           .optional(),
+        telegramIngressPolicy: z
+          .object({
+            enabled: z.boolean().optional(),
+            adapterPath: z.string().optional(),
+            runtimeProfileId: z.string().min(1).optional(),
+          })
+          .strict()
+          .optional(),
       })
       .strict()
       .optional(),

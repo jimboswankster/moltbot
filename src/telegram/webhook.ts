@@ -5,6 +5,11 @@ import type { RuntimeEnv } from "../runtime.js";
 import { isDiagnosticsEnabled } from "../infra/diagnostic-events.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import {
+  acquireTelegramIngressPolicyLease,
+  loadTelegramIngressPolicyAdapter,
+  type LoadedTelegramIngressPolicy,
+} from "../infra/telegram-ingress-policy-adapter.js";
+import {
   logWebhookError,
   logWebhookProcessed,
   logWebhookReceived,
@@ -94,12 +99,19 @@ export async function startTelegramWebhook(opts: {
   abortSignal?: AbortSignal;
   healthPath?: string;
   publicUrl?: string;
+  ingressPolicy?: LoadedTelegramIngressPolicy | null;
 }) {
   const path = opts.path ?? "/telegram-webhook";
   const healthPath = opts.healthPath ?? "/healthz";
   const port = opts.port ?? 8787;
   const host = opts.host ?? "0.0.0.0";
   const runtime = opts.runtime ?? defaultRuntime;
+  const ingressPolicy = opts.ingressPolicy === undefined
+    ? await loadTelegramIngressPolicyAdapter(opts.config, {
+        debug: runtime.log,
+        warn: runtime.error,
+      })
+    : opts.ingressPolicy;
   const diagnosticsEnabled = isDiagnosticsEnabled(opts.config);
   const bot = createTelegramBot({
     token: opts.token,
@@ -111,10 +123,6 @@ export async function startTelegramWebhook(opts: {
   const handler = webhookCallback(bot, "http", {
     secretToken: opts.secret,
   });
-
-  if (diagnosticsEnabled) {
-    startDiagnosticHeartbeat();
-  }
 
   const server = createServer((req, res) => {
     if (req.url === healthPath) {
@@ -161,6 +169,18 @@ export async function startTelegramWebhook(opts: {
     }
   });
 
+  // Claim shared ingress immediately before webhook registration makes this
+  // process externally authoritative.
+  const ingressLease = await acquireTelegramIngressPolicyLease({
+    loaded: ingressPolicy,
+    accountId: opts.accountId?.trim() || "default",
+    mode: "webhook",
+  });
+
+  if (diagnosticsEnabled) {
+    startDiagnosticHeartbeat();
+  }
+
   // Phase 3d: handle HTTP server-level errors (EADDRINUSE, crashes, etc.)
   server.on("error", (err) => {
     console.error(`[telegram-webhook] HTTP server error: ${String(err)}`);
@@ -185,10 +205,26 @@ export async function startTelegramWebhook(opts: {
     if (diagnosticsEnabled) {
       stopDiagnosticHeartbeat();
     }
+    await ingressLease?.release().catch(() => undefined);
     throw new Error(`Telegram webhook registration failed: ${String(err)}`, { cause: err });
   }
 
-  await new Promise<void>((resolve) => server.listen(port, host, resolve));
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const onStartupError = (error: Error) => reject(error);
+      server.once("error", onStartupError);
+      server.listen(port, host, () => {
+        server.off("error", onStartupError);
+        resolve();
+      });
+    });
+  } catch (err) {
+    if (diagnosticsEnabled) {
+      stopDiagnosticHeartbeat();
+    }
+    await ingressLease?.release().catch(() => undefined);
+    throw new Error(`Telegram webhook listener failed: ${String(err)}`, { cause: err });
+  }
   runtime.log?.(`webhook listening on ${publicUrl}`);
 
   // Phase 3b: periodic webhook health check
@@ -196,7 +232,10 @@ export async function startTelegramWebhook(opts: {
   startWebhookHealthCheck(healthCtx);
 
   // Phase 3c: graceful shutdown with request draining
+  let shuttingDown = false;
   const shutdown = async () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
     stopWebhookHealthCheck(healthCtx);
 
     // Stop accepting new connections
@@ -212,7 +251,14 @@ export async function startTelegramWebhook(opts: {
     if (diagnosticsEnabled) {
       stopDiagnosticHeartbeat();
     }
+    await ingressLease?.release().catch(() => undefined);
   };
+  if (ingressLease?.lost) {
+    void ingressLease.lost.catch(async (error) => {
+      runtime.error?.(`telegram ingress lease lost: ${formatErrorMessage(error)}`);
+      await shutdown();
+    });
+  }
   if (opts.abortSignal) {
     opts.abortSignal.addEventListener(
       "abort",

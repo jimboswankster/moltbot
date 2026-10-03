@@ -10,6 +10,12 @@ import { computeBackoff, sleepWithAbort } from "../infra/backoff.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import { formatDurationMs } from "../infra/format-duration.js";
 import { recordRuntimeTelemetryEvent } from "../infra/runtime-telemetry.js";
+import {
+  acquireTelegramIngressPolicyLease,
+  loadTelegramIngressPolicyAdapter,
+  type LoadedTelegramIngressPolicy,
+  type TelegramIngressLeaseHandle,
+} from "../infra/telegram-ingress-policy-adapter.js";
 import { registerUnhandledRejectionHandler } from "../infra/unhandled-rejections.js";
 import { resolveTelegramAccount } from "./accounts.js";
 import { resolveTelegramAllowedUpdates } from "./allowed-updates.js";
@@ -32,6 +38,7 @@ export type MonitorTelegramOpts = {
   proxyFetch?: typeof fetch;
   webhookUrl?: string;
   env?: NodeJS.ProcessEnv;
+  ingressPolicy?: LoadedTelegramIngressPolicy | null;
 };
 
 export function createTelegramRunnerOptions(cfg: OpenClawConfig): RunOptions<unknown> {
@@ -299,6 +306,7 @@ export async function monitorTelegramProvider(opts: MonitorTelegramOpts = {}) {
 
   let activePollerKey: string | null = null;
   let pollerLock: TelegramPollerLockHandle | null = null;
+  let ingressLease: TelegramIngressLeaseHandle | null = null;
   try {
     const cfg = opts.config ?? loadConfig();
     const account = resolveTelegramAccount({
@@ -306,7 +314,15 @@ export async function monitorTelegramProvider(opts: MonitorTelegramOpts = {}) {
       accountId: opts.accountId,
     });
     const pollerKey = account.accountId;
+    const ingressPolicy = opts.ingressPolicy === undefined
+      ? await loadTelegramIngressPolicyAdapter(cfg, { debug: info, warn: log })
+      : opts.ingressPolicy;
     if (!opts.useWebhook) {
+      ingressLease = await acquireTelegramIngressPolicyLease({
+        loaded: ingressPolicy,
+        accountId: pollerKey,
+        mode: "polling",
+      });
       try {
         await ensureTelegramMonitorPermissionPreflight({
           accountId: pollerKey,
@@ -415,6 +431,7 @@ export async function monitorTelegramProvider(opts: MonitorTelegramOpts = {}) {
         fetch: proxyFetch,
         abortSignal: opts.abortSignal,
         publicUrl: opts.webhookUrl,
+        ingressPolicy,
       });
       return;
     }
@@ -430,6 +447,7 @@ export async function monitorTelegramProvider(opts: MonitorTelegramOpts = {}) {
       // Track the runner.stop() promise so we can await it during cleanup,
       // preventing resource leaks from fire-and-forget stops.
       let stopPromise: Promise<void> | undefined;
+      let runnerSettled = false;
       const stopOnAbort = () => {
         if (opts.abortSignal?.aborted) {
           stopPromise = runner.stop();
@@ -438,7 +456,12 @@ export async function monitorTelegramProvider(opts: MonitorTelegramOpts = {}) {
       opts.abortSignal?.addEventListener("abort", stopOnAbort, { once: true });
       try {
         // runner.task() returns a promise that resolves when the runner stops
-        await runner.task();
+        await Promise.race([
+          runner.task().finally(() => {
+            runnerSettled = true;
+          }),
+          ...(ingressLease?.lost ? [ingressLease.lost] : []),
+        ]);
         // Runner stopped without error — don't exit the loop. This can happen due
         // to internal cleanup, idle timeout, or Node fetch quirks (upstream #1639).
         // Reset backoff and restart polling instead of exiting permanently.
@@ -486,10 +509,14 @@ export async function monitorTelegramProvider(opts: MonitorTelegramOpts = {}) {
         if (stopPromise) {
           await stopPromise.catch(() => {});
         }
+        if (!runnerSettled) {
+          await runner.stop().catch(() => {});
+        }
       }
     }
   } finally {
     await pollerLock?.release().catch(() => undefined);
+    await ingressLease?.release().catch(() => undefined);
     if (activePollerKey) {
       activeTelegramPollers.delete(activePollerKey);
     }
