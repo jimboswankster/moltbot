@@ -249,6 +249,7 @@ describe("monitorTelegramProvider (grammY)", () => {
   });
 
   it("rejects a second poller start for the same account while active", async () => {
+    const abortController = new AbortController();
     let releaseFirst: (() => void) | null = null;
     runSpy
       .mockImplementationOnce(() => ({
@@ -263,13 +264,18 @@ describe("monitorTelegramProvider (grammY)", () => {
         stop: vi.fn(),
       }));
 
-    const first = monitorTelegramProvider({ token: "tok", accountId: "default" });
+    const first = monitorTelegramProvider({
+      token: "tok",
+      accountId: "default",
+      abortSignal: abortController.signal,
+    });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     await expect(monitorTelegramProvider({ token: "tok", accountId: "default" })).rejects.toThrow(
       "telegram poller already running for account=default",
     );
 
+    abortController.abort();
     releaseFirst?.();
     await first;
   });
@@ -280,6 +286,7 @@ describe("monitorTelegramProvider (grammY)", () => {
     process.env.OPENCLAW_RUNTIME_TELEMETRY_FILE = telemetryPath;
     process.env.OPENCLAW_RUNTIME_TELEMETRY_WRITE_LEGACY = "0";
 
+    const abortController = new AbortController();
     let releaseFirst: (() => void) | null = null;
     runSpy
       .mockImplementationOnce(() => ({
@@ -294,13 +301,18 @@ describe("monitorTelegramProvider (grammY)", () => {
         stop: vi.fn(),
       }));
 
-    const first = monitorTelegramProvider({ token: "tok", accountId: "default" });
+    const first = monitorTelegramProvider({
+      token: "tok",
+      accountId: "default",
+      abortSignal: abortController.signal,
+    });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     await expect(monitorTelegramProvider({ token: "tok", accountId: "default" })).rejects.toThrow(
       "telegram poller already running for account=default",
     );
 
+    abortController.abort();
     releaseFirst?.();
     await first;
 
