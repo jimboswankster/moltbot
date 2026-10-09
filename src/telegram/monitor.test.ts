@@ -249,6 +249,7 @@ describe("monitorTelegramProvider (grammY)", () => {
   });
 
   it("rejects a second poller start for the same account while active", async () => {
+    const abortController = new AbortController();
     let releaseFirst: (() => void) | null = null;
     runSpy
       .mockImplementationOnce(() => ({
@@ -263,13 +264,18 @@ describe("monitorTelegramProvider (grammY)", () => {
         stop: vi.fn(),
       }));
 
-    const first = monitorTelegramProvider({ token: "tok", accountId: "default" });
+    const first = monitorTelegramProvider({
+      token: "tok",
+      accountId: "default",
+      abortSignal: abortController.signal,
+    });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     await expect(monitorTelegramProvider({ token: "tok", accountId: "default" })).rejects.toThrow(
       "telegram poller already running for account=default",
     );
 
+    abortController.abort();
     releaseFirst?.();
     await first;
   });
@@ -280,6 +286,7 @@ describe("monitorTelegramProvider (grammY)", () => {
     process.env.OPENCLAW_RUNTIME_TELEMETRY_FILE = telemetryPath;
     process.env.OPENCLAW_RUNTIME_TELEMETRY_WRITE_LEGACY = "0";
 
+    const abortController = new AbortController();
     let releaseFirst: (() => void) | null = null;
     runSpy
       .mockImplementationOnce(() => ({
@@ -294,13 +301,18 @@ describe("monitorTelegramProvider (grammY)", () => {
         stop: vi.fn(),
       }));
 
-    const first = monitorTelegramProvider({ token: "tok", accountId: "default" });
+    const first = monitorTelegramProvider({
+      token: "tok",
+      accountId: "default",
+      abortSignal: abortController.signal,
+    });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     await expect(monitorTelegramProvider({ token: "tok", accountId: "default" })).rejects.toThrow(
       "telegram poller already running for account=default",
     );
 
+    abortController.abort();
     releaseFirst?.();
     await first;
 
@@ -554,5 +566,44 @@ describe("monitorTelegramProvider (grammY)", () => {
     } finally {
       mkdirSpy.mockRestore();
     }
+  });
+
+  it("acquires the OS ingress lease before polling and releases it on exit", async () => {
+    const release = vi.fn(async () => undefined);
+    const acquire = vi.fn(async () => ({ release }));
+
+    await expect(monitorTelegramProvider({
+      token: "tok",
+      accountId: "default",
+      ingressPolicy: {
+        runtimeProfileId: "openclaw-primary",
+        adapter: { acquire },
+      },
+    })).resolves.toBeUndefined();
+
+    expect(acquire).toHaveBeenCalledWith({
+      target: "openclaw",
+      runtimeProfileId: "openclaw-primary",
+      accountId: "default",
+      mode: "polling",
+    });
+    expect(release).toHaveBeenCalledTimes(1);
+    expect(runSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails before polling when the OS ingress lease is denied", async () => {
+    const acquire = vi.fn(async () => {
+      throw new Error("INGRESS_LEASE_HELD");
+    });
+
+    await expect(monitorTelegramProvider({
+      token: "tok",
+      accountId: "default",
+      ingressPolicy: {
+        runtimeProfileId: "openclaw-primary",
+        adapter: { acquire },
+      },
+    })).rejects.toThrow("INGRESS_LEASE_HELD");
+    expect(runSpy).not.toHaveBeenCalled();
   });
 });

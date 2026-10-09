@@ -1,6 +1,6 @@
 {
   "version": 3,
-  "updated_at": "2026-10-01T13:05:00Z",
+  "updated_at": "2026-10-03T21:58:41Z",
   "canonical_checkout_policy": {
     "canonical_branch": "main",
     "required_role": "canonical_develop",
@@ -94,6 +94,47 @@
       "cumulative_over": [],
       "reconciled_by_merge_commit": "380d4589da359d89c65d650928e0f6b44da93eb5",
       "reconciled_at": "2026-10-01T17:40:54-04:00"
+    },
+    {
+      "id": "s07-telegram-ingress-20261003",
+      "path": "/Users/music/Agent_os/worktrees/openclaw/s07-telegram-ingress-20261003",
+      "branch": "prismscape/s07-telegram-ingress-20261003",
+      "base_branch": "origin/develop",
+      "merge_target": "develop",
+      "status": "active",
+      "role": "feature_lane",
+      "health": "healthy",
+      "notes_file": "DEV_CONTROL/worktree_control/worktree-ledger.md",
+      "tranche": "ai-harnesses Telegram boundary",
+      "purpose": "Add a dormant fail-closed OS ingress-policy adapter hook before OpenClaw Telegram polling or webhook ownership without runtime activation.",
+      "owner": "codex",
+      "node_id": "local",
+      "lane_class": "mutation_lane",
+      "master_memory_path": "operator_required_parent_ai_harnesses_master_memory",
+      "reconciliation_state": "implementation_in_progress",
+      "touches_shared_contracts": true,
+      "shared_contracts": [
+        "extensions.telegramIngressPolicy configuration shape",
+        "Telegram monitor ingress ownership lifecycle"
+      ],
+      "shared_risk_paths": [
+        "src/config/types.base.ts",
+        "src/config/zod-schema.ts",
+        "src/infra/telegram-ingress-policy-adapter.ts",
+        "src/telegram/monitor.ts"
+      ],
+      "forbidden_without_coordination": [
+        "runtime activation",
+        "live configuration writes",
+        "build or launch",
+        "provider or Telegram calls",
+        "secret or body reads"
+      ],
+      "shared_remote_db_touched": false,
+      "merge_back_required": true,
+      "created_from_ref": "5144cd272e199ce66d1cbc2914bbaf769788a351",
+      "created_merge_base": "5144cd272e199ce66d1cbc2914bbaf769788a351",
+      "cumulative_over": []
     }
   ]
 }

@@ -188,11 +188,21 @@ export type TelegramContextPolicyConfig = {
   adapterPath?: string;
 };
 
+export type TelegramIngressPolicyConfig = {
+  /** Enable the workspace-owned exclusive Telegram ingress lease adapter. */
+  enabled?: boolean;
+  /** Adapter module path (workspace-owned extension). */
+  adapterPath?: string;
+  /** Exact harness runtime profile that will own ingress while this process runs. */
+  runtimeProfileId?: string;
+};
+
 export type ExtensionsConfig = {
   streamBuffer?: StreamBufferConfig;
   memoryCompanion?: MemoryCompanionConfig;
   contextObservability?: ContextObservabilityConfig;
   telegramContextPolicy?: TelegramContextPolicyConfig;
+  telegramIngressPolicy?: TelegramIngressPolicyConfig;
 };
 
 export type WebReconnectConfig = {
