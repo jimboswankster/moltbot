@@ -300,3 +300,153 @@ describe("runCronIsolatedAgentTurn model mapping", () => {
     });
   });
 });
+
+describe("runCronIsolatedAgentTurn route-locked jobs", () => {
+  const deps: CliDeps = {
+    sendMessageWhatsApp: vi.fn(),
+    sendMessageTelegram: vi.fn(),
+    sendMessageDiscord: vi.fn(),
+    sendMessageSignal: vi.fn(),
+    sendMessageIMessage: vi.fn(),
+  };
+
+  // A routing policy whose default worker is a cloud model, as on a real gateway.
+  async function writeCloudDefaultPolicy(home: string) {
+    const dir = path.join(home, ".openclaw", "workspace", "os", "config");
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(
+      path.join(dir, "routing-policy.v1.json"),
+      JSON.stringify({
+        version: 1,
+        enabled: true,
+        defaults: { lane: "coding", workerTier: "W1A", workerModel: "openai-codex/gpt-5.6-sol" },
+        laneRules: [],
+      }),
+      "utf-8",
+    );
+  }
+
+  function cfgWithCloudFallbacks(home: string, storePath: string): OpenClawConfig {
+    return makeCfg(home, storePath, {
+      agents: {
+        defaults: {
+          model: {
+            primary: "openai-codex/gpt-5.6-sol",
+            fallbacks: ["anthropic/claude-opus-4-5", "google/gemini-3-pro-preview"],
+          },
+          workspace: path.join(home, "openclaw"),
+        },
+      },
+    } as Partial<OpenClawConfig>);
+  }
+
+  function localRouteJob(): CronJob {
+    return makeJob({
+      kind: "agentTurn",
+      message: "check the inbox",
+      model: "local-dgx/nemotron-nano-worker",
+      selectedModel: "local-dgx/nemotron-nano-worker",
+      routePolicyClass: "local_dgx_nemotron_worker",
+      modelSource: "route_policy_runtime",
+      routerRequired: true,
+      deliver: false,
+    });
+  }
+
+  beforeEach(() => {
+    vi.mocked(runEmbeddedPiAgent).mockReset();
+    vi.mocked(loadModelCatalog).mockResolvedValue([]);
+  });
+
+  it("keeps the route-selected local model instead of the policy default", async () => {
+    await withTempHome(async (home) => {
+      const storePath = await writeSessionStore(home);
+      await writeCloudDefaultPolicy(home);
+      vi.mocked(runEmbeddedPiAgent).mockResolvedValue({
+        payloads: [{ text: "ok" }],
+        meta: {
+          durationMs: 5,
+          agentMeta: { sessionId: "s", provider: "local-dgx", model: "nemotron-nano-worker" },
+        },
+      });
+
+      const res = await runCronIsolatedAgentTurn({
+        cfg: cfgWithCloudFallbacks(home, storePath),
+        deps,
+        job: localRouteJob(),
+        message: "check the inbox",
+        sessionKey: "cron:job-1",
+        lane: "cron",
+      });
+
+      expect(res.status).toBe("ok");
+      const call = vi.mocked(runEmbeddedPiAgent).mock.calls.at(-1)?.[0] as {
+        provider?: string;
+        model?: string;
+        preserveRequestedModel?: boolean;
+      };
+      expect(call?.provider).toBe("local-dgx");
+      expect(call?.model).toBe("nemotron-nano-worker");
+      expect(call?.preserveRequestedModel).toBe(true);
+    });
+  });
+
+  it("fails closed on the local provider instead of falling back to cloud models", async () => {
+    await withTempHome(async (home) => {
+      const storePath = await writeSessionStore(home);
+      await writeCloudDefaultPolicy(home);
+      vi.mocked(runEmbeddedPiAgent).mockRejectedValue(new Error("dgx unavailable"));
+
+      const res = await runCronIsolatedAgentTurn({
+        cfg: cfgWithCloudFallbacks(home, storePath),
+        deps,
+        job: localRouteJob(),
+        message: "check the inbox",
+        sessionKey: "cron:job-1",
+        lane: "cron",
+      });
+
+      expect(res.status).toBe("error");
+      const providers = vi
+        .mocked(runEmbeddedPiAgent)
+        .mock.calls.map((args) => (args[0] as { provider?: string }).provider);
+      expect(providers.length).toBeGreaterThan(0);
+      expect(providers.every((provider) => provider === "local-dgx")).toBe(true);
+    });
+  });
+
+  it("still applies the policy default to jobs without a route selection", async () => {
+    await withTempHome(async (home) => {
+      const storePath = await writeSessionStore(home);
+      await writeCloudDefaultPolicy(home);
+      vi.mocked(runEmbeddedPiAgent).mockResolvedValue({
+        payloads: [{ text: "ok" }],
+        meta: {
+          durationMs: 5,
+          agentMeta: { sessionId: "s", provider: "openai-codex", model: "gpt-5.6-sol" },
+        },
+      });
+
+      await runCronIsolatedAgentTurn({
+        cfg: cfgWithCloudFallbacks(home, storePath),
+        deps,
+        job: makeJob({
+          kind: "agentTurn",
+          message: "do it",
+          model: "local-dgx/nemotron-nano-worker",
+          deliver: false,
+        }),
+        message: "do it",
+        sessionKey: "cron:job-1",
+        lane: "cron",
+      });
+
+      const call = vi.mocked(runEmbeddedPiAgent).mock.calls.at(-1)?.[0] as {
+        provider?: string;
+        preserveRequestedModel?: boolean;
+      };
+      expect(call?.provider).toBe("openai-codex");
+      expect(call?.preserveRequestedModel).toBe(false);
+    });
+  });
+});

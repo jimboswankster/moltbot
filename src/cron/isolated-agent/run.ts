@@ -152,6 +152,19 @@ function resolveCronAgentModelOverrideRaw(params: {
   return { raw: modelOverrideRaw };
 }
 
+/**
+ * A cron job whose model was chosen by the route policy (`routerRequired` plus a
+ * `selectedModel`) is route-locked: the deterministic router must not swap the
+ * model for the policy default, and fallbacks stay on the selected provider.
+ * Without this, a job selected onto a local model silently ran on a cloud model.
+ */
+function isCronRouteLocked(job: CronJob): boolean {
+  if (job.payload.kind !== "agentTurn") {
+    return false;
+  }
+  return job.payload.routerRequired === true && Boolean(job.payload.selectedModel?.trim());
+}
+
 export type RunCronAgentTurnResult = {
   status: "ok" | "error" | "skipped";
   summary?: string;
@@ -431,11 +444,13 @@ export async function runCronIsolatedAgentTurn(params: {
       verboseLevel: resolvedVerboseLevel,
     });
     const messageChannel = resolvedDelivery.channel;
+    const routeLocked = isCronRouteLocked(params.job);
     const deterministic = await resolveDeterministicFallbackConstraints({
       prompt: commandBody,
       lane: params.lane,
       provider,
       model,
+      preserveRequestedModel: routeLocked,
     });
     const routedProvider = deterministic.provider;
     const routedModel = deterministic.model;
@@ -449,7 +464,9 @@ export async function runCronIsolatedAgentTurn(params: {
         sessionId: cronSession.sessionEntry.sessionId,
         sessionKey: agentSessionKey,
       },
-      providerAllowlist: deterministic.providerAllowlist,
+      // Route-locked jobs fail closed on their selected provider instead of
+      // falling back across providers (e.g. local-dgx to a cloud model).
+      providerAllowlist: routeLocked ? [routedProvider] : deterministic.providerAllowlist,
       fallbacksOverride: resolveAgentModelFallbacksOverride(params.cfg, agentId),
       run: (providerOverride, modelOverride) => {
         if (isCliProvider(providerOverride, cfgWithAgentDefaults)) {
@@ -492,6 +509,7 @@ export async function runCronIsolatedAgentTurn(params: {
           runId: cronRunId,
           requireExplicitMessageTarget: true,
           disableMessageTool: deliveryRequested,
+          preserveRequestedModel: routeLocked,
         });
       },
     });
